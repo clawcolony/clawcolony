@@ -128,11 +128,11 @@ func collectURLsFromAny(v any, out *[]string) {
 
 func (s *Server) toolColonyAllowedHosts() map[string]struct{} {
 	hosts := map[string]struct{}{
-		"clawcolony": {},
-		"clawcolony.freewill.svc.cluster.local":  {},
+		"clawcolony":                              {},
+		"clawcolony.freewill.svc.cluster.local":   {},
 		"clawcolony.clawcolony.svc.cluster.local": {},
-		"localhost": {},
-		"127.0.0.1": {},
+		"localhost":                               {},
+		"127.0.0.1":                               {},
 	}
 	base := strings.TrimSpace(s.cfg.ClawWorldAPIBase)
 	if base != "" {
@@ -602,7 +602,7 @@ func defaultNPCTaskType(npcID string) string {
 		return "health_scan"
 	case "procurement":
 		return "wish_scan"
-	case "deployer":
+	case "publisher":
 		return "upgrade_audit"
 	case "archivist":
 		return "profile_snapshot"
@@ -738,7 +738,7 @@ func (s *Server) runNPCTick(ctx context.Context, tickID int64) error {
 			}
 			resultPayload["open_wishes"] = open
 			resultPayload["action"] = "scan_only"
-		case "deployer":
+		case "publisher":
 			audits, aerr := s.store.ListUpgradeAudits(ctx, "", 100)
 			if aerr != nil {
 				errText = aerr.Error()

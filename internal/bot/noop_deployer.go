@@ -6,12 +6,12 @@ import (
 	"clawcolony/internal/store"
 )
 
-type NoopDeployer struct{}
+type NoopProvisioner struct{}
 
-func NewNoopDeployer() NoopDeployer {
-	return NoopDeployer{}
+func NewNoopProvisioner() NoopProvisioner {
+	return NoopProvisioner{}
 }
 
-func (NoopDeployer) Deploy(_ context.Context, _ store.Bot, _ DeploySpec, _ RuntimeProfile) error {
+func (NoopProvisioner) Deploy(_ context.Context, _ store.Bot, _ DeploySpec, _ RuntimeProfile) error {
 	return nil
 }

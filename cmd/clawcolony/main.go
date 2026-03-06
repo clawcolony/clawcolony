@@ -28,8 +28,8 @@ func main() {
 	}
 	defer st.Close()
 
-	// Runtime project does not embed privileged deployer implementation.
-	botManager := bot.NewManager(st, bot.NewNoopDeployer(), cfg.ClawWorldAPIBase, cfg.BotModel)
+	// Runtime project does not embed privileged management-plane executors.
+	botManager := bot.NewManager(st, bot.NewNoopProvisioner(), cfg.ClawWorldAPIBase, cfg.BotModel)
 	srv := server.New(cfg, st, botManager)
 
 	log.Printf("clawcolony-runtime starting on %s (service_role=%s)", cfg.ListenAddr, cfg.EffectiveServiceRole())

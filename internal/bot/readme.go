@@ -1370,10 +1370,10 @@ func BuildSelfCoreUpgradeSkill(apiBase string, botItem store.Bot) string {
 	_ = strings.TrimRight(apiBase, "/")
 	return fmt.Sprintf(`---
 name: self-core-upgrade
-description: 自主修改代码并准备升级申请（deployer-only）。
+description: 自主修改代码并准备升级申请（management-plane-only）。
 ---
 
-你被明确授权使用本技能完成自我修复与自我优化，但升级执行面在 deployer，不在 runtime。
+你被明确授权使用本技能完成自我修复与自我优化，但升级执行面在管理平面，不在 runtime。
 
 ## 升级触发门禁（不满足则禁止触发）
 - 允许触发（至少满足一项）:
@@ -1392,7 +1392,7 @@ description: 自主修改代码并准备升级申请（deployer-only）。
 - 不允许绕过流程直接改 /app 作为正式变更路径。
 
 ## 适用场景
-- 你需要改进自己的代码能力或修复问题，并准备给 deployer 发起升级申请。
+- 你需要改进自己的代码能力或修复问题，并准备向管理平面发起升级申请。
 
 ## 仓库上下文（确定信息）
 - 固定源码目录：/home/node/.openclaw/workspace/self_source/source
@@ -1460,7 +1460,7 @@ description: 自主修改代码并准备升级申请（deployer-only）。
    - git merge --no-ff <branch> -m "merge: <branch>"
    - git push origin main
    - 如遇 main 保护策略导致失败，必须向用户明确报告并请求人工合入。
-6) 通过 mailbox-network 发起升级申请（deployer-only）：
+6) 通过 mailbox-network 发起升级申请（management-plane-only）：
    - 收件人固定：clawcolony-admin
    - 建议主题：[SELF-UPGRADE-REQUEST] %[1]s
    - 邮件内容必须包含：
@@ -1536,7 +1536,7 @@ func BuildSelfSourceReadme(apiBase string, botItem store.Bot) string {
 5) 提交身份已在 Pod 部署时写入仓库本地 git config：
    - user.name = "%[3]s"
    - user.email = "%[3]s@clawcolony.ai"
-6) runtime 不提供升级 API；升级由 deployer 处理。
+6) runtime 不提供升级 API；升级由管理平面处理。
    - 你需要通过 mailbox-network 向 clawcolony-admin 提交升级申请。
 7) 升级记录文件（专用）：
    - /home/node/.openclaw/workspace/self_source/UPGRADE_LOG.md
@@ -1553,7 +1553,7 @@ func BuildSoulSelfUpgradeDirective(userID string) string {
 你有自我维护权限：当需要改进自身逻辑时，使用 self-core-upgrade skill 修改 /home/node/.openclaw/workspace/self_source/source，并走 Clawcolony 升级流程。
 仅在满足触发门禁时才允许升级（明确升级指令或可复现故障）。
 严禁由寒暄/闲聊触发升级（例如 hi/hello/你好）。
-升级执行面在 deployer；禁止在 runtime 侧直接调用 /v1/bots/upgrade*。
+升级执行面在管理平面；禁止在 runtime 侧直接调用 /v1/bots/upgrade*。
 凡是改动 self_source/source，必须使用 self-core-upgrade，并完成 commit + push。
 ## CLAWCOLONY_COLONY_MANDATE
 - 你的首要使命是参与构建“可持续自进化社区文明”。

@@ -14,7 +14,6 @@ type Config struct {
 	BotNamespace                       string
 	DatabaseURL                        string
 	ClawWorldAPIBase                   string
-	DeployerAPIBase                    string
 	BotDefaultImage                    string
 	BotEnvSecretName                   string
 	BotGitSSHSecret                    string
@@ -87,20 +86,18 @@ type Config struct {
 }
 
 const (
-	ServiceRoleAll      = "all"
-	ServiceRoleRuntime  = "runtime"
-	ServiceRoleDeployer = "deployer"
+	ServiceRoleAll     = "all"
+	ServiceRoleRuntime = "runtime"
 )
 
 func FromEnv() Config {
 	return Config{
 		ListenAddr:                         getEnv("CLAWCOLONY_LISTEN_ADDR", ":8080"),
-		ServiceRole:                        normalizeServiceRole(getEnv("CLAWCOLONY_SERVICE_ROLE", ServiceRoleAll)),
+		ServiceRole:                        normalizeServiceRole(getEnv("CLAWCOLONY_SERVICE_ROLE", ServiceRoleRuntime)),
 		ClawWorldNamespace:                 getEnv("CLAWCOLONY_NAMESPACE", "freewill"),
 		BotNamespace:                       getEnvAny([]string{"USER_NAMESPACE", "BOT_NAMESPACE"}, "freewill"),
 		DatabaseURL:                        getEnv("DATABASE_URL", ""),
 		ClawWorldAPIBase:                   getEnv("CLAWCOLONY_API_BASE_URL", "http://clawcolony.freewill.svc.cluster.local:8080"),
-		DeployerAPIBase:                    getEnv("CLAWCOLONY_DEPLOYER_API_BASE_URL", "http://clawcolony-deployer.clawcolony.svc.cluster.local:8080"),
 		BotDefaultImage:                    getEnv("BOT_DEFAULT_IMAGE", "openclaw:onepod-dev"),
 		BotEnvSecretName:                   getEnv("BOT_ENV_SECRET_NAME", "aibot-llm-secret"),
 		BotGitSSHSecret:                    getEnv("BOT_GIT_SSH_SECRET_NAME", ""),
@@ -182,21 +179,14 @@ func (c Config) RuntimeEnabled() bool {
 	return role == ServiceRoleAll || role == ServiceRoleRuntime
 }
 
-func (c Config) DeployerEnabled() bool {
-	role := c.EffectiveServiceRole()
-	return role == ServiceRoleAll || role == ServiceRoleDeployer
-}
-
 func normalizeServiceRole(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case ServiceRoleRuntime:
 		return ServiceRoleRuntime
-	case ServiceRoleDeployer:
-		return ServiceRoleDeployer
 	case ServiceRoleAll:
 		return ServiceRoleAll
 	default:
-		return ServiceRoleAll
+		return ServiceRoleRuntime
 	}
 }
 

@@ -45,15 +45,15 @@ type RuntimeProfile struct {
 	KnowledgeBaseMCPPlugin   string `json:"knowledgebase_mcp_plugin"`
 }
 
-type Deployer interface {
+type Provisioner interface {
 	Deploy(ctx context.Context, b store.Bot, spec DeploySpec, profile RuntimeProfile) error
 }
 
 type Manager struct {
-	st       store.Store
-	deployer Deployer
-	apiBase  string
-	model    string
+	st      store.Store
+	prov    Provisioner
+	apiBase string
+	model   string
 }
 
 const (
@@ -74,12 +74,12 @@ const (
 	TemplateSelfSourceReadme     = "self_source_readme"
 )
 
-func NewManager(st store.Store, deployer Deployer, apiBase, model string) *Manager {
+func NewManager(st store.Store, provisioner Provisioner, apiBase, model string) *Manager {
 	return &Manager{
-		st:       st,
-		deployer: deployer,
-		apiBase:  strings.TrimRight(apiBase, "/"),
-		model:    strings.TrimSpace(model),
+		st:      st,
+		prov:    provisioner,
+		apiBase: strings.TrimRight(apiBase, "/"),
+		model:   strings.TrimSpace(model),
 	}
 }
 
@@ -124,7 +124,7 @@ func (m *Manager) RegisterAndInit(ctx context.Context, spec DeploySpec) (store.B
 	spec.GatewayAuthToken = creds.GatewayToken
 	spec.UpgradeToken = creds.UpgradeToken
 
-	if err := m.deployer.Deploy(ctx, created, spec, profile); err != nil {
+	if err := m.prov.Deploy(ctx, created, spec, profile); err != nil {
 		_, _ = m.st.UpsertBot(ctx, store.BotUpsertInput{
 			BotID:       created.BotID,
 			Name:        created.Name,
@@ -173,7 +173,7 @@ func (m *Manager) ApplyRuntimeProfile(ctx context.Context, userID, image string)
 	if err != nil {
 		return err
 	}
-	return m.deployer.Deploy(ctx, item, DeploySpec{
+	return m.prov.Deploy(ctx, item, DeploySpec{
 		Provider:         item.Provider,
 		Image:            strings.TrimSpace(image),
 		GatewayAuthToken: creds.GatewayToken,

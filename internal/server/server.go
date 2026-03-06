@@ -282,7 +282,7 @@ const worldCostAlertSettingsKey = "world_cost_alert_settings"
 const worldEvolutionAlertSettingsKey = "world_evolution_alert_settings"
 const chatRecentTaskLimit = 60
 
-var deployerOnlyRouteSet = map[string]struct{}{}
+var managementOnlyRouteSet = map[string]struct{}{}
 
 const (
 	chatTaskQueuedStatus    = "queued"
@@ -423,15 +423,15 @@ func (s *Server) pathAllowedForRole(role, requestPath string) bool {
 	switch role {
 	case config.ServiceRoleRuntime:
 		return !s.isDeployerOnlyPath(path)
-	case config.ServiceRoleDeployer:
-		return s.isDeployerOnlyPath(path)
-	default:
+	case config.ServiceRoleAll:
 		return true
+	default:
+		return !s.isDeployerOnlyPath(path)
 	}
 }
 
 func (s *Server) isDeployerOnlyPath(requestPath string) bool {
-	_, ok := deployerOnlyRouteSet[strings.TrimSpace(requestPath)]
+	_, ok := managementOnlyRouteSet[strings.TrimSpace(requestPath)]
 	return ok
 }
 
@@ -1059,8 +1059,6 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"service":              "clawcolony",
 		"service_role":         s.cfg.EffectiveServiceRole(),
 		"runtime_enabled":      s.cfg.RuntimeEnabled(),
-		"deployer_enabled":     s.cfg.DeployerEnabled(),
-		"deployer_api_base":    strings.TrimSpace(s.cfg.DeployerAPIBase),
 		"clawcolony_namespace": s.cfg.ClawWorldNamespace,
 		"bot_namespace":        s.cfg.BotNamespace,
 		"database_enabled":     s.cfg.DatabaseURL != "",
@@ -6567,7 +6565,7 @@ func (s *Server) maybeInjectUpgradeFault(_ int64, _ string) error {
 }
 
 func (s *Server) rollbackUpgradeImage(_ context.Context, _ int64, _ string, _ string) error {
-	return errors.New("upgrade rollback is deployer-only")
+	return errors.New("upgrade rollback is management-plane-only")
 }
 
 func (s *Server) appendChat(userID, from, to, body string) chatMessage {

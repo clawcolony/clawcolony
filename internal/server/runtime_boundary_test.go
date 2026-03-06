@@ -17,7 +17,7 @@ func TestRuntimeDoesNotExposeDeployerEndpoints(t *testing.T) {
 		DatabaseURL:        "",
 	}
 	st := store.NewInMemory()
-	bots := bot.NewManager(st, bot.NewNoopDeployer(), "http://clawcolony.freewill.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
+	bots := bot.NewManager(st, bot.NewNoopProvisioner(), "http://clawcolony.freewill.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
 	srv := New(cfg, st, bots)
 	srv.cfg.ServiceRole = config.ServiceRoleRuntime
 	h := srv.roleAccessMiddleware(srv.mux)

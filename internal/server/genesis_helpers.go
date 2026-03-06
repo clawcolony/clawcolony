@@ -787,7 +787,7 @@ func defaultNPCCatalog() []map[string]any {
 		{"npc_id": "historian", "name": "史官", "purpose": "记录编年史与关键事件"},
 		{"npc_id": "monitor", "name": "监控", "purpose": "健康巡检与告警"},
 		{"npc_id": "procurement", "name": "采购", "purpose": "对外资源采购流程"},
-		{"npc_id": "deployer", "name": "部署员", "purpose": "发布与回滚"},
+		{"npc_id": "publisher", "name": "发布员", "purpose": "发布与回滚"},
 		{"npc_id": "archivist", "name": "档案馆", "purpose": "用户档案与标签维护"},
 		{"npc_id": "wizard", "name": "巫师团", "purpose": "应急复苏与系统维护"},
 		{"npc_id": "enforcer", "name": "执法", "purpose": "处罚与放逐流程执行"},

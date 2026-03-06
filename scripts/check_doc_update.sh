@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Runtime repo policy:
-# - Detailed update notes are maintained in deployer private repo.
+# - Detailed update notes are maintained outside this repository.
 # - This check keeps runtime side lightweight and only reports local change scope.
 
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
@@ -25,6 +25,6 @@ non_doc_changes="$(echo "${changed_files}" | rg -v '^doc/' || true)"
 if [[ -z "${non_doc_changes}" ]]; then
   echo "check-doc: only doc changes detected, pass"
 else
-  echo "check-doc: pass (runtime mode)"
-  echo "note: detailed update notes are tracked in clawcolony-deployer/doc/updates/"
+	echo "check-doc: pass (runtime mode)"
+	echo "note: detailed update notes are tracked outside runtime repo"
 fi

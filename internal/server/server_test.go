@@ -30,7 +30,7 @@ func newTestServer() *Server {
 		DatabaseURL:        "",
 	}
 	st := store.NewInMemory()
-	bots := bot.NewManager(st, bot.NewNoopDeployer(), "http://clawcolony.freewill.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
+	bots := bot.NewManager(st, bot.NewNoopProvisioner(), "http://clawcolony.freewill.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
 	s := New(cfg, st, bots)
 	s.kubeClient = nil
 	s.resolveUpgradeRepoURL = func(_ context.Context, _ string) string {
@@ -162,7 +162,7 @@ func TestRoleAccessRuntimeBlocksDeployerRoutes(t *testing.T) {
 
 	w := doJSONRequest(t, h, http.MethodGet, "/v1/bots/upgrade/history?limit=5", nil)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("runtime mode should block deployer route, got=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("runtime mode should block management-only route, got=%d body=%s", w.Code, w.Body.String())
 	}
 
 	w = doJSONRequest(t, h, http.MethodGet, "/v1/meta", nil)
@@ -171,14 +171,14 @@ func TestRoleAccessRuntimeBlocksDeployerRoutes(t *testing.T) {
 	}
 }
 
-func TestRoleAccessDeployerBlocksRuntimeRoutes(t *testing.T) {
+func TestRoleAccessUnknownRoleFallsBackToRuntime(t *testing.T) {
 	srv := newTestServer()
-	srv.cfg.ServiceRole = config.ServiceRoleDeployer
+	srv.cfg.ServiceRole = "management"
 	h := srv.roleAccessMiddleware(srv.mux)
 
 	w := doJSONRequest(t, h, http.MethodGet, "/v1/mail/inbox?user_id=u1", nil)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("deployer mode should block runtime route, got=%d body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("unknown role should fallback to runtime routing, got=%d body=%s", w.Code, w.Body.String())
 	}
 
 	w = doJSONRequest(t, h, http.MethodGet, "/v1/openclaw/admin/overview", nil)
@@ -199,14 +199,13 @@ func TestRoleAccessAllAllowsBoth(t *testing.T) {
 
 	w = doJSONRequest(t, h, http.MethodGet, "/v1/openclaw/admin/overview", nil)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("runtime repo should not expose deployer route directly, got=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("runtime repo should not expose management route directly, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
 func TestDashboardAdminProxyRuntimeForwardsToDeployer(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.ServiceRole = config.ServiceRoleRuntime
-	srv.cfg.DeployerAPIBase = "http://deployer.invalid"
 	h := srv.roleAccessMiddleware(srv.mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/dashboard-admin/openclaw/admin/overview?limit=20", nil)
@@ -220,7 +219,6 @@ func TestDashboardAdminProxyRuntimeForwardsToDeployer(t *testing.T) {
 func TestDashboardAdminProxyAllDispatchesLocal(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.ServiceRole = config.ServiceRoleAll
-	srv.cfg.DeployerAPIBase = "http://deployer.invalid"
 	h := srv.roleAccessMiddleware(srv.mux)
 
 	w := doJSONRequest(t, h, http.MethodGet, "/v1/dashboard-admin/openclaw/admin/github/health", nil)
@@ -889,7 +887,7 @@ func TestMailMarkReadQueryAndContactsContext(t *testing.T) {
 }
 
 func TestBotUpgradeRequiresInternalToken(t *testing.T) {
-	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
+	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
@@ -914,7 +912,7 @@ func TestBotUpgradeRequiresInternalToken(t *testing.T) {
 }
 
 func TestBotUpgradeEnforcesBranchPolicy(t *testing.T) {
-	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
+	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
@@ -954,7 +952,7 @@ func TestBotUpgradeEnforcesBranchPolicy(t *testing.T) {
 }
 
 func TestBotUpgradeReturnsTaskIDAndSupportsTaskQuery(t *testing.T) {
-	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
+	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
@@ -1007,7 +1005,7 @@ func TestBotUpgradeReturnsTaskIDAndSupportsTaskQuery(t *testing.T) {
 }
 
 func TestBotUpgradeEmitsToolCostEvent(t *testing.T) {
-	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
+	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
@@ -1045,7 +1043,7 @@ func TestBotUpgradeEmitsToolCostEvent(t *testing.T) {
 }
 
 func TestBotUpgradeBlockedWhenUserIsDyingForT3(t *testing.T) {
-	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
+	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
@@ -1083,7 +1081,7 @@ func TestBotUpgradeBlockedWhenUserIsDyingForT3(t *testing.T) {
 }
 
 func TestOpenClawAdminRegisterTaskEndpoints(t *testing.T) {
-	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes direct /v1/openclaw/admin/* routes")
+	t.Skip("moved to management-plane repo: runtime no longer exposes direct /v1/openclaw/admin/* routes")
 	srv := newTestServer()
 	task, err := srv.store.CreateRegisterTask(context.Background(), store.RegisterTask{
 		Provider:  "openclaw",
@@ -1121,7 +1119,7 @@ func TestOpenClawAdminRegisterTaskEndpoints(t *testing.T) {
 }
 
 func TestOpenClawAdminActionBlockedByToolTierGate(t *testing.T) {
-	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes direct /v1/openclaw/admin/* routes")
+	t.Skip("moved to management-plane repo: runtime no longer exposes direct /v1/openclaw/admin/* routes")
 	srv := newTestServer()
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
 	if w.Code != http.StatusAccepted {
@@ -4261,7 +4259,7 @@ func TestNPCTickCoversAllCatalogRoles(t *testing.T) {
 		`"npc_id":"historian"`,
 		`"npc_id":"monitor"`,
 		`"npc_id":"procurement"`,
-		`"npc_id":"deployer"`,
+		`"npc_id":"publisher"`,
 		`"npc_id":"wizard"`,
 		`"npc_id":"enforcer"`,
 		`"npc_id":"archivist"`,
@@ -4373,6 +4371,6 @@ func TestUpgradeFaultInjectionHelpers(t *testing.T) {
 		t.Fatalf("runtime should not inject upgrade faults: %v", err)
 	}
 	if err := srv.rollbackUpgradeImage(context.Background(), 1, "user-x", ""); err == nil {
-		t.Fatalf("runtime rollback should be deployer-only")
+		t.Fatalf("runtime rollback should be management-plane-only")
 	}
 }

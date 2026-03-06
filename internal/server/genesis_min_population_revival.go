@@ -65,7 +65,7 @@ func (s *Server) runMinPopulationRevival(ctx context.Context, tickID int64) erro
 
 	subject := "[WORLD-REVIVAL] min population recovery triggered"
 	body := fmt.Sprintf(
-		"tick_id=%d\nmin_population=%d\ncurrent_population=%d\naction_required=trigger_user_creation_in_deployer",
+		"tick_id=%d\nmin_population=%d\ncurrent_population=%d\naction_required=trigger_user_creation_in_management_plane",
 		tickID, minPopulation, current,
 	)
 	s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{clawWorldSystemID}, subject, body)
