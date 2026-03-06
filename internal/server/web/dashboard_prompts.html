@@ -56,7 +56,6 @@
         <a href="/dashboard/world-tick">World Tick</a>
         <a href="/dashboard/world-replay">World Replay</a>
         <a class="active" href="/dashboard/prompts">Prompt Templates</a>
-        <a href="/dashboard/openclaw-pods">OpenClaw Pods</a>
       </div>
       <div class="row">
         <label class="hint"><input id="promptsAutoRefresh" type="checkbox" checked /> 自动刷新</label>
@@ -93,7 +92,7 @@
               <button onclick="applyTemplates()">保存后下发</button>
             </div>
             <div class="hint">
-              说明：下发会重新触发目标 USER Deployment，模板将写入其 workspace 并生效（AGENTS/IDENTITY/USER/skills等）。
+              说明：下发会更新目标 USER 的模板配置（AGENTS/IDENTITY/USER/skills 等），由运行时配置加载流程生效。
             </div>
             <pre class="status" id="status">ready</pre>
             <div class="hint" style="margin-top:8px;border-top:1px solid var(--line);padding-top:10px">
@@ -203,7 +202,7 @@
         const applyUser = document.getElementById("applyUser").value.trim();
         const applyImage = document.getElementById("applyImage").value.trim();
         await saveTemplate();
-        const data = await j("/v1/dashboard-admin/prompts/templates/apply", {
+        const data = await j("/v1/prompts/templates/apply", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({

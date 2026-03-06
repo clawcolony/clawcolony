@@ -23,7 +23,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,8 +82,6 @@ type Server struct {
 	chatWorkerOnce       sync.Once
 	mailNotifyMu         sync.Mutex
 	mailNotified         map[string]time.Time
-	upgradeMu            sync.Mutex
-	upgradeBusy          map[string]bool
 	openclawProxy        *http.Transport
 	githubMockMu         sync.Mutex
 	githubMockRepo       map[string]time.Time
@@ -110,7 +107,7 @@ type Server struct {
 	worldFreezeAtRisk    int
 	worldFreezeThreshold int
 	toolSandboxExec      toolSandboxExecutor
-	// test hook: override per-user upgrade repo resolver.
+	// compatibility hook kept for shared test helpers; runtime does not execute upgrades.
 	resolveUpgradeRepoURL func(ctx context.Context, userID string) string
 }
 
@@ -285,28 +282,7 @@ const worldCostAlertSettingsKey = "world_cost_alert_settings"
 const worldEvolutionAlertSettingsKey = "world_evolution_alert_settings"
 const chatRecentTaskLimit = 60
 
-var deployerOnlyRouteSet = map[string]struct{}{
-	"/v1/bots/register":                   {},
-	"/v1/prompts/templates/apply":         {},
-	"/v1/bots/upgrade":                    {},
-	"/v1/bots/upgrade/task":               {},
-	"/v1/bots/upgrade/history":            {},
-	"/v1/bots/upgrade/steps":              {},
-	"/v1/openclaw/admin/overview":         {},
-	"/v1/openclaw/admin/action":           {},
-	"/v1/openclaw/admin/register/task":    {},
-	"/v1/openclaw/admin/register/history": {},
-	"/v1/openclaw/admin/github/health":    {},
-}
-
-var dashboardAdminAllowedTargetSet = map[string]struct{}{
-	"/v1/prompts/templates/apply":         {},
-	"/v1/openclaw/admin/overview":         {},
-	"/v1/openclaw/admin/action":           {},
-	"/v1/openclaw/admin/register/task":    {},
-	"/v1/openclaw/admin/register/history": {},
-	"/v1/openclaw/admin/github/health":    {},
-}
+var deployerOnlyRouteSet = map[string]struct{}{}
 
 const (
 	chatTaskQueuedStatus    = "queued"
@@ -374,7 +350,6 @@ func New(cfg config.Config, st store.Store, bots *bot.Manager) *Server {
 		chatExecSem:     make(chan struct{}, chatExecMaxConc),
 		chatUserExecSem: make(map[string]chan struct{}),
 		mailNotified:    make(map[string]time.Time),
-		upgradeBusy:     make(map[string]bool),
 		githubMockRepo:  make(map[string]time.Time),
 		githubMockKeys:  make(map[string][]string),
 		alertLastSent:   make(map[string]time.Time),
@@ -932,7 +907,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/world/evolution-alert-settings/upsert", s.handleWorldEvolutionAlertSettingsUpsert)
 	s.mux.HandleFunc("/v1/world/evolution-alert-notifications", s.handleWorldEvolutionAlertNotifications)
 	s.mux.HandleFunc("/v1/bots", s.handleBots)
-	s.mux.HandleFunc("/v1/bots/register", s.handleBotRegister)
 	s.mux.HandleFunc("/v1/bots/profile/readme", s.handleBotProfileReadme)
 	s.mux.HandleFunc("/v1/prompts/templates", s.handlePromptTemplates)
 	s.mux.HandleFunc("/v1/prompts/templates/upsert", s.handlePromptTemplateUpsert)
@@ -1048,12 +1022,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/bots/openclaw/status", s.handleOpenClawStatus)
 	s.mux.HandleFunc("/v1/system/request-logs", s.handleRequestLogs)
 	s.mux.HandleFunc("/v1/system/openclaw-dashboard-config", s.handleOpenClawDashboardConfig)
-	s.mux.HandleFunc("/v1/dashboard-admin/prompts/templates/apply", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/overview", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/action", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/register/task", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/register/history", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/github/health", s.handleDashboardAdminProxy)
 	s.mux.HandleFunc("/v1/tasks/pi", s.handlePiTaskMeta)
 	s.mux.HandleFunc("/v1/tasks/pi/claim", s.handlePiTaskClaim)
 	s.mux.HandleFunc("/v1/tasks/pi/submit", s.handlePiTaskSubmit)
@@ -1061,47 +1029,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/dashboard", s.handleDashboard)
 	s.mux.HandleFunc("/dashboard/", s.handleDashboard)
 	s.mux.HandleFunc("/", s.handleNotFound)
-}
-
-type registerBotRequest struct {
-	Provider string `json:"provider"`
-	Image    string `json:"image"`
-}
-
-func (s *Server) handleBotRegister(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if s.bots == nil {
-		writeError(w, http.StatusServiceUnavailable, "bot manager is not configured")
-		return
-	}
-
-	var req registerBotRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	item, err := s.bots.RegisterAndInit(r.Context(), bot.DeploySpec{
-		Provider: req.Provider,
-		Image:    req.Image,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	readme, err := s.bots.BuildProtocolReadme(r.Context(), item)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"item":             item,
-		"protocol_readme":  readme,
-		"default_api_base": s.defaultAPIBaseURL(),
-	})
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -6541,514 +6468,6 @@ func (s *Server) chatStateSnapshot(userID string) chatStateView {
 	return out
 }
 
-var upgradeBranchPattern = regexp.MustCompile(`^[A-Za-z0-9._/\-]{1,128}$`)
-
-type botUpgradeRequest struct {
-	UserID string `json:"user_id"`
-	Branch string `json:"branch"`
-}
-
-func (s *Server) handleBotUpgrade(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req botUpgradeRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	req.Branch = strings.TrimSpace(req.Branch)
-	if req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
-		return
-	}
-	if !s.checkUpgradeAuth(r, req.UserID) {
-		writeError(w, http.StatusUnauthorized, "unauthorized upgrade request")
-		return
-	}
-	if req.Branch == "" {
-		writeError(w, http.StatusBadRequest, "branch is required")
-		return
-	}
-	if !isValidBranchName(req.Branch) {
-		writeError(w, http.StatusBadRequest, "invalid branch")
-		return
-	}
-	if !isAllowedUpgradeBranch(req.UserID, req.Branch) {
-		writeError(w, http.StatusBadRequest, "branch must be main or match feature/<user_id>-*")
-		return
-	}
-	if _, err := s.store.GetBot(r.Context(), req.UserID); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("user not found: %v", err))
-		return
-	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	if err := s.ensureToolTierAllowed(r.Context(), req.UserID, "tool.bot.upgrade"); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	repoURLRaw := ""
-	if s.resolveUpgradeRepoURL != nil {
-		repoURLRaw = strings.TrimSpace(s.resolveUpgradeRepoURL(r.Context(), req.UserID))
-	} else {
-		repoURLRaw = strings.TrimSpace(s.resolveBotSourceRepoURL(r.Context(), req.UserID))
-	}
-	if repoURLRaw == "" {
-		writeError(w, http.StatusServiceUnavailable, "upgrade repo is not configured for user")
-		return
-	}
-	if !s.beginUpgrade(req.UserID) {
-		writeError(w, http.StatusConflict, "upgrade already running for this user")
-		return
-	}
-
-	now := time.Now().UTC()
-	audit, err := s.store.CreateUpgradeAudit(r.Context(), store.UpgradeAudit{
-		UserID:      req.UserID,
-		RepoURL:     maskRepoURL(repoURLRaw),
-		Branch:      req.Branch,
-		RequestedBy: req.UserID,
-		Status:      "running",
-		StartedAt:   now,
-	})
-	if err != nil {
-		s.endUpgrade(req.UserID)
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.appendToolCostEvent(r.Context(), req.UserID, "tool.bot.upgrade", 1, map[string]any{
-		"upgrade_task_id": audit.ID,
-		"branch":          req.Branch,
-	})
-	go s.runUpgradeAsync(audit.ID, req.UserID, req.Branch, repoURLRaw)
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"upgrade_task_id": audit.ID,
-		"status":          "running",
-		"audit":           audit,
-	})
-}
-
-func (s *Server) runUpgradeAsync(auditID int64, userID, branch, repoURL string) {
-	defer s.endUpgrade(userID)
-	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.UpgradeTimeout)
-	defer cancel()
-
-	image, runErr := s.runUpgrade(ctx, auditID, userID, branch, repoURL)
-	finishedAt := time.Now().UTC()
-	if runErr != nil {
-		_, _ = s.store.AppendUpgradeStep(context.Background(), store.UpgradeStep{
-			AuditID: auditID,
-			Step:    "summary",
-			Status:  "failed",
-			Output:  runErr.Error(),
-		})
-		_, _ = s.store.FinishUpgradeAudit(context.Background(), auditID, "failed", image, runErr.Error(), finishedAt)
-		return
-	}
-	_, _ = s.store.AppendUpgradeStep(context.Background(), store.UpgradeStep{
-		AuditID: auditID,
-		Step:    "summary",
-		Status:  "ok",
-		Output:  "upgrade completed",
-	})
-	_, _ = s.store.FinishUpgradeAudit(context.Background(), auditID, "succeeded", image, "", finishedAt)
-}
-
-func (s *Server) handleBotUpgradeTask(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	raw := strings.TrimSpace(r.URL.Query().Get("upgrade_task_id"))
-	if raw == "" {
-		writeError(w, http.StatusBadRequest, "upgrade_task_id is required")
-		return
-	}
-	upgradeTaskID, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || upgradeTaskID <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid upgrade_task_id")
-		return
-	}
-	audit, err := s.store.GetUpgradeAudit(r.Context(), upgradeTaskID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
-	steps, err := s.store.ListUpgradeSteps(r.Context(), upgradeTaskID, 2000)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	var lastStep any
-	if n := len(steps); n > 0 {
-		lastStep = steps[n-1]
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"upgrade_task_id": upgradeTaskID,
-		"audit":           audit,
-		"last_step":       lastStep,
-		"step_count":      len(steps),
-	})
-}
-
-func (s *Server) handleBotUpgradeHistory(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	userID := queryUserID(r)
-	limit := parseLimit(r.URL.Query().Get("limit"), 100)
-	items, err := s.store.ListUpgradeAudits(r.Context(), userID, limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-func (s *Server) handleBotUpgradeSteps(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	raw := strings.TrimSpace(r.URL.Query().Get("audit_id"))
-	if raw == "" {
-		writeError(w, http.StatusBadRequest, "audit_id is required")
-		return
-	}
-	auditID, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || auditID <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid audit_id")
-		return
-	}
-	limit := parseLimit(r.URL.Query().Get("limit"), 500)
-	items, err := s.store.ListUpgradeSteps(r.Context(), auditID, limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-func isValidBranchName(branch string) bool {
-	if !upgradeBranchPattern.MatchString(branch) {
-		return false
-	}
-	if strings.Contains(branch, "..") || strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") {
-		return false
-	}
-	return true
-}
-
-func isAllowedUpgradeBranch(userID, branch string) bool {
-	userID = strings.TrimSpace(userID)
-	branch = strings.TrimSpace(branch)
-	if userID == "" || branch == "" {
-		return false
-	}
-	if branch == "main" {
-		return true
-	}
-	return strings.HasPrefix(branch, "feature/"+userID+"-")
-}
-
-func (s *Server) maybeInjectUpgradeFault(auditID int64, step string) error {
-	target := strings.TrimSpace(strings.ToLower(s.cfg.UpgradeFaultInjectStep))
-	if target == "" {
-		return nil
-	}
-	if strings.TrimSpace(strings.ToLower(step)) != target {
-		return nil
-	}
-	msg := fmt.Sprintf("fault injected at step=%s", step)
-	_ = s.logUpgradeStep(context.Background(), auditID, "fault_inject", "failed", step, msg)
-	return fmt.Errorf("%s", msg)
-}
-
-func (s *Server) rollbackUpgradeImage(ctx context.Context, auditID int64, userID, oldImage string) error {
-	oldImage = strings.TrimSpace(oldImage)
-	if oldImage == "" {
-		_ = s.logUpgradeStep(ctx, auditID, "auto_rollback", "skipped", "set image", "old image unavailable")
-		return nil
-	}
-	setCmd := fmt.Sprintf("kubectl -n %s set image deployment/%s bot=%s", s.cfg.BotNamespace, userID, oldImage)
-	out, err := s.runCmd(ctx, "", nil, "kubectl", "-n", s.cfg.BotNamespace, "set", "image", "deployment/"+userID, "bot="+oldImage)
-	if err != nil {
-		_ = s.logUpgradeStep(ctx, auditID, "auto_rollback", "failed", setCmd, out)
-		return fmt.Errorf("rollback set image failed: %w", err)
-	}
-	_ = s.logUpgradeStep(ctx, auditID, "auto_rollback", "ok", setCmd, out)
-	rolloutCmd := fmt.Sprintf("kubectl -n %s rollout status deployment/%s --timeout=300s", s.cfg.BotNamespace, userID)
-	out, err = s.runCmd(ctx, "", nil, "kubectl", "-n", s.cfg.BotNamespace, "rollout", "status", "deployment/"+userID, "--timeout=300s")
-	if err != nil {
-		_ = s.logUpgradeStep(ctx, auditID, "auto_rollback_rollout", "failed", rolloutCmd, out)
-		return fmt.Errorf("rollback rollout failed: %w", err)
-	}
-	_ = s.logUpgradeStep(ctx, auditID, "auto_rollback_rollout", "ok", rolloutCmd, out)
-	return nil
-}
-
-func (s *Server) checkUpgradeAuth(r *http.Request, userID string) bool {
-	expected := strings.TrimSpace(s.userUpgradeToken(r.Context(), userID))
-	if expected == "" {
-		return true
-	}
-	if strings.TrimSpace(r.Header.Get("X-Clawcolony-Upgrade-Token")) == expected {
-		return true
-	}
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	const pfx = "Bearer "
-	if strings.HasPrefix(auth, pfx) && strings.TrimSpace(auth[len(pfx):]) == expected {
-		return true
-	}
-	return false
-}
-
-func (s *Server) beginUpgrade(userID string) bool {
-	s.upgradeMu.Lock()
-	defer s.upgradeMu.Unlock()
-	if s.upgradeBusy[userID] {
-		return false
-	}
-	s.upgradeBusy[userID] = true
-	return true
-}
-
-func (s *Server) endUpgrade(userID string) {
-	s.upgradeMu.Lock()
-	delete(s.upgradeBusy, userID)
-	s.upgradeMu.Unlock()
-}
-
-func (s *Server) runUpgrade(ctx context.Context, auditID int64, userID, branch, repoURLRaw string) (image string, retErr error) {
-	rollbackEnabled := s.cfg.UpgradeAutoRollback
-	imageSwitched := false
-	oldImage := ""
-	defer func() {
-		if retErr == nil || !rollbackEnabled || !imageSwitched {
-			return
-		}
-		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		if rbErr := s.rollbackUpgradeImage(rctx, auditID, userID, oldImage); rbErr != nil {
-			retErr = fmt.Errorf("%w; rollback_error=%v", retErr, rbErr)
-			return
-		}
-		retErr = fmt.Errorf("%w; rollback=ok", retErr)
-	}()
-
-	required := []string{"git", "docker", "kubectl"}
-	for _, bin := range required {
-		p, err := exec.LookPath(bin)
-		if err != nil {
-			_ = s.logUpgradeStep(ctx, auditID, "check_dependency", "failed", bin, err.Error())
-			return "", fmt.Errorf("missing dependency: %s", bin)
-		}
-		_ = s.logUpgradeStep(ctx, auditID, "check_dependency", "ok", bin, p)
-	}
-
-	absWorkdir, err := filepath.Abs(s.cfg.UpgradeWorkDir)
-	if err != nil {
-		return "", err
-	}
-	runDir := filepath.Join(absWorkdir, fmt.Sprintf("%s-%d", sanitizeName(userID), time.Now().UTC().UnixNano()))
-	repoDir := filepath.Join(runDir, "repo")
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(runDir)
-
-	repoURL := strings.TrimSpace(repoURLRaw)
-	if repoURL == "" {
-		return "", fmt.Errorf("upgrade repo is empty")
-	}
-	repoURLMasked := maskRepoURL(repoURL)
-	baseImage := strings.TrimSpace(s.cfg.UpgradeImagePref)
-	if baseImage == "" {
-		baseImage = "openclaw"
-	}
-	repoPart := baseImage
-	tagPart := "latest"
-	if i := strings.LastIndex(baseImage, ":"); i > strings.LastIndex(baseImage, "/") {
-		repoPart = baseImage[:i]
-		tagPart = baseImage[i+1:]
-	}
-	image = fmt.Sprintf("%s:%s-%s-%d", repoPart, sanitizeName(tagPart), sanitizeName(userID), time.Now().UTC().Unix())
-	platform := "linux/amd64"
-	if p, pErr := s.detectPlatform(ctx, auditID); pErr == nil {
-		platform = p
-	}
-
-	if err := s.logUpgradeStep(ctx, auditID, "git_clone", "running", fmt.Sprintf("git clone --depth=1 --branch %s %s %s", branch, repoURLMasked, repoDir), ""); err != nil {
-		return "", err
-	}
-	if out, err := s.runCmd(ctx, "", nil, "git", "clone", "--depth=1", "--branch", branch, repoURL, repoDir); err != nil {
-		_ = s.logUpgradeStep(ctx, auditID, "git_clone", "failed", "git clone", out)
-		return "", fmt.Errorf("git clone failed: %w", err)
-	} else {
-		_ = s.logUpgradeStep(ctx, auditID, "git_clone", "ok", "git clone", out)
-	}
-
-	dockerfile := strings.TrimSpace(s.cfg.UpgradeDockerfile)
-	if dockerfile == "" {
-		dockerfile = "Dockerfile"
-	}
-	dfPath := filepath.Join(repoDir, dockerfile)
-	if _, err := os.Stat(dfPath); err != nil {
-		_ = s.logUpgradeStep(ctx, auditID, "validate_dockerfile", "failed", dfPath, err.Error())
-		return "", fmt.Errorf("dockerfile not found: %s", dfPath)
-	}
-	_ = s.logUpgradeStep(ctx, auditID, "validate_dockerfile", "ok", dfPath, "")
-
-	buildBaseArgs := []string{"build", "--platform", platform, "-f", dfPath, "-t", image}
-	legacyBaseArgs := []string{"build", "--platform", platform, "-f", dfPath, "-t", image}
-	buildkitArgs := append([]string{}, buildBaseArgs...)
-	buildkitArgs = append(buildkitArgs, "--progress=plain")
-	legacyArgs := append([]string{}, legacyBaseArgs...)
-	// docker buildx build does not support --memory/--cpus flags directly.
-	// Keep these knobs for legacy build fallback only (or future builder-level integration).
-	if s.cfg.UpgradeBuildNoCache {
-		buildkitArgs = append(buildkitArgs, "--no-cache")
-		legacyArgs = append(legacyArgs, "--no-cache")
-	}
-	if v := strings.TrimSpace(s.cfg.UpgradeBuildArgs); v != "" {
-		extras := strings.Fields(v)
-		buildkitArgs = append(buildkitArgs, extras...)
-		legacyArgs = append(legacyArgs, extras...)
-	}
-	buildkitArgs = append(buildkitArgs, repoDir)
-	legacyArgs = append(legacyArgs, repoDir)
-	buildCmd := "docker " + strings.Join(buildkitArgs, " ")
-	if out, err := s.runCmd(ctx, "", []string{"DOCKER_BUILDKIT=1", "BUILDKIT_PROGRESS=plain"}, "docker", buildkitArgs...); err != nil {
-		errText := strings.ToLower(strings.TrimSpace(err.Error() + "\n" + out))
-		buildxMissing := strings.Contains(errText, "buildx component is missing or broken") || strings.Contains(errText, "buildkit is enabled but the buildx component is missing")
-		if buildxMissing {
-			_ = s.logUpgradeStep(ctx, auditID, "docker_build_buildkit", "failed", buildCmd, out)
-			legacyCmd := "docker " + strings.Join(legacyArgs, " ")
-			legacyOut, legacyErr := s.runCmd(ctx, "", nil, "docker", legacyArgs...)
-			if legacyErr != nil {
-				_ = s.logUpgradeStep(ctx, auditID, "docker_build_legacy", "failed", legacyCmd, legacyOut)
-				legacyErrText := strings.ToLower(strings.TrimSpace(legacyErr.Error() + "\n" + legacyOut))
-				if strings.Contains(legacyErrText, "signal: killed") || strings.Contains(legacyErrText, "out of memory") || strings.Contains(legacyErrText, "oom") {
-					return "", fmt.Errorf("docker build failed: process killed (possible OOM). try increasing Docker/Minikube memory, or set UPGRADE_DOCKER_BUILD_MEMORY / UPGRADE_DOCKER_BUILD_CPUS / UPGRADE_DOCKER_BUILD_NO_CACHE")
-				}
-				return "", fmt.Errorf("docker build failed after legacy fallback: %w", legacyErr)
-			}
-			_ = s.logUpgradeStep(ctx, auditID, "docker_build_legacy", "ok", legacyCmd, legacyOut)
-		} else {
-			_ = s.logUpgradeStep(ctx, auditID, "docker_build", "failed", buildCmd, out)
-			if strings.Contains(errText, "signal: killed") || strings.Contains(errText, "out of memory") || strings.Contains(errText, "oom") {
-				return "", fmt.Errorf("docker build failed: process killed (possible OOM). try increasing Docker/Minikube memory, or set UPGRADE_DOCKER_BUILD_MEMORY / UPGRADE_DOCKER_BUILD_CPUS / UPGRADE_DOCKER_BUILD_NO_CACHE")
-			}
-			return "", fmt.Errorf("docker build failed: %w", err)
-		}
-	} else {
-		_ = s.logUpgradeStep(ctx, auditID, "docker_build", "ok", buildCmd, out)
-	}
-
-	if _, err := exec.LookPath("minikube"); err == nil {
-		loadCmd := fmt.Sprintf("minikube image load %s", image)
-		if out, err := s.runCmd(ctx, "", nil, "minikube", "image", "load", image); err != nil {
-			_ = s.logUpgradeStep(ctx, auditID, "minikube_load", "failed", loadCmd, out)
-			return "", fmt.Errorf("minikube image load failed: %w", err)
-		} else {
-			_ = s.logUpgradeStep(ctx, auditID, "minikube_load", "ok", loadCmd, out)
-		}
-	} else {
-		_ = s.logUpgradeStep(ctx, auditID, "minikube_load", "skipped", "minikube", "minikube not installed; relying on node docker runtime cache")
-	}
-
-	getImageCmd := fmt.Sprintf("kubectl -n %s get deployment/%s -o jsonpath={.spec.template.spec.containers[?(@.name==\"bot\")].image}", s.cfg.BotNamespace, userID)
-	if out, err := s.runCmd(ctx, "", nil, "kubectl", "-n", s.cfg.BotNamespace, "get", "deployment/"+userID, "-o", "jsonpath={.spec.template.spec.containers[?(@.name==\"bot\")].image}"); err != nil {
-		_ = s.logUpgradeStep(ctx, auditID, "capture_current_image", "failed", getImageCmd, out)
-	} else {
-		oldImage = strings.TrimSpace(out)
-		_ = s.logUpgradeStep(ctx, auditID, "capture_current_image", "ok", getImageCmd, oldImage)
-	}
-
-	if err := s.maybeInjectUpgradeFault(auditID, "before_set_image"); err != nil {
-		return "", err
-	}
-
-	setBranchCmd := fmt.Sprintf("kubectl -n %s set env deployment/%s CLAWCOLONY_SOURCE_REPO_BRANCH=%s", s.cfg.BotNamespace, userID, branch)
-	if out, err := s.runCmd(ctx, "", nil, "kubectl", "-n", s.cfg.BotNamespace, "set", "env", "deployment/"+userID, "CLAWCOLONY_SOURCE_REPO_BRANCH="+branch); err != nil {
-		_ = s.logUpgradeStep(ctx, auditID, "set_source_branch", "failed", setBranchCmd, out)
-		return "", fmt.Errorf("set source branch failed: %w", err)
-	} else {
-		_ = s.logUpgradeStep(ctx, auditID, "set_source_branch", "ok", setBranchCmd, out)
-	}
-
-	setCmd := fmt.Sprintf("kubectl -n %s set image deployment/%s bot=%s", s.cfg.BotNamespace, userID, image)
-	if out, err := s.runCmd(ctx, "", nil, "kubectl", "-n", s.cfg.BotNamespace, "set", "image", "deployment/"+userID, "bot="+image); err != nil {
-		_ = s.logUpgradeStep(ctx, auditID, "set_image", "failed", setCmd, out)
-		return "", fmt.Errorf("set image failed: %w", err)
-	} else {
-		_ = s.logUpgradeStep(ctx, auditID, "set_image", "ok", setCmd, out)
-		imageSwitched = true
-	}
-
-	if err := s.maybeInjectUpgradeFault(auditID, "after_set_image"); err != nil {
-		return "", err
-	}
-
-	rolloutCmd := fmt.Sprintf("kubectl -n %s rollout status deployment/%s --timeout=300s", s.cfg.BotNamespace, userID)
-	if out, err := s.runCmd(ctx, "", nil, "kubectl", "-n", s.cfg.BotNamespace, "rollout", "status", "deployment/"+userID, "--timeout=300s"); err != nil {
-		_ = s.logUpgradeStep(ctx, auditID, "rollout_status", "failed", rolloutCmd, out)
-		return "", fmt.Errorf("rollout status failed: %w", err)
-	} else {
-		_ = s.logUpgradeStep(ctx, auditID, "rollout_status", "ok", rolloutCmd, out)
-	}
-
-	if err := s.maybeInjectUpgradeFault(auditID, "after_rollout"); err != nil {
-		return "", err
-	}
-
-	if s.cfg.UpgradeCanarySeconds > 0 {
-		waitDur := time.Duration(s.cfg.UpgradeCanarySeconds) * time.Second
-		_ = s.logUpgradeStep(ctx, auditID, "canary_wait", "running", fmt.Sprintf("sleep %s", waitDur.String()), "")
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(waitDur):
-		}
-		_ = s.logUpgradeStep(ctx, auditID, "canary_wait", "ok", fmt.Sprintf("sleep %s", waitDur.String()), "completed")
-	}
-
-	return image, nil
-}
-
-func (s *Server) detectPlatform(ctx context.Context, auditID int64) (string, error) {
-	out, err := s.runCmd(ctx, "", nil, "kubectl", "get", "nodes", "-o", "jsonpath={.items[0].status.nodeInfo.architecture}")
-	arch := strings.TrimSpace(out)
-	if err != nil {
-		_ = s.logUpgradeStep(ctx, auditID, "detect_arch", "failed", "kubectl get nodes -o jsonpath={.items[0].status.nodeInfo.architecture}", out)
-		arch = runtime.GOARCH
-		switch arch {
-		case "amd64", "arm64":
-			platform := "linux/" + arch
-			_ = s.logUpgradeStep(ctx, auditID, "detect_arch_fallback", "ok", "runtime.GOARCH", platform)
-			return platform, nil
-		}
-		return "", err
-	}
-	switch arch {
-	case "amd64", "x86_64":
-		_ = s.logUpgradeStep(ctx, auditID, "detect_arch", "ok", arch, "linux/amd64")
-		return "linux/amd64", nil
-	case "arm64", "aarch64":
-		_ = s.logUpgradeStep(ctx, auditID, "detect_arch", "ok", arch, "linux/arm64")
-		return "linux/arm64", nil
-	default:
-		_ = s.logUpgradeStep(ctx, auditID, "detect_arch", "failed", arch, "unsupported architecture")
-		return "", fmt.Errorf("unsupported architecture: %s", arch)
-	}
-}
-
 func (s *Server) runCmd(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
@@ -7066,94 +6485,13 @@ func (s *Server) runCmd(ctx context.Context, dir string, env []string, name stri
 	return combined, nil
 }
 
-func (s *Server) logUpgradeStep(ctx context.Context, auditID int64, step, status, command, output string) error {
-	output = strings.TrimSpace(output)
-	if len(output) > 12000 {
-		output = output[:12000] + "\n...[truncated]"
-	}
-	log.Printf("upgrade audit=%d step=%s status=%s command=%s output=%q", auditID, step, status, command, output)
-	_, err := s.store.AppendUpgradeStep(ctx, store.UpgradeStep{
-		AuditID: auditID,
-		Step:    step,
-		Status:  status,
-		Command: command,
-		Output:  output,
-	})
-	return err
+func (s *Server) maybeInjectUpgradeFault(_ int64, _ string) error {
+	// Runtime service has no upgrade execution plane.
+	return nil
 }
 
-func sanitizeName(v string) string {
-	v = strings.TrimSpace(strings.ToLower(v))
-	if v == "" {
-		return "unknown"
-	}
-	var b strings.Builder
-	for _, r := range v {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			b.WriteRune(r)
-			continue
-		}
-		if r == '_' || r == '/' || r == '.' {
-			b.WriteRune('-')
-			continue
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "unknown"
-	}
-	if len(out) > 48 {
-		return out[:48]
-	}
-	return out
-}
-
-func maskRepoURL(v string) string {
-	raw := strings.TrimSpace(v)
-	if raw == "" {
-		return raw
-	}
-	u, err := neturl.Parse(raw)
-	if err != nil {
-		return raw
-	}
-	if (u.Scheme == "https" || u.Scheme == "http") && u.User != nil {
-		u.User = neturl.User("******")
-		return u.String()
-	}
-	return raw
-}
-
-func withGitToken(repoURL, user, token string) (string, error) {
-	repoURL = strings.TrimSpace(repoURL)
-	user = strings.TrimSpace(user)
-	token = strings.TrimSpace(token)
-	if repoURL == "" {
-		return "", errors.New("empty repo url")
-	}
-	if token == "" {
-		return repoURL, nil
-	}
-	if user == "" {
-		user = "oauth2"
-	}
-	if strings.HasPrefix(repoURL, "git@") {
-		hostPath := strings.TrimPrefix(repoURL, "git@")
-		parts := strings.SplitN(hostPath, ":", 2)
-		if len(parts) != 2 {
-			return "", fmt.Errorf("invalid git ssh url: %s", repoURL)
-		}
-		repoURL = "https://" + parts[0] + "/" + parts[1]
-	}
-	u, err := neturl.Parse(repoURL)
-	if err != nil {
-		return "", err
-	}
-	if u.Scheme != "https" && u.Scheme != "http" {
-		return "", fmt.Errorf("unsupported repo scheme: %s", u.Scheme)
-	}
-	u.User = neturl.UserPassword(user, token)
-	return u.String(), nil
+func (s *Server) rollbackUpgradeImage(_ context.Context, _ int64, _ string, _ string) error {
+	return errors.New("upgrade rollback is deployer-only")
 }
 
 func (s *Server) appendChat(userID, from, to, body string) chatMessage {
@@ -7650,79 +6988,6 @@ func (s *Server) handleRequestLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-func (s *Server) handleDashboardAdminProxy(w http.ResponseWriter, r *http.Request) {
-	const prefix = "/v1/dashboard-admin/"
-	if !strings.HasPrefix(r.URL.Path, prefix) {
-		writeError(w, http.StatusBadRequest, "invalid dashboard admin path")
-		return
-	}
-	targetPath := "/v1/" + strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, prefix), "/")
-	if _, ok := dashboardAdminAllowedTargetSet[targetPath]; !ok {
-		writeError(w, http.StatusNotFound, "dashboard admin target is not allowed")
-		return
-	}
-	// Runtime project is a pure proxy for dashboard admin operations.
-	// All privileged actions must be forwarded to deployer service.
-	if !s.cfg.RuntimeEnabled() {
-		writeError(w, http.StatusNotFound, "dashboard admin proxy is runtime-only")
-		return
-	}
-	s.forwardDashboardAdminRequest(w, r, targetPath)
-}
-
-func (s *Server) forwardDashboardAdminRequest(w http.ResponseWriter, r *http.Request, targetPath string) {
-	base := strings.TrimSpace(s.cfg.DeployerAPIBase)
-	if base == "" {
-		writeError(w, http.StatusServiceUnavailable, "deployer api base is not configured")
-		return
-	}
-	backend, err := neturl.Parse(base)
-	if err != nil || strings.TrimSpace(backend.Scheme) == "" || strings.TrimSpace(backend.Host) == "" {
-		writeError(w, http.StatusServiceUnavailable, "invalid deployer api base")
-		return
-	}
-	target := *backend
-	target.Path = targetPath
-	target.RawQuery = r.URL.RawQuery
-
-	var bodyReader io.Reader
-	if r.Body != nil {
-		payload, readErr := io.ReadAll(r.Body)
-		if readErr != nil {
-			writeError(w, http.StatusBadRequest, readErr.Error())
-			return
-		}
-		bodyReader = bytes.NewReader(payload)
-	}
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bodyReader)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	for k, values := range r.Header {
-		for _, v := range values {
-			req.Header.Add(k, v)
-		}
-	}
-	req.Host = backend.Host
-	req.Header.Set("X-Clawcolony-Dashboard-Proxy", "runtime")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("dashboard admin proxy error: %s", err.Error()))
-		return
-	}
-	defer resp.Body.Close()
-
-	for k, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
-}
-
 func (s *Server) handleOpenClawProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -8031,33 +7296,6 @@ func (s *Server) resolveBotImageForApply(ctx context.Context, userID string) str
 	return ""
 }
 
-func (s *Server) resolveBotSourceRepoURL(ctx context.Context, userID string) string {
-	if s.kubeClient == nil {
-		return ""
-	}
-	if dep, err := s.kubeClient.AppsV1().Deployments(s.cfg.BotNamespace).Get(ctx, userID, metav1.GetOptions{}); err == nil {
-		for _, c := range dep.Spec.Template.Spec.Containers {
-			for _, ev := range c.Env {
-				if ev.Name == "CLAWCOLONY_SOURCE_REPO_URL" && strings.TrimSpace(ev.Value) != "" {
-					return strings.TrimSpace(ev.Value)
-				}
-			}
-		}
-	}
-	pod, err := s.latestBotPod(ctx, userID)
-	if err != nil {
-		return ""
-	}
-	for _, c := range pod.Spec.Containers {
-		for _, ev := range c.Env {
-			if ev.Name == "CLAWCOLONY_SOURCE_REPO_URL" && strings.TrimSpace(ev.Value) != "" {
-				return strings.TrimSpace(ev.Value)
-			}
-		}
-	}
-	return ""
-}
-
 func int64Ptr(v int64) *int64 {
 	return &v
 }
@@ -8187,19 +7425,6 @@ func (s *Server) runtimeGatewayTokenFromPod(ctx context.Context, userID string) 
 		}
 	}
 	return ""
-}
-
-func (s *Server) userUpgradeToken(ctx context.Context, userID string) string {
-	uid := strings.TrimSpace(userID)
-	if uid != "" {
-		creds, err := s.store.GetBotCredentials(ctx, uid)
-		if err == nil {
-			if tok := strings.TrimSpace(creds.UpgradeToken); tok != "" {
-				return tok
-			}
-		}
-	}
-	return strings.TrimSpace(s.cfg.UpgradeAuthToken)
 }
 
 func parseRFC3339Ptr(raw string) (*time.Time, error) {
@@ -8426,11 +7651,6 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/collab/artifacts?collab_id=<id>&user_id=<id>&limit=<n>",
 		"GET /v1/collab/events?collab_id=<id>&limit=<n>",
 		"GET /v1/system/request-logs?limit=<n>",
-		"GET /v1/dashboard-admin/openclaw/admin/overview",
-		"POST /v1/dashboard-admin/openclaw/admin/action",
-		"GET /v1/dashboard-admin/openclaw/admin/register/task?register_task_id=<id>",
-		"GET /v1/dashboard-admin/openclaw/admin/register/history?limit=<n>",
-		"GET /v1/dashboard-admin/openclaw/admin/github/health",
 	}
 }
 

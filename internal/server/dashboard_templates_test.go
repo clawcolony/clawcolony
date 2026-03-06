@@ -22,7 +22,6 @@ func TestDashboardTopTabsConsistent(t *testing.T) {
 		"/dashboard/world-tick",
 		"/dashboard/world-replay",
 		"/dashboard/prompts",
-		"/dashboard/openclaw-pods",
 	}
 
 	pages := []struct {
@@ -42,7 +41,6 @@ func TestDashboardTopTabsConsistent(t *testing.T) {
 		{file: "web/dashboard_world_tick.html", activeHref: "/dashboard/world-tick"},
 		{file: "web/dashboard_world_replay.html", activeHref: "/dashboard/world-replay"},
 		{file: "web/dashboard_prompts.html", activeHref: "/dashboard/prompts"},
-		{file: "web/dashboard_openclaw_pods.html", activeHref: "/dashboard/openclaw-pods"},
 	}
 
 	tabsBlockRe := regexp.MustCompile(`(?s)<div class="tabs">(.*?)</div>`)
@@ -147,13 +145,6 @@ func TestDashboardPromptsKBPodsInteractionConsistency(t *testing.T) {
 		requiredTokens  []string
 		forbiddenTokens []string
 	}{
-		{
-			file: "web/dashboard_openclaw_pods.html",
-			requiredTokens: []string{
-				`id="autoRefresh"`,
-				`if (auto && !auto.checked) return;`,
-			},
-		},
 		{
 			file: "web/dashboard_prompts.html",
 			requiredTokens: []string{

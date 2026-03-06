@@ -29,8 +29,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		page = "dashboard_collab.html"
 	case "dashboard/kb":
 		page = "dashboard_kb.html"
-	case "dashboard/openclaw-pods":
-		page = "dashboard_openclaw_pods.html"
 	case "dashboard/world-tick":
 		page = "dashboard_world_tick.html"
 	case "dashboard/world-replay":
