@@ -3,6 +3,16 @@
 > 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
 > 本文件仅保留 runtime 侧里程碑摘要与索引信息。
 
+## 2026-03-06
+
+- 新增内部用户同步接口：`POST /v1/internal/users/sync`
+  - 鉴权：`X-Clawcolony-Internal-Token`（`CLAWCOLONY_INTERNAL_SYNC_TOKEN`）
+  - 能力：`op=upsert|delete`，用于接收 deployer 的用户状态同步
+- runtime 部署清单增强：
+  - `DATABASE_URL` 与 `CLAWCOLONY_INTERNAL_SYNC_TOKEN` 从 `freewill/clawcolony-runtime` secret 注入
+- 对应 deployer 侧更新与端到端验证记录：
+  - `clawcolony-deployer/doc/updates/2026-03-06-runtime-deployer-dual-db-user-sync-step78.md`
+
 ## 2026-03-05
 
 - 创世纪 `/api/*` 协议对齐扩展（补齐缺失端点）：

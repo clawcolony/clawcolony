@@ -1,0 +1,75 @@
+package server
+
+import (
+	"context"
+	"net/http"
+	"testing"
+)
+
+func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "sync-token"
+	h := srv.roleAccessMiddleware(srv.mux)
+
+	req := map[string]any{
+		"op": "upsert",
+		"user": map[string]any{
+			"user_id":       "user-sync-1",
+			"name":          "roy",
+			"provider":      "openclaw",
+			"status":        "running",
+			"initialized":   true,
+			"gateway_token": "gw-sync-1",
+			"upgrade_token": "up-sync-1",
+		},
+	}
+
+	unauth := doJSONRequest(t, h, http.MethodPost, "/v1/internal/users/sync", req)
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("missing sync token should be unauthorized, got=%d body=%s", unauth.Code, unauth.Body.String())
+	}
+
+	upsert := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/internal/users/sync", req, map[string]string{
+		"X-Clawcolony-Internal-Token": "sync-token",
+	})
+	if upsert.Code != http.StatusOK {
+		t.Fatalf("upsert status=%d body=%s", upsert.Code, upsert.Body.String())
+	}
+
+	botItem, err := srv.store.GetBot(context.Background(), "user-sync-1")
+	if err != nil {
+		t.Fatalf("get synced bot: %v", err)
+	}
+	if botItem.Name != "roy" || botItem.Status != "running" || !botItem.Initialized {
+		t.Fatalf("unexpected bot after sync: %+v", botItem)
+	}
+
+	creds, err := srv.store.GetBotCredentials(context.Background(), "user-sync-1")
+	if err != nil {
+		t.Fatalf("get synced credentials: %v", err)
+	}
+	if creds.GatewayToken != "gw-sync-1" || creds.UpgradeToken != "up-sync-1" {
+		t.Fatalf("unexpected creds after sync: %+v", creds)
+	}
+
+	delReq := map[string]any{
+		"op": "delete",
+		"user": map[string]any{
+			"user_id": "user-sync-1",
+		},
+	}
+	del := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/internal/users/sync", delReq, map[string]string{
+		"X-Clawcolony-Internal-Token": "sync-token",
+	})
+	if del.Code != http.StatusOK {
+		t.Fatalf("delete status=%d body=%s", del.Code, del.Body.String())
+	}
+
+	after, err := srv.store.GetBot(context.Background(), "user-sync-1")
+	if err != nil {
+		t.Fatalf("get bot after delete: %v", err)
+	}
+	if after.Status != "deleted" || after.Initialized {
+		t.Fatalf("unexpected bot after delete sync: %+v", after)
+	}
+}

@@ -13,6 +13,7 @@ type Config struct {
 	ClawWorldNamespace                 string
 	BotNamespace                       string
 	DatabaseURL                        string
+	InternalSyncToken                  string
 	ClawWorldAPIBase                   string
 	BotDefaultImage                    string
 	BotEnvSecretName                   string
@@ -76,6 +77,7 @@ func FromEnv() Config {
 		ClawWorldNamespace:                 getEnv("CLAWCOLONY_NAMESPACE", "freewill"),
 		BotNamespace:                       getEnvAny([]string{"USER_NAMESPACE", "BOT_NAMESPACE"}, "freewill"),
 		DatabaseURL:                        getEnv("DATABASE_URL", ""),
+		InternalSyncToken:                  getEnv("CLAWCOLONY_INTERNAL_SYNC_TOKEN", ""),
 		ClawWorldAPIBase:                   getEnv("CLAWCOLONY_API_BASE_URL", "http://clawcolony.freewill.svc.cluster.local:8080"),
 		BotDefaultImage:                    getEnv("BOT_DEFAULT_IMAGE", "openclaw:onepod-dev"),
 		BotEnvSecretName:                   getEnv("BOT_ENV_SECRET_NAME", "aibot-llm-secret"),

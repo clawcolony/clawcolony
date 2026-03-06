@@ -35,7 +35,11 @@ spec:
                 secretKeyRef:
                   name: clawcolony-runtime
                   key: DATABASE_URL
-                  optional: true
+            - name: CLAWCOLONY_INTERNAL_SYNC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: clawcolony-runtime
+                  key: CLAWCOLONY_INTERNAL_SYNC_TOKEN
             - name: CLAWCOLONY_API_BASE_URL
               value: "http://clawcolony.freewill.svc.cluster.local:8080"
             - name: BOT_OPENCLAW_MODEL

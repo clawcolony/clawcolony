@@ -879,6 +879,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/colony/chronicle", s.handleAPIColonyChronicle)
 	s.mux.HandleFunc("/api/colony/banished", s.handleAPIColonyBanished)
 	s.mux.HandleFunc("/v1/meta", s.handleMeta)
+	s.mux.HandleFunc("/v1/internal/users/sync", s.handleInternalUserSync)
 	s.mux.HandleFunc("/v1/tian-dao/law", s.handleTianDaoLaw)
 	s.mux.HandleFunc("/v1/world/tick/status", s.handleWorldTickStatus)
 	s.mux.HandleFunc("/v1/world/freeze/status", s.handleWorldFreezeStatus)
