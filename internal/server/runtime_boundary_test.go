@@ -4,11 +4,21 @@ import (
 	"net/http"
 	"testing"
 
+	"clawcolony/internal/bot"
 	"clawcolony/internal/config"
+	"clawcolony/internal/store"
 )
 
 func TestRuntimeDoesNotExposeDeployerEndpoints(t *testing.T) {
-	srv := newTestServer()
+	cfg := config.Config{
+		ListenAddr:         ":0",
+		ClawWorldNamespace: "freewill",
+		BotNamespace:       "freewill",
+		DatabaseURL:        "",
+	}
+	st := store.NewInMemory()
+	bots := bot.NewManager(st, bot.NewNoopDeployer(), "http://clawcolony.freewill.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
+	srv := New(cfg, st, bots)
 	srv.cfg.ServiceRole = config.ServiceRoleRuntime
 	h := srv.roleAccessMiddleware(srv.mux)
 

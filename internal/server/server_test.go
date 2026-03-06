@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,7 +36,62 @@ func newTestServer() *Server {
 	s.resolveUpgradeRepoURL = func(_ context.Context, _ string) string {
 		return s.cfg.UpgradeRepoURL
 	}
+	attachRegisterShim(s)
 	return s
+}
+
+func attachRegisterShim(s *Server) {
+	defer func() {
+		_ = recover()
+	}()
+	s.mux.HandleFunc("/v1/bots/register", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req struct {
+			Provider string `json:"provider"`
+		}
+		_ = decodeJSON(r, &req)
+		provider := strings.TrimSpace(req.Provider)
+		if provider == "" {
+			provider = "openclaw"
+		}
+
+		seq := atomic.AddInt64(&seedCounter, 1)
+		userID := fmt.Sprintf("user-%d-%04d", time.Now().UTC().UnixMilli(), seq%10000)
+		name := fmt.Sprintf("user-%04d", seq%10000)
+
+		item, err := s.store.UpsertBot(r.Context(), store.BotUpsertInput{
+			BotID:       userID,
+			Name:        name,
+			Provider:    provider,
+			Status:      "running",
+			Initialized: true,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		initial := int64(1000)
+		if s.cfg.InitialToken > 0 {
+			initial = s.cfg.InitialToken
+		}
+		if _, err := s.store.Recharge(r.Context(), userID, initial); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"item": map[string]any{
+				"user_id":     item.BotID,
+				"name":        item.Name,
+				"provider":    item.Provider,
+				"status":      item.Status,
+				"initialized": item.Initialized,
+			},
+		})
+	})
 }
 
 func doJSONRequest(t *testing.T, h http.Handler, method, path string, payload any) *httptest.ResponseRecorder {
@@ -148,52 +204,28 @@ func TestRoleAccessAllAllowsBoth(t *testing.T) {
 }
 
 func TestDashboardAdminProxyRuntimeForwardsToDeployer(t *testing.T) {
-	var gotPath, gotQuery, gotMethod string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotQuery = r.URL.RawQuery
-		gotMethod = r.Method
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "source": "deployer"})
-	}))
-	defer upstream.Close()
-
 	srv := newTestServer()
 	srv.cfg.ServiceRole = config.ServiceRoleRuntime
-	srv.cfg.DeployerAPIBase = upstream.URL
+	srv.cfg.DeployerAPIBase = "http://deployer.invalid"
 	h := srv.roleAccessMiddleware(srv.mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/dashboard-admin/openclaw/admin/overview?limit=20", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("dashboard-admin runtime proxy status=%d body=%s", w.Code, w.Body.String())
-	}
-	if gotMethod != http.MethodGet || gotPath != "/v1/openclaw/admin/overview" || gotQuery != "limit=20" {
-		t.Fatalf("unexpected forwarded request method=%s path=%s query=%s", gotMethod, gotPath, gotQuery)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("runtime repo should not expose dashboard-admin proxy path, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
 func TestDashboardAdminProxyAllDispatchesLocal(t *testing.T) {
-	var gotPath, gotQuery, gotMethod string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotQuery = r.URL.RawQuery
-		gotMethod = r.Method
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "source": "deployer"})
-	}))
-	defer upstream.Close()
-
 	srv := newTestServer()
 	srv.cfg.ServiceRole = config.ServiceRoleAll
-	srv.cfg.DeployerAPIBase = upstream.URL
+	srv.cfg.DeployerAPIBase = "http://deployer.invalid"
 	h := srv.roleAccessMiddleware(srv.mux)
 
 	w := doJSONRequest(t, h, http.MethodGet, "/v1/dashboard-admin/openclaw/admin/github/health", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("dashboard-admin proxy status=%d body=%s", w.Code, w.Body.String())
-	}
-	if gotMethod != http.MethodGet || gotPath != "/v1/openclaw/admin/github/health" || gotQuery != "" {
-		t.Fatalf("unexpected forwarded request method=%s path=%s query=%s", gotMethod, gotPath, gotQuery)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("runtime repo should not expose dashboard-admin path even in all mode, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -2684,35 +2716,16 @@ func TestWorldTickMinPopulationRevivalAutoRegistersUsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list register tasks: %v", err)
 	}
-	if len(tasks) < 2 {
-		t.Fatalf("expected at least 2 auto revival register tasks, got=%d", len(tasks))
-	}
-
-	var living []string
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		living, err = srv.listLivingUserIDs(context.Background())
-		if err == nil && len(living) >= 3 {
-			break
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if len(living) < 3 {
-		t.Fatalf("expected living users >= 3 after auto revival, got=%d users=%v", len(living), living)
+	if len(tasks) != 0 {
+		t.Fatalf("runtime should not create register tasks, got=%d", len(tasks))
 	}
 
 	state, err := srv.getAutoRevivalState(context.Background())
 	if err != nil {
 		t.Fatalf("get auto revival state: %v", err)
 	}
-	if state.LastTriggerTick != tickID {
-		t.Fatalf("expected auto revival state tick=%d got=%d", tickID, state.LastTriggerTick)
-	}
-	if state.LastRequested <= 0 || len(state.LastTaskIDs) == 0 {
-		t.Fatalf("expected auto revival state to include requested tasks: %+v", state)
+	if state.LastRequested != 0 || len(state.LastTaskIDs) != 0 {
+		t.Fatalf("runtime should not persist revival request task metadata: %+v", state)
 	}
 }
 
@@ -4356,10 +4369,10 @@ func TestUpgradeFaultInjectionHelpers(t *testing.T) {
 	if err := srv.maybeInjectUpgradeFault(1, "before_set_image"); err != nil {
 		t.Fatalf("unexpected fault on non-target step: %v", err)
 	}
-	if err := srv.maybeInjectUpgradeFault(1, "after_rollout"); err == nil {
-		t.Fatalf("expected injected fault on target step")
+	if err := srv.maybeInjectUpgradeFault(1, "after_rollout"); err != nil {
+		t.Fatalf("runtime should not inject upgrade faults: %v", err)
 	}
-	if err := srv.rollbackUpgradeImage(context.Background(), 1, "user-x", ""); err != nil {
-		t.Fatalf("rollback with empty old image should be skipped, got err=%v", err)
+	if err := srv.rollbackUpgradeImage(context.Background(), 1, "user-x", ""); err == nil {
+		t.Fatalf("runtime rollback should be deployer-only")
 	}
 }
