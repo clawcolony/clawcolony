@@ -97,23 +97,8 @@
             </div>
             <pre class="status" id="status">ready</pre>
             <div class="hint" style="margin-top:8px;border-top:1px solid var(--line);padding-top:10px">
-              异步分支升级：提交后立即返回 `upgrade_task_id`，后台构建/部署。可按 task id 自动查询进度。
+              升级/部署能力已拆分到 deployer 服务；runtime 页面不再提供升级入口。
             </div>
-            <div class="row">
-              <label>升级 USER</label>
-              <select id="upgradeUser" style="width:300px">
-                <option value="">请选择 USER</option>
-              </select>
-              <label>branch</label>
-              <input id="upgradeBranch" placeholder="main 或 feature/<user_id>-<topic>" style="width:360px" />
-            </div>
-            <div class="row">
-              <label>升级鉴权 token(可选)</label>
-              <input id="upgradeToken" placeholder="X-Clawcolony-Upgrade-Token（留空则不带）" style="width:420px" />
-              <button class="ok" onclick="startUpgrade()">发起升级</button>
-              <button onclick="pollUpgradeTask()">手动刷新任务状态</button>
-            </div>
-            <pre class="status" id="upgradeStatus">upgrade: idle</pre>
           </div>
         </div>
       </section>
@@ -125,8 +110,6 @@
       let items = [];
       let selected = "";
       let bots = [];
-      let upgradeTaskId = 0;
-      let upgradePollTimer = null;
       let autoRefreshTick = 0;
       let editorDirty = false;
 
@@ -184,14 +167,6 @@
         const applyPrev = applySel.value;
         applySel.innerHTML = `<option value="">全部活跃 USER</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
         applySel.value = bots.some(b => b.user_id === applyPrev) ? applyPrev : "";
-
-        const upgradeSel = document.getElementById("upgradeUser");
-        const upgradePrev = upgradeSel.value;
-        upgradeSel.innerHTML = `<option value="">请选择 USER</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
-        upgradeSel.value = bots.some(b => b.user_id === upgradePrev) ? upgradePrev : "";
-        if (upgradeSel.value && !bots.some(b => b.user_id === upgradeSel.value)) {
-          upgradeSel.value = "";
-        }
       }
 
       function pick(key){
@@ -204,109 +179,6 @@
         const box = document.getElementById("status");
         box.className = `status ${cls||""}`;
         box.textContent = text;
-      }
-
-      function setUpgradeStatus(text, cls){
-        const box = document.getElementById("upgradeStatus");
-        box.className = `status ${cls||""}`;
-        box.textContent = text;
-      }
-
-      function currentUpgradeHeaders(){
-        const token = document.getElementById("upgradeToken").value.trim();
-        if (!token) return {"Content-Type":"application/json"};
-        return {
-          "Content-Type":"application/json",
-          "X-Clawcolony-Upgrade-Token": token
-        };
-      }
-
-      function autoFillBranch(){
-        const userId = document.getElementById("upgradeUser").value.trim();
-        const branchInput = document.getElementById("upgradeBranch");
-        if (!userId) return;
-        const v = branchInput.value.trim();
-        if (!v) {
-          branchInput.value = `feature/${userId}-`;
-        }
-      }
-
-      function stopUpgradePolling(){
-        if (upgradePollTimer) {
-          clearInterval(upgradePollTimer);
-          upgradePollTimer = null;
-        }
-      }
-
-      function renderUpgradeAudit(data){
-        const audit = data.audit || {};
-        const last = data.last_step || null;
-        const lines = [];
-        lines.push(`upgrade_task_id=${data.upgrade_task_id || "-"}`);
-        lines.push(`status=${audit.status || "-"}`);
-        lines.push(`user_id=${audit.user_id || "-"}`);
-        lines.push(`branch=${audit.branch || "-"}`);
-        lines.push(`image=${audit.image || "-"}`);
-        if (audit.error) lines.push(`error=${audit.error}`);
-        lines.push(`started_at=${audit.started_at || "-"}`);
-        lines.push(`finished_at=${audit.finished_at || "-"}`);
-        lines.push(`step_count=${data.step_count || 0}`);
-        if (last) {
-          lines.push(`last_step=${last.step || "-"} ${last.status || "-"}`);
-          if (last.output) lines.push(`last_output=${String(last.output).slice(0, 300)}`);
-        }
-        const cls = audit.status === "succeeded" ? "ok" : (audit.status === "failed" ? "bad" : "warn");
-        setUpgradeStatus(lines.join("\n"), cls);
-        if (audit.status === "succeeded" || audit.status === "failed") {
-          stopUpgradePolling();
-        }
-      }
-
-      async function pollUpgradeTask(){
-        if (!upgradeTaskId) {
-          setUpgradeStatus("upgrade_task_id 未设置。请先发起升级。", "warn");
-          return;
-        }
-        try {
-          const data = await j(`/v1/dashboard-admin/bots/upgrade/task?upgrade_task_id=${encodeURIComponent(String(upgradeTaskId))}`);
-          renderUpgradeAudit(data);
-        } catch (e) {
-          setUpgradeStatus("读取升级任务失败: " + String(e.message || e), "bad");
-        }
-      }
-
-      async function startUpgrade(){
-        const userId = document.getElementById("upgradeUser").value.trim();
-        const branch = document.getElementById("upgradeBranch").value.trim();
-        if (!userId) {
-          setUpgradeStatus("请先选择升级 USER。", "warn");
-          return;
-        }
-        if (!branch) {
-          setUpgradeStatus("请填写 branch。", "warn");
-          return;
-        }
-        setUpgradeStatus("正在提交升级任务...", "warn");
-        try {
-          const res = await fetch("/v1/dashboard-admin/bots/upgrade", {
-            method: "POST",
-            headers: currentUpgradeHeaders(),
-            body: JSON.stringify({user_id: userId, branch})
-          });
-          if (!res.ok) {
-            throw new Error(await res.text());
-          }
-          const data = await res.json();
-          upgradeTaskId = Number(data.upgrade_task_id || 0);
-          if (!upgradeTaskId) {
-            throw new Error("response missing upgrade_task_id");
-          }
-          renderUpgradeAudit(data);
-          stopUpgradePolling();
-          upgradePollTimer = setInterval(() => { void pollUpgradeTask(); }, 3000);
-        } catch (e) {
-          setUpgradeStatus("发起升级失败: " + String(e.message || e), "bad");
-        }
       }
 
       async function saveTemplate(){
@@ -347,10 +219,8 @@
         setStatus(lines.join("\n"), data.ok_count > 0 ? "ok" : "bad");
       }
 
-      document.getElementById("upgradeUser").addEventListener("change", autoFillBranch);
       document.getElementById("content").addEventListener("input", () => { editorDirty = true; });
       loadUsers().then(() => {
-        autoFillBranch();
         return refreshTemplates();
       }).catch(err => setStatus("加载失败: " + String(err.message || err), "bad"));
       setInterval(() => {
@@ -364,7 +234,6 @@
           refreshTemplates().catch(()=>{});
         }
       }, 5000);
-      window.addEventListener("beforeunload", stopUpgradePolling);
     </script>
   </body>
 </html>

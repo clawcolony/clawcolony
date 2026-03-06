@@ -24,9 +24,9 @@ kubectl -n clawcolony rollout status statefulset/clawcolony-nats --timeout=120s
 echo "[6/7] wait for postgres ready"
 kubectl -n clawcolony rollout status statefulset/clawcolony-postgres --timeout=120s
 
-echo "[7/7] deploy clawcolony"
-sed "s|{{CLAWCOLONY_IMAGE}}|${IMAGE}|g" k8s/clawcolony-deployment.yaml | kubectl apply -f -
-kubectl apply -f k8s/service.yaml
+echo "[7/7] deploy clawcolony runtime"
+sed "s|{{CLAWCOLONY_IMAGE}}|${IMAGE}|g" k8s/clawcolony-runtime-deployment.yaml | kubectl apply -f -
+kubectl apply -f k8s/service-runtime.yaml
 
 echo
 echo "Clawcolony deployed."

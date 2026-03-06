@@ -301,10 +301,6 @@ var deployerOnlyRouteSet = map[string]struct{}{
 
 var dashboardAdminAllowedTargetSet = map[string]struct{}{
 	"/v1/prompts/templates/apply":         {},
-	"/v1/bots/upgrade":                    {},
-	"/v1/bots/upgrade/task":               {},
-	"/v1/bots/upgrade/history":            {},
-	"/v1/bots/upgrade/steps":              {},
 	"/v1/openclaw/admin/overview":         {},
 	"/v1/openclaw/admin/action":           {},
 	"/v1/openclaw/admin/register/task":    {},
@@ -1048,19 +1044,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/chat/history", s.handleChatHistory)
 	s.mux.HandleFunc("/v1/chat/stream", s.handleChatStream)
 	s.mux.HandleFunc("/v1/chat/state", s.handleChatState)
-	s.mux.HandleFunc("/v1/bots/upgrade", s.handleBotUpgrade)
-	s.mux.HandleFunc("/v1/bots/upgrade/task", s.handleBotUpgradeTask)
-	s.mux.HandleFunc("/v1/bots/upgrade/history", s.handleBotUpgradeHistory)
-	s.mux.HandleFunc("/v1/bots/upgrade/steps", s.handleBotUpgradeSteps)
 	s.mux.HandleFunc("/v1/bots/openclaw/", s.handleOpenClawProxy)
 	s.mux.HandleFunc("/v1/bots/openclaw/status", s.handleOpenClawStatus)
 	s.mux.HandleFunc("/v1/system/request-logs", s.handleRequestLogs)
 	s.mux.HandleFunc("/v1/system/openclaw-dashboard-config", s.handleOpenClawDashboardConfig)
 	s.mux.HandleFunc("/v1/dashboard-admin/prompts/templates/apply", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/dashboard-admin/bots/upgrade", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/dashboard-admin/bots/upgrade/task", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/dashboard-admin/bots/upgrade/history", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/dashboard-admin/bots/upgrade/steps", s.handleDashboardAdminProxy)
 	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/overview", s.handleDashboardAdminProxy)
 	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/action", s.handleDashboardAdminProxy)
 	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/register/task", s.handleDashboardAdminProxy)
@@ -8438,10 +8426,6 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/collab/artifacts?collab_id=<id>&user_id=<id>&limit=<n>",
 		"GET /v1/collab/events?collab_id=<id>&limit=<n>",
 		"GET /v1/system/request-logs?limit=<n>",
-		"POST /v1/dashboard-admin/bots/upgrade",
-		"GET /v1/dashboard-admin/bots/upgrade/task?upgrade_task_id=<id>",
-		"GET /v1/dashboard-admin/bots/upgrade/history?user_id=<id>&limit=<n>",
-		"GET /v1/dashboard-admin/bots/upgrade/steps?audit_id=<id>&limit=<n>",
 		"GET /v1/dashboard-admin/openclaw/admin/overview",
 		"POST /v1/dashboard-admin/openclaw/admin/action",
 		"GET /v1/dashboard-admin/openclaw/admin/register/task?register_task_id=<id>",

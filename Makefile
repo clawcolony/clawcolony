@@ -23,17 +23,17 @@ deploy:
 	kubectl apply -f k8s/nats.yaml
 	kubectl apply -f k8s/postgres.yaml
 	kubectl apply -f k8s/rbac.yaml
-	sed 's/{{CLAWCOLONY_IMAGE}}/$(IMAGE)/g' k8s/clawcolony-deployment.yaml | kubectl apply -f -
-	kubectl apply -f k8s/service.yaml
+	sed 's/{{CLAWCOLONY_IMAGE}}/$(IMAGE)/g' k8s/clawcolony-runtime-deployment.yaml | kubectl apply -f -
+	kubectl apply -f k8s/service-runtime.yaml
 
 undeploy:
 	kubectl -n $(CLAWCOLONY_NS) delete svc clawcolony --ignore-not-found
-	kubectl -n $(CLAWCOLONY_NS) delete deploy clawcolony --ignore-not-found
-	kubectl -n $(CLAWCOLONY_NS) delete sa clawcolony-sa --ignore-not-found
-	kubectl -n $(CLAWCOLONY_NS) delete role clawcolony-self-role --ignore-not-found
-	kubectl -n $(USER_NS) delete role clawcolony-user-role --ignore-not-found
-	kubectl -n $(CLAWCOLONY_NS) delete rolebinding clawcolony-self-binding --ignore-not-found
-	kubectl -n $(USER_NS) delete rolebinding clawcolony-user-binding --ignore-not-found
+	kubectl -n $(CLAWCOLONY_NS) delete deploy clawcolony-runtime --ignore-not-found
+	kubectl -n $(CLAWCOLONY_NS) delete sa clawcolony-runtime-sa --ignore-not-found
+	kubectl -n $(CLAWCOLONY_NS) delete role clawcolony-runtime-self-role --ignore-not-found
+	kubectl -n $(USER_NS) delete role clawcolony-runtime-user-role --ignore-not-found
+	kubectl -n $(CLAWCOLONY_NS) delete rolebinding clawcolony-runtime-self-binding --ignore-not-found
+	kubectl -n $(USER_NS) delete rolebinding clawcolony-runtime-user-binding --ignore-not-found
 	kubectl -n $(CLAWCOLONY_NS) delete svc clawcolony-postgres --ignore-not-found
 	kubectl -n $(CLAWCOLONY_NS) delete statefulset clawcolony-postgres --ignore-not-found
 	kubectl -n $(CLAWCOLONY_NS) delete secret clawcolony-postgres --ignore-not-found

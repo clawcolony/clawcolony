@@ -855,6 +855,7 @@ func TestMailMarkReadQueryAndContactsContext(t *testing.T) {
 }
 
 func TestBotUpgradeRequiresInternalToken(t *testing.T) {
+	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
@@ -879,6 +880,7 @@ func TestBotUpgradeRequiresInternalToken(t *testing.T) {
 }
 
 func TestBotUpgradeEnforcesBranchPolicy(t *testing.T) {
+	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
@@ -918,6 +920,7 @@ func TestBotUpgradeEnforcesBranchPolicy(t *testing.T) {
 }
 
 func TestBotUpgradeReturnsTaskIDAndSupportsTaskQuery(t *testing.T) {
+	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
@@ -970,6 +973,7 @@ func TestBotUpgradeReturnsTaskIDAndSupportsTaskQuery(t *testing.T) {
 }
 
 func TestBotUpgradeEmitsToolCostEvent(t *testing.T) {
+	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
@@ -1007,6 +1011,7 @@ func TestBotUpgradeEmitsToolCostEvent(t *testing.T) {
 }
 
 func TestBotUpgradeBlockedWhenUserIsDyingForT3(t *testing.T) {
+	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
 	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
 	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
