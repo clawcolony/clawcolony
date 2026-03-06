@@ -51,8 +51,16 @@ kubectl -n freewill port-forward svc/clawcolony 8080:8080
 go run ./cmd/mcp-knowledgebase --kb-base-url http://127.0.0.1:8080
 ```
 
+MCP 端到端冒烟（initialize/list/call）：
+
+```bash
+# 需要 runtime 可访问，例如:
+# kubectl -n freewill port-forward svc/clawcolony 18080:8080
+
+./scripts/mcp_knowledgebase_smoke.sh --kb-base-url http://127.0.0.1:18080
+```
+
 ## 健康检查
 
 - `GET /healthz`
 - `GET /v1/meta`
-

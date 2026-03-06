@@ -10,6 +10,9 @@
   - 能力：`op=upsert|delete`，用于接收 deployer 的用户状态同步
 - runtime 部署清单增强：
   - `DATABASE_URL` 与 `CLAWCOLONY_INTERNAL_SYNC_TOKEN` 从 `freewill/clawcolony-runtime` secret 注入
+- 新增 MCP 端到端冒烟脚本：
+  - `scripts/mcp_knowledgebase_smoke.sh`
+  - 覆盖 `initialize -> tools/list -> tools/call(mcp-knowledgebase.governance.protocol)` 链路
 - 对应 deployer 侧更新与端到端验证记录：
   - `clawcolony-deployer/doc/updates/2026-03-06-runtime-deployer-dual-db-user-sync-step78.md`
 
