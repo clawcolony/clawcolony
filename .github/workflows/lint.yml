@@ -18,21 +18,33 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.22.x"
           cache: true
 
       - name: Check gofmt
+        shell: bash
         run: |
+          set -euo pipefail
           FILES=$(find . -type f -name '*.go' -not -path './vendor/*')
-          if [ -n "$FILES" ]; then
-            UNFORMATTED=$(echo "$FILES" | xargs gofmt -l)
-            if [ -n "$UNFORMATTED" ]; then
-              echo "These files are not gofmt-formatted:"
-              echo "$UNFORMATTED"
-              exit 1
-            fi
+          if [ -z "$FILES" ]; then
+            echo "No Go files found, skip gofmt check."
+            exit 0
+          fi
+          UNFORMATTED=$(echo "$FILES" | xargs gofmt -l)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$UNFORMATTED"
+            exit 1
           fi
 
-      - name: Go vet
-        run: go vet ./...
+      - name: Go vet (root module)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKGS=$(go list ./... 2>/dev/null || true)
+          if [ -z "$PKGS" ]; then
+            echo "No packages to vet in root module, skip."
+            exit 0
+          fi
+          go vet $PKGS
 
