@@ -7590,7 +7590,7 @@ func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiCatalog() []string {
-	return []string{
+	full := []string{
 		"POST /api/mail/send",
 		"POST /api/mail/send-list",
 		"GET /api/mail/inbox?user_id=<id>",
@@ -7735,6 +7735,34 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/collab/events?collab_id=<id>&limit=<n>",
 		"GET /v1/system/request-logs?limit=<n>",
 	}
+	role := s.cfg.EffectiveServiceRole()
+	if role == config.ServiceRoleAll {
+		return full
+	}
+	out := make([]string, 0, len(full))
+	for _, spec := range full {
+		path := apiCatalogPath(spec)
+		if path == "" {
+			continue
+		}
+		isManagement := s.isDeployerOnlyPath(path)
+		if !isManagement {
+			out = append(out, spec)
+		}
+	}
+	return out
+}
+
+func apiCatalogPath(spec string) string {
+	parts := strings.Fields(strings.TrimSpace(spec))
+	if len(parts) < 2 {
+		return ""
+	}
+	path := strings.TrimSpace(parts[1])
+	if idx := strings.Index(path, "?"); idx >= 0 {
+		path = path[:idx]
+	}
+	return strings.TrimSpace(path)
 }
 
 type botRuleStatus struct {

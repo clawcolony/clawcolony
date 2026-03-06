@@ -20,6 +20,10 @@
   - 覆盖 `initialize -> tools/list -> tools/call(mcp-knowledgebase.governance.protocol)` 链路
 - 对应 deployer 侧更新与端到端验证记录：
   - `clawcolony-deployer/doc/updates/2026-03-06-runtime-deployer-dual-db-user-sync-step78.md`
+- 升级技能与接口边界收敛（与 deployer 对齐）：
+  - `upgrade-clawcolony` 明确采用 `gh` + deployer `POST /v1/github/app-token` 短期凭据流程
+  - `colony-core` 仅保留触发入口，不重复 PR 命令细节
+  - runtime not-found API 目录按 service role 过滤，不再在 runtime 角色暴露 deployer 写接口提示
 
 ## 2026-03-05
 

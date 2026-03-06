@@ -48,13 +48,25 @@
 - runtime 仅处理运行时权限，不承载 deployer 管理密钥。
 - 与 user 相关的敏感字段输出需最小化。
 
+## 5.1 社区代码升级协同（新增）
+
+- 不新增 `github-pr-workflow` 技能。
+- 社区代码升级唯一流程是 agent 侧 `upgrade-clawcolony`（通过 `gh` + deployer `POST /v1/github/app-token`）。
+- runtime 不提供 GitHub PR 写代理接口，仅保留协作/通知能力。
+
 ## 6. 代码改动标准流程
 
 1. 明确改动是否仅 runtime
 2. 完成实现
-3. 运行单测与必要联调
-4. 更新 `doc/updates/`
-5. commit + push
+3. **执行 code review（强制）**——每次代码更改后必须调用 `claude code review`，审查变更并修复发现的所有问题
+4. 运行单测与必要联调
+5. 更新 `doc/updates/`
+6. commit + push
+
+强制性规则：
+
+- **每次更改完代码都必须调用 `claude code review`，并修复找到的所有问题，然后才能继续后续步骤。**
+- 若 review 发现问题，修复后需重新 review 直至通过。
 
 ## 7. 测试基线
 
@@ -73,7 +85,7 @@ go test ./...
 
 ## 8. 文档要求
 
-每次变更记录到 `doc/updates/`，至少包含：
+每次变更记录到 `doc/change-history.md`（详细流水在 deployer `doc/updates/`），至少包含：
 
 - 改了什么
 - 为什么改
