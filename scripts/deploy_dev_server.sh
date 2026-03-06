@@ -17,6 +17,7 @@ set -euo pipefail
 #   ./scripts/deploy_dev_server.sh --context minikube
 
 CLAWCOLONY_NS="clawcolony"
+RUNTIME_NS="freewill"
 USER_NS="freewill"
 KUBE_CONTEXT=""
 WAIT_TIMEOUT="300s"
@@ -36,6 +37,7 @@ Options:
   --skip-minikube-load     Disable minikube image load step.
   --context <name>         kubectl context to use.
   --clawcolony-ns <name>     Clawcolony namespace (default: clawcolony).
+  --runtime-ns <name>      Runtime namespace (default: freewill).
   --user-ns <name>         User namespace for agents (default: freewill).
   --timeout <duration>     Rollout wait timeout (default: 300s).
   -h, --help               Show this help.
@@ -66,6 +68,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --clawcolony-ns)
       CLAWCOLONY_NS="${2:?missing value for --clawcolony-ns}"
+      shift 2
+      ;;
+    --runtime-ns)
+      RUNTIME_NS="${2:?missing value for --runtime-ns}"
       shift 2
       ;;
     --user-ns)
@@ -149,10 +155,11 @@ sed "s|{{CLAWCOLONY_IMAGE}}|${IMAGE}|g" k8s/clawcolony-runtime-deployment.yaml |
 kubectl apply -f k8s/service-runtime.yaml
 
 echo "[7/9] wait clawcolony runtime rollout"
-kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-runtime --timeout="${WAIT_TIMEOUT}"
+kubectl -n "${RUNTIME_NS}" rollout status deployment/clawcolony-runtime --timeout="${WAIT_TIMEOUT}"
 
 echo "[8/9] quick status"
 kubectl -n "${CLAWCOLONY_NS}" get pods -o wide
+kubectl -n "${RUNTIME_NS}" get pods -o wide
 
 echo "[9/9] dependency secrets check (agent runtime)"
 if ! kubectl -n "${USER_NS}" get secret aibot-llm-secret >/dev/null 2>&1; then
@@ -169,9 +176,9 @@ echo "Deploy complete."
 echo "Image: ${IMAGE}"
 echo
 echo "Useful checks:"
-echo "  kubectl -n ${CLAWCOLONY_NS} get pods"
-echo "  kubectl -n ${CLAWCOLONY_NS} logs deploy/clawcolony-runtime --tail=200"
+echo "  kubectl -n ${RUNTIME_NS} get pods"
+echo "  kubectl -n ${RUNTIME_NS} logs deploy/clawcolony-runtime --tail=200"
 echo
 echo "Dashboard (via port-forward):"
-echo "  kubectl -n ${CLAWCOLONY_NS} port-forward svc/clawcolony 8080:8080"
+echo "  kubectl -n ${RUNTIME_NS} port-forward svc/clawcolony 8080:8080"
 echo "  open: http://127.0.0.1:8080/dashboard"

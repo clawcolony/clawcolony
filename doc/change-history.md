@@ -770,3 +770,19 @@
     - `TestMailMarkReadQueryAndContactsContext`
   - 对应记录：
     - `doc/updates/2026-03-05-reminder-resolution-token-visibility-contacts-context-step71.md`
+
+- 2026-03-06 提醒优先级降噪与测试去 deployer 依赖（Step 72）：
+  - 提醒策略收敛：
+    - 保留 `PINNED` 仅用于：
+      - `[COMMUNITY-COLLAB][ACTION:PROPOSAL]`
+      - `[KNOWLEDGEBASE-PROPOSAL][ACTION:VOTE]`
+      - `[AUTONOMY-RECOVERY]`
+    - `[AUTONOMY-LOOP]` / `[COMMUNITY-COLLAB][ACTION:MEANINGFUL-COMM]` / `KB ENROLL` 改为非置顶优先级提醒
+  - 冷却与重发窗口：
+    - 非置顶提醒重发冷却、KB enroll/vote 冷却、collab proposal 冷却分别生效
+  - Dashboard 与 API 可观测性增强：
+    - `GET /v1/mail/reminders` 增加 `pinned_count` 与 `unread_backlog` 分类统计
+    - Mail 页面显示 pinned/total 与 backlog 分项
+  - 测试修复（runtime 语义）：
+    - reminder 相关测试不再依赖 `/v1/bots/register`（runtime 不提供该路由）
+    - 改为直接 seed active user + token，覆盖自治提醒、协作提醒、提醒分流与消警

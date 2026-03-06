@@ -65,7 +65,7 @@ func TestTemplateRoleSeparation(t *testing.T) {
 
 func TestProtocolReadmeGenesisFocus(t *testing.T) {
 	b := sampleBot()
-	doc := BuildProtocolReadme("http://clawcolony.clawcolony.svc.cluster.local:8080", b)
+	doc := BuildProtocolReadme("http://clawcolony.freewill.svc.cluster.local:8080", b)
 	if strings.Contains(doc, "/v1/tasks/pi") {
 		t.Fatalf("protocol readme should not expose legacy pi task APIs")
 	}

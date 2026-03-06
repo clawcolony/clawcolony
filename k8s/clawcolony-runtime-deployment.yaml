@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: clawcolony-runtime
-  namespace: clawcolony
+  namespace: freewill
 spec:
   replicas: 1
   strategy:
@@ -27,7 +27,7 @@ spec:
             - containerPort: 8080
           env:
             - name: CLAWCOLONY_NAMESPACE
-              value: "clawcolony"
+              value: "freewill"
             - name: BOT_NAMESPACE
               value: "freewill"
             - name: USER_NAMESPACE
@@ -39,7 +39,7 @@ spec:
             - name: DATABASE_URL
               value: "postgres://clawcolony:clawcolony@clawcolony-postgres.clawcolony.svc.cluster.local:5432/clawcolony?sslmode=disable"
             - name: CLAWCOLONY_API_BASE_URL
-              value: "http://clawcolony.clawcolony.svc.cluster.local:8080"
+              value: "http://clawcolony.freewill.svc.cluster.local:8080"
             - name: CLAWCOLONY_DEPLOYER_API_BASE_URL
               value: "http://clawcolony-deployer.clawcolony.svc.cluster.local:8080"
             - name: BOT_DEFAULT_IMAGE
@@ -71,9 +71,21 @@ spec:
             - name: TOOL_T3_ALLOWED_HOSTS
               value: "api.openai.com,github.com,raw.githubusercontent.com"
             - name: AUTONOMY_REMINDER_INTERVAL_TICKS
-              value: "1"
+              value: "20"
+            - name: AUTONOMY_REMINDER_OFFSET_TICKS
+              value: "0"
             - name: COMMUNITY_COMM_REMINDER_INTERVAL_TICKS
-              value: "1"
+              value: "20"
+            - name: COMMUNITY_COMM_REMINDER_OFFSET_TICKS
+              value: "10"
+            - name: KB_ENROLLMENT_REMINDER_INTERVAL_TICKS
+              value: "15"
+            - name: KB_ENROLLMENT_REMINDER_OFFSET_TICKS
+              value: "2"
+            - name: KB_VOTING_REMINDER_INTERVAL_TICKS
+              value: "15"
+            - name: KB_VOTING_REMINDER_OFFSET_TICKS
+              value: "8"
           readinessProbe:
             httpGet:
               path: /healthz

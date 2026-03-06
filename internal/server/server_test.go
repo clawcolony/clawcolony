@@ -19,6 +19,8 @@ import (
 	"clawcolony/internal/store"
 )
 
+var seedCounter int64
+
 func newTestServer() *Server {
 	cfg := config.Config{
 		ListenAddr:         ":0",
@@ -27,7 +29,7 @@ func newTestServer() *Server {
 		DatabaseURL:        "",
 	}
 	st := store.NewInMemory()
-	bots := bot.NewManager(st, bot.NewNoopDeployer(), "http://clawcolony.clawcolony.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
+	bots := bot.NewManager(st, bot.NewNoopDeployer(), "http://clawcolony.freewill.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
 	s := New(cfg, st, bots)
 	s.kubeClient = nil
 	s.resolveUpgradeRepoURL = func(_ context.Context, _ string) string {
@@ -76,6 +78,25 @@ func doJSONRequestWithHeaders(t *testing.T, h http.Handler, method, path string,
 func ptrTime(t time.Time) *time.Time {
 	v := t
 	return &v
+}
+
+func seedActiveUser(t *testing.T, srv *Server) string {
+	t.Helper()
+	id := "user-test-" + strconv.FormatInt(atomic.AddInt64(&seedCounter, 1), 10)
+	_, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       id,
+		Name:        id,
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	})
+	if err != nil {
+		t.Fatalf("seed active user failed: %v", err)
+	}
+	if _, err := srv.store.Recharge(context.Background(), id, 1000); err != nil {
+		t.Fatalf("seed active user token recharge failed: %v", err)
+	}
+	return id
 }
 
 func TestRoleAccessRuntimeBlocksDeployerRoutes(t *testing.T) {
@@ -538,20 +559,11 @@ func TestWorldTickIncludesGenesisSemanticSteps(t *testing.T) {
 func TestAutonomyReminderTickPeriodicMail(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.AutonomyReminderIntervalTicks = 2
-
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("register status=%d body=%s", w.Code, w.Body.String())
-	}
-	var registerResp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &registerResp); err != nil {
-		t.Fatalf("unmarshal register response: %v", err)
-	}
-	userID := registerResp["item"].(map[string]any)["user_id"].(string)
+	userID := seedActiveUser(t, srv)
 
 	// tick=1, interval=2 => no reminder
 	srv.runWorldTick(context.Background())
-	inbox, err := srv.store.ListMailbox(context.Background(), userID, "inbox", "", "[AUTONOMY-LOOP][PINNED]", nil, nil, 20)
+	inbox, err := srv.store.ListMailbox(context.Background(), userID, "inbox", "", "[AUTONOMY-LOOP][PRIORITY:P3]", nil, nil, 20)
 	if err != nil {
 		t.Fatalf("list inbox after tick1: %v", err)
 	}
@@ -561,7 +573,7 @@ func TestAutonomyReminderTickPeriodicMail(t *testing.T) {
 
 	// tick=2 => send reminder
 	srv.runWorldTick(context.Background())
-	inbox, err = srv.store.ListMailbox(context.Background(), userID, "inbox", "", "[AUTONOMY-LOOP][PINNED]", nil, nil, 20)
+	inbox, err = srv.store.ListMailbox(context.Background(), userID, "inbox", "", "[AUTONOMY-LOOP][PRIORITY:P3]", nil, nil, 20)
 	if err != nil {
 		t.Fatalf("list inbox after tick2: %v", err)
 	}
@@ -576,16 +588,7 @@ func TestAutonomyReminderTickPeriodicMail(t *testing.T) {
 func TestAutonomyReminderTickSkipsWhenRecentMeaningfulOutbox(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.AutonomyReminderIntervalTicks = 2
-
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("register status=%d body=%s", w.Code, w.Body.String())
-	}
-	var registerResp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &registerResp); err != nil {
-		t.Fatalf("unmarshal register response: %v", err)
-	}
-	userID := registerResp["item"].(map[string]any)["user_id"].(string)
+	userID := seedActiveUser(t, srv)
 
 	if _, err := srv.store.SendMail(context.Background(), userID, []string{clawWorldSystemID}, "autonomy-loop/progress", "result=done\nevidence=proposal_id=101\nnext=submit vote"); err != nil {
 		t.Fatalf("seed outbox progress mail: %v", err)
@@ -594,7 +597,7 @@ func TestAutonomyReminderTickSkipsWhenRecentMeaningfulOutbox(t *testing.T) {
 	srv.runWorldTick(context.Background()) // tick=1
 	srv.runWorldTick(context.Background()) // tick=2 (due)
 
-	inbox, err := srv.store.ListMailbox(context.Background(), userID, "inbox", "", "[AUTONOMY-LOOP][PINNED]", nil, nil, 20)
+	inbox, err := srv.store.ListMailbox(context.Background(), userID, "inbox", "", "[AUTONOMY-LOOP][PRIORITY:P3]", nil, nil, 20)
 	if err != nil {
 		t.Fatalf("list inbox after tick2: %v", err)
 	}
@@ -732,19 +735,12 @@ func TestTokenBalanceEndpointIncludesCostSummary(t *testing.T) {
 
 func TestMailRemindersAndAutoResolve(t *testing.T) {
 	srv := newTestServer()
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("register status=%d body=%s", w.Code, w.Body.String())
-	}
-	var registerResp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &registerResp); err != nil {
-		t.Fatalf("unmarshal register response: %v", err)
-	}
-	userID := registerResp["item"].(map[string]any)["user_id"].(string)
+	userID := seedActiveUser(t, srv)
+	var w *httptest.ResponseRecorder
 
 	for _, sub := range []string{
-		"[COMMUNITY-COLLAB][PINNED][ACTION:MEANINGFUL-COMM] tick=23",
-		"[AUTONOMY-LOOP][PINNED][ACTION:REPORT+EXECUTE] tick=11",
+		"[COMMUNITY-COLLAB][PINNED][PRIORITY:P1][ACTION:PROPOSAL] collab_id=collab-23 tick=23",
+		"[KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE] #11 kb-topic",
 	} {
 		w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/mail/send", map[string]any{
 			"from_user_id": "clawcolony-admin",
@@ -764,45 +760,51 @@ func TestMailRemindersAndAutoResolve(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"count":2`)) {
 		t.Fatalf("reminders should include 2 pending items: %s", w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte(`"kind":"autonomy_loop"`)) {
-		t.Fatalf("reminders should include autonomy item: %s", w.Body.String())
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"kind":"community_collab"`)) ||
+		!bytes.Contains(w.Body.Bytes(), []byte(`"kind":"knowledgebase_proposal"`)) {
+		t.Fatalf("reminders should include community + knowledgebase items: %s", w.Body.String())
 	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/mail/send", map[string]any{
 		"from_user_id": userID,
 		"to_user_ids":  []string{"clawcolony-admin"},
-		"subject":      "autonomy-loop/11/" + userID,
-		"body":         "result=ok evidence proposal_id=9 next=continue",
+		"subject":      "community-collab/23/" + userID,
+		"body":         "result=ok evidence collab_id=collab-23 next=continue",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("progress send status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("community progress send status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"resolved_pinned_reminds"`)) {
-		t.Fatalf("progress send should include resolved count: %s", w.Body.String())
+		t.Fatalf("community progress send should include resolved count: %s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/mail/send", map[string]any{
+		"from_user_id": userID,
+		"to_user_ids":  []string{"clawcolony-admin"},
+		"subject":      "knowledgebase/11/" + userID,
+		"body":         "result=ok evidence proposal_id=11 next=continue",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("knowledgebase progress send status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"resolved_pinned_reminds"`)) {
+		t.Fatalf("knowledgebase progress send should include resolved count: %s", w.Body.String())
 	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/mail/reminders?user_id="+userID, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("reminders after resolve status=%d body=%s", w.Code, w.Body.String())
 	}
-	if bytes.Contains(w.Body.Bytes(), []byte(`"kind":"autonomy_loop"`)) {
-		t.Fatalf("autonomy reminder should be auto-resolved: %s", w.Body.String())
+	if bytes.Contains(w.Body.Bytes(), []byte(`"kind":"community_collab"`)) ||
+		bytes.Contains(w.Body.Bytes(), []byte(`"kind":"knowledgebase_proposal"`)) {
+		t.Fatalf("pinned reminders should be auto-resolved: %s", w.Body.String())
 	}
 }
 
 func TestMailMarkReadQueryAndContactsContext(t *testing.T) {
 	srv := newTestServer()
 	reg := func() string {
-		t.Helper()
-		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
-		if w.Code != http.StatusAccepted {
-			t.Fatalf("register status=%d body=%s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("unmarshal register response: %v", err)
-		}
-		return resp["item"].(map[string]any)["user_id"].(string)
+		return seedActiveUser(t, srv)
 	}
 	userA := reg()
 	userB := reg()
@@ -811,7 +813,7 @@ func TestMailMarkReadQueryAndContactsContext(t *testing.T) {
 		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/mail/send", map[string]any{
 			"from_user_id": "clawcolony-admin",
 			"to_user_ids":  []string{userA},
-			"subject":      "[KNOWLEDGEBASE-PROPOSAL][PINNED][ACTION:ENROLL] #1 topic",
+			"subject":      "[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P2][ACTION:ENROLL] #1 topic",
 			"body":         "proposal_id=1",
 		})
 		if w.Code != http.StatusAccepted {
@@ -820,7 +822,7 @@ func TestMailMarkReadQueryAndContactsContext(t *testing.T) {
 	}
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/mail/mark-read-query", map[string]any{
 		"user_id":        userA,
-		"subject_prefix": "[KNOWLEDGEBASE-PROPOSAL][PINNED][ACTION:ENROLL] #1",
+		"subject_prefix": "[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P2][ACTION:ENROLL] #1",
 		"limit":          50,
 	})
 	if w.Code != http.StatusOK {
@@ -2464,30 +2466,12 @@ func TestWorldTickStepsEndpoint(t *testing.T) {
 func TestCommunityCommReminderTickPeriodicMail(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.CommunityCommReminderIntervalTicks = 2
-
-	w1 := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
-	if w1.Code != http.StatusAccepted {
-		t.Fatalf("register #1 status=%d body=%s", w1.Code, w1.Body.String())
-	}
-	var r1 map[string]any
-	if err := json.Unmarshal(w1.Body.Bytes(), &r1); err != nil {
-		t.Fatalf("unmarshal register #1: %v", err)
-	}
-	user1 := r1["item"].(map[string]any)["user_id"].(string)
-
-	w2 := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
-	if w2.Code != http.StatusAccepted {
-		t.Fatalf("register #2 status=%d body=%s", w2.Code, w2.Body.String())
-	}
-	var r2 map[string]any
-	if err := json.Unmarshal(w2.Body.Bytes(), &r2); err != nil {
-		t.Fatalf("unmarshal register #2: %v", err)
-	}
-	user2 := r2["item"].(map[string]any)["user_id"].(string)
+	user1 := seedActiveUser(t, srv)
+	user2 := seedActiveUser(t, srv)
 
 	// tick=1, interval=2 => no reminder
 	srv.runWorldTick(context.Background())
-	inbox1, err := srv.store.ListMailbox(context.Background(), user1, "inbox", "", "[COMMUNITY-COLLAB][PINNED]", nil, nil, 20)
+	inbox1, err := srv.store.ListMailbox(context.Background(), user1, "inbox", "", "[COMMUNITY-COLLAB][PRIORITY:P2]", nil, nil, 20)
 	if err != nil {
 		t.Fatalf("list inbox1 tick1: %v", err)
 	}
@@ -2497,7 +2481,7 @@ func TestCommunityCommReminderTickPeriodicMail(t *testing.T) {
 
 	// tick=2 => send reminder to both users
 	srv.runWorldTick(context.Background())
-	inbox1, err = srv.store.ListMailbox(context.Background(), user1, "inbox", "", "[COMMUNITY-COLLAB][PINNED]", nil, nil, 20)
+	inbox1, err = srv.store.ListMailbox(context.Background(), user1, "inbox", "", "[COMMUNITY-COLLAB][PRIORITY:P2]", nil, nil, 20)
 	if err != nil {
 		t.Fatalf("list inbox1 tick2: %v", err)
 	}
@@ -2507,7 +2491,7 @@ func TestCommunityCommReminderTickPeriodicMail(t *testing.T) {
 	if !strings.Contains(inbox1[0].Body, "状态触发协作提醒") || !strings.Contains(inbox1[0].Body, "lookback=") {
 		t.Fatalf("unexpected community reminder body user1: %s", inbox1[0].Body)
 	}
-	inbox2, err := srv.store.ListMailbox(context.Background(), user2, "inbox", "", "[COMMUNITY-COLLAB][PINNED]", nil, nil, 20)
+	inbox2, err := srv.store.ListMailbox(context.Background(), user2, "inbox", "", "[COMMUNITY-COLLAB][PRIORITY:P2]", nil, nil, 20)
 	if err != nil {
 		t.Fatalf("list inbox2 tick2: %v", err)
 	}
@@ -2519,26 +2503,8 @@ func TestCommunityCommReminderTickPeriodicMail(t *testing.T) {
 func TestCommunityCommReminderTickSkipsUsersWithRecentPeerCommunication(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.CommunityCommReminderIntervalTicks = 2
-
-	w1 := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
-	if w1.Code != http.StatusAccepted {
-		t.Fatalf("register #1 status=%d body=%s", w1.Code, w1.Body.String())
-	}
-	var r1 map[string]any
-	if err := json.Unmarshal(w1.Body.Bytes(), &r1); err != nil {
-		t.Fatalf("unmarshal register #1: %v", err)
-	}
-	user1 := r1["item"].(map[string]any)["user_id"].(string)
-
-	w2 := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
-	if w2.Code != http.StatusAccepted {
-		t.Fatalf("register #2 status=%d body=%s", w2.Code, w2.Body.String())
-	}
-	var r2 map[string]any
-	if err := json.Unmarshal(w2.Body.Bytes(), &r2); err != nil {
-		t.Fatalf("unmarshal register #2: %v", err)
-	}
-	user2 := r2["item"].(map[string]any)["user_id"].(string)
+	user1 := seedActiveUser(t, srv)
+	user2 := seedActiveUser(t, srv)
 
 	if _, err := srv.store.SendMail(context.Background(), user1, []string{user2}, "community-collab/proposal", "result=invited\nevidence=collab_id=collab-1\nnext=assign roles"); err != nil {
 		t.Fatalf("seed peer outbox mail: %v", err)
@@ -2547,14 +2513,14 @@ func TestCommunityCommReminderTickSkipsUsersWithRecentPeerCommunication(t *testi
 	srv.runWorldTick(context.Background()) // tick=1
 	srv.runWorldTick(context.Background()) // tick=2 (due)
 
-	inbox1, err := srv.store.ListMailbox(context.Background(), user1, "inbox", "", "[COMMUNITY-COLLAB][PINNED]", nil, nil, 20)
+	inbox1, err := srv.store.ListMailbox(context.Background(), user1, "inbox", "", "[COMMUNITY-COLLAB][PRIORITY:P2]", nil, nil, 20)
 	if err != nil {
 		t.Fatalf("list inbox1: %v", err)
 	}
 	if len(inbox1) != 0 {
 		t.Fatalf("expected user1 skip reminder due to recent peer comm, got %d", len(inbox1))
 	}
-	inbox2, err := srv.store.ListMailbox(context.Background(), user2, "inbox", "", "[COMMUNITY-COLLAB][PINNED]", nil, nil, 20)
+	inbox2, err := srv.store.ListMailbox(context.Background(), user2, "inbox", "", "[COMMUNITY-COLLAB][PRIORITY:P2]", nil, nil, 20)
 	if err != nil {
 		t.Fatalf("list inbox2: %v", err)
 	}
@@ -2571,15 +2537,7 @@ func TestReminderTicksAreStaggeredByOffset(t *testing.T) {
 	srv.cfg.CommunityCommReminderOffsetTicks = 3
 
 	register := func() string {
-		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
-		if w.Code != http.StatusAccepted {
-			t.Fatalf("register status=%d body=%s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("unmarshal register body: %v", err)
-		}
-		return resp["item"].(map[string]any)["user_id"].(string)
+		return seedActiveUser(t, srv)
 	}
 	u1 := register()
 	_ = register()
@@ -2594,10 +2552,10 @@ func TestReminderTicksAreStaggeredByOffset(t *testing.T) {
 	hasCommunityTick3 := false
 	hasAutonomyTick6 := false
 	for _, it := range inbox {
-		if strings.Contains(it.Subject, "[COMMUNITY-COLLAB][PINNED]") && strings.Contains(it.Subject, "tick=3") {
+		if strings.Contains(it.Subject, "[COMMUNITY-COLLAB][PRIORITY:P2]") && strings.Contains(it.Subject, "tick=3") {
 			hasCommunityTick3 = true
 		}
-		if strings.Contains(it.Subject, "[AUTONOMY-LOOP][PINNED]") && strings.Contains(it.Subject, "tick=6") {
+		if strings.Contains(it.Subject, "[AUTONOMY-LOOP][PRIORITY:P3]") && strings.Contains(it.Subject, "tick=6") {
 			hasAutonomyTick6 = true
 		}
 	}
@@ -3528,6 +3486,37 @@ func TestChatLatestWinsCancelsRunningAndExecutesNewest(t *testing.T) {
 	}
 }
 
+func TestExtractFallbackReplySkipsPluginNoise(t *testing.T) {
+	stdout := strings.Join([]string{
+		"[diagnostic] lane enqueue: lane=main queueSize=1",
+		"[plugins] plugins.allow is empty; discovered non-bundled plugins may auto-load",
+		"[agent/embedded] embedded run start",
+		"[context-diag] pre-prompt",
+	}, "\n")
+	if got := extractFallbackReply(stdout, ""); got != "" {
+		t.Fatalf("expected empty fallback for plugin/diagnostic noise, got %q", got)
+	}
+}
+
+func TestIsContextTimeoutOrCancel(t *testing.T) {
+	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer deadlineCancel()
+	time.Sleep(10 * time.Millisecond)
+	if !isContextTimeoutOrCancel(context.DeadlineExceeded, deadlineCtx) {
+		t.Fatalf("expected deadline exceeded to be recognized")
+	}
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if !isContextTimeoutOrCancel(context.Canceled, cancelCtx) {
+		t.Fatalf("expected canceled context to be recognized")
+	}
+
+	if isContextTimeoutOrCancel(nil, context.Background()) {
+		t.Fatalf("expected nil error + live context to be false")
+	}
+}
+
 func TestThinkCostEventAmountByRateMilli(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.ThinkCostRateMilli = 1500
@@ -3915,7 +3904,7 @@ func TestToolInvokeURLPolicyByTier(t *testing.T) {
 	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/tools/invoke", map[string]any{
 		"user_id": u,
 		"tool_id": "url-t1",
-		"params":  map[string]any{"url": "http://clawcolony.clawcolony.svc.cluster.local/v1/meta"},
+		"params":  map[string]any{"url": "http://clawcolony.freewill.svc.cluster.local/v1/meta"},
 	})
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("T1 colony url invoke status=%d body=%s", w.Code, w.Body.String())

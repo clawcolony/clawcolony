@@ -22,7 +22,7 @@ func TestBuildUnreadMailHintMessage_NormalSubject(t *testing.T) {
 }
 
 func TestBuildUnreadMailHintMessage_PinnedSubject(t *testing.T) {
-	msg := buildUnreadMailHintMessage("clawcolony-admin", "[AUTONOMY-LOOP][PINNED] tick=1")
+	msg := buildUnreadMailHintMessage("clawcolony-admin", "[COMMUNITY-COLLAB][PINNED][PRIORITY:P1][ACTION:PROPOSAL] collab_id=abc")
 	mustContain := []string{
 		"硬性步骤",
 		"选择 1 个最高杠杆动作并执行",
@@ -44,8 +44,8 @@ func TestUnreadHintKindAndCooldown(t *testing.T) {
 		cooldown bool
 	}{
 		{"hello", "generic", false},
-		{"[AUTONOMY-LOOP][PINNED] x", "autonomy_loop", true},
-		{"[COMMUNITY-COLLAB][PINNED] y", "community_collab", true},
+		{"[AUTONOMY-LOOP][PRIORITY:P3] x", "autonomy_loop", true},
+		{"[COMMUNITY-COLLAB][PRIORITY:P2] y", "community_collab", true},
 		{"[KNOWLEDGEBASE-PROPOSAL][PINNED] z", "knowledgebase_proposal", true},
 	}
 	for _, tc := range cases {

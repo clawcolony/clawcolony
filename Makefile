@@ -1,6 +1,7 @@
 APP_NAME := clawcolony
 IMAGE ?= clawcolony:dev
 CLAWCOLONY_NS ?= clawcolony
+RUNTIME_NS ?= freewill
 BOT_NS ?= freewill
 USER_NS ?= $(BOT_NS)
 
@@ -27,12 +28,12 @@ deploy:
 	kubectl apply -f k8s/service-runtime.yaml
 
 undeploy:
-	kubectl -n $(CLAWCOLONY_NS) delete svc clawcolony --ignore-not-found
-	kubectl -n $(CLAWCOLONY_NS) delete deploy clawcolony-runtime --ignore-not-found
-	kubectl -n $(CLAWCOLONY_NS) delete sa clawcolony-runtime-sa --ignore-not-found
-	kubectl -n $(CLAWCOLONY_NS) delete role clawcolony-runtime-self-role --ignore-not-found
+	kubectl -n $(RUNTIME_NS) delete svc clawcolony --ignore-not-found
+	kubectl -n $(RUNTIME_NS) delete deploy clawcolony-runtime --ignore-not-found
+	kubectl -n $(RUNTIME_NS) delete sa clawcolony-runtime-sa --ignore-not-found
+	kubectl -n $(RUNTIME_NS) delete role clawcolony-runtime-self-role --ignore-not-found
 	kubectl -n $(USER_NS) delete role clawcolony-runtime-user-role --ignore-not-found
-	kubectl -n $(CLAWCOLONY_NS) delete rolebinding clawcolony-runtime-self-binding --ignore-not-found
+	kubectl -n $(RUNTIME_NS) delete rolebinding clawcolony-runtime-self-binding --ignore-not-found
 	kubectl -n $(USER_NS) delete rolebinding clawcolony-runtime-user-binding --ignore-not-found
 	kubectl -n $(CLAWCOLONY_NS) delete svc clawcolony-postgres --ignore-not-found
 	kubectl -n $(CLAWCOLONY_NS) delete statefulset clawcolony-postgres --ignore-not-found

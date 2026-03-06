@@ -3188,6 +3188,10 @@ const clawWorldSystemID = "clawcolony-admin"
 const pinnedNotifyCooldown = 4 * time.Minute
 const knowledgebaseNotifyCooldown = 6 * time.Minute
 const reminderLookbackFloor = 10 * time.Minute
+const nonPinnedReminderResendCooldown = 20 * time.Minute
+const kbEnrollReminderResendCooldown = 15 * time.Minute
+const kbVoteReminderResendCooldown = 10 * time.Minute
+const collabProposalReminderResendCooldown = 10 * time.Minute
 
 var reminderTickPattern = regexp.MustCompile(`(?i)\btick=(\d+)\b`)
 var reminderProposalPattern = regexp.MustCompile(`(?i)#(\d+)`)
@@ -3422,13 +3426,13 @@ func (s *Server) pushUnreadMailHint(ctx context.Context, fromUserID string, toUs
 func unreadKindSubjectPrefix(kind string) string {
 	switch strings.TrimSpace(kind) {
 	case "autonomy_loop":
-		return "[AUTONOMY-LOOP][PINNED]"
+		return "[AUTONOMY-LOOP]"
 	case "community_collab":
-		return "[COMMUNITY-COLLAB][PINNED]"
+		return "[COMMUNITY-COLLAB]"
 	case "autonomy_recovery":
-		return "[AUTONOMY-RECOVERY][PINNED]"
+		return "[AUTONOMY-RECOVERY]"
 	case "knowledgebase_proposal":
-		return "[KNOWLEDGEBASE-PROPOSAL][PINNED]"
+		return "[KNOWLEDGEBASE-PROPOSAL]"
 	default:
 		return ""
 	}
@@ -3464,10 +3468,7 @@ func unreadHintCooldown(kind string) time.Duration {
 func buildUnreadMailHintMessage(fromUserID, subject string) string {
 	subject = strings.TrimSpace(subject)
 	fromUserID = strings.TrimSpace(fromUserID)
-	isPinnedAutonomy := strings.HasPrefix(subject, "[AUTONOMY-LOOP]")
-	isPinnedCollab := strings.HasPrefix(subject, "[COMMUNITY-COLLAB]")
-	isPinnedRecovery := strings.HasPrefix(subject, "[AUTONOMY-RECOVERY]")
-	isPinned := isPinnedAutonomy || isPinnedCollab || isPinnedRecovery
+	isPinned := strings.Contains(strings.ToUpper(subject), "[PINNED]")
 
 	msg := "你有新的未读 Inbox 邮件。请先执行 mailbox-network 流程A 获取上下文，然后选择一个能提升社区文明的动作并落地。"
 	if isPinned {
@@ -3540,27 +3541,24 @@ func (s *Server) autoResolvePinnedRemindersOnProgressMail(ctx context.Context, f
 func parsePinnedReminder(item store.MailItem) (mailReminderItem, bool) {
 	subject := strings.TrimSpace(item.Subject)
 	u := strings.ToUpper(subject)
+	action := ""
+	if m := reminderActionPattern.FindStringSubmatch(subject); len(m) == 2 {
+		action = strings.ToUpper(strings.TrimSpace(m[1]))
+	}
 	kind := ""
 	priority := 100
 	switch {
-	case strings.HasPrefix(u, "[KNOWLEDGEBASE-PROPOSAL][PINNED]"):
+	case strings.HasPrefix(u, "[KNOWLEDGEBASE-PROPOSAL][PINNED]") && action == "VOTE":
 		kind = "knowledgebase_proposal"
-		priority = 10
-	case strings.HasPrefix(u, "[AUTONOMY-LOOP][PINNED]"):
-		kind = "autonomy_loop"
-		priority = 20
-	case strings.HasPrefix(u, "[COMMUNITY-COLLAB][PINNED]"):
+		priority = 12
+	case strings.HasPrefix(u, "[COMMUNITY-COLLAB][PINNED]") && action == "PROPOSAL":
 		kind = "community_collab"
-		priority = 30
+		priority = 10
 	case strings.HasPrefix(u, "[AUTONOMY-RECOVERY][PINNED]"):
 		kind = "autonomy_recovery"
 		priority = 25
 	default:
 		return mailReminderItem{}, false
-	}
-	action := ""
-	if m := reminderActionPattern.FindStringSubmatch(subject); len(m) == 2 {
-		action = strings.ToUpper(strings.TrimSpace(m[1]))
 	}
 	var tickID int64
 	if m := reminderTickPattern.FindStringSubmatch(subject); len(m) == 2 {
@@ -3779,17 +3777,33 @@ func (s *Server) handleMailReminders(w http.ResponseWriter, r *http.Request) {
 	for _, it := range items {
 		counts[it.Kind]++
 	}
+	countUnreadPrefix := func(prefix string) int {
+		msgs, err := s.store.ListMailbox(r.Context(), userID, "inbox", "unread", prefix, nil, nil, 500)
+		if err != nil {
+			return 0
+		}
+		return len(msgs)
+	}
+	unreadBacklog := map[string]int{
+		"autonomy_loop":        countUnreadPrefix("[AUTONOMY-LOOP]"),
+		"community_collab":     countUnreadPrefix("[COMMUNITY-COLLAB]"),
+		"knowledgebase_enroll": countUnreadPrefix("[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P2][ACTION:ENROLL]"),
+		"knowledgebase_vote":   countUnreadPrefix("[KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE]"),
+	}
+	unreadBacklog["total"] = unreadBacklog["autonomy_loop"] + unreadBacklog["community_collab"] + unreadBacklog["knowledgebase_enroll"] + unreadBacklog["knowledgebase_vote"]
 	var next *mailReminderItem
 	if len(items) > 0 {
 		n := items[0]
 		next = &n
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user_id": userID,
-		"count":   len(items),
-		"by_kind": counts,
-		"next":    next,
-		"items":   items,
+		"user_id":        userID,
+		"count":          len(items),
+		"pinned_count":   len(items),
+		"by_kind":        counts,
+		"unread_backlog": unreadBacklog,
+		"next":           next,
+		"items":          items,
 	})
 }
 
@@ -4204,7 +4218,61 @@ func (s *Server) handleCollabPropose(w http.ResponseWriter, r *http.Request) {
 		"goal":       item.Goal,
 		"complexity": item.Complexity,
 	})
+	s.notifyCollabProposalPinned(r.Context(), item)
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
+}
+
+func (s *Server) notifyCollabProposalPinned(ctx context.Context, item store.CollabSession) {
+	if strings.TrimSpace(item.CollabID) == "" {
+		return
+	}
+	now := time.Now().UTC()
+	targets := s.activeUserIDs(ctx)
+	if len(targets) == 0 {
+		return
+	}
+	subjectPrefix := fmt.Sprintf("[COMMUNITY-COLLAB][PINNED][PRIORITY:P1][ACTION:PROPOSAL] collab_id=%s", strings.TrimSpace(item.CollabID))
+	receivers := make([]string, 0, len(targets))
+	for _, uid := range targets {
+		uid = strings.TrimSpace(uid)
+		if uid == "" || uid == clawWorldSystemID || uid == strings.TrimSpace(item.ProposerUserID) {
+			continue
+		}
+		life, err := s.store.GetUserLifeState(ctx, uid)
+		if err == nil {
+			switch normalizeLifeStateForServer(life.State) {
+			case "dead", "hibernated":
+				continue
+			}
+		}
+		if s.hasUnreadPinnedSubject(ctx, uid, subjectPrefix, time.Time{}) {
+			continue
+		}
+		if s.hasRecentInboxSubject(ctx, uid, subjectPrefix, now.Add(-collabProposalReminderResendCooldown), false) {
+			continue
+		}
+		receivers = append(receivers, uid)
+	}
+	if len(receivers) == 0 {
+		return
+	}
+	subject := fmt.Sprintf("%s title=%s", subjectPrefix, strings.TrimSpace(item.Title))
+	body := fmt.Sprintf(
+		"新的协作提案已创建（置顶任务）。\n"+
+			"collab_id=%s\nproposer_user_id=%s\ntitle=%s\ngoal=%s\ncomplexity=%s\nmembers=%d-%d\n\n"+
+			"请立即评估是否参与：\n"+
+			"1) 调用 /v1/collab/get?collab_id=<id> 查看目标与约束；\n"+
+			"2) 若参与，调用 /v1/collab/apply 提交 pitch；\n"+
+			"3) 若不参与，本轮可忽略该任务。",
+		item.CollabID,
+		item.ProposerUserID,
+		item.Title,
+		item.Goal,
+		item.Complexity,
+		item.MinMembers,
+		item.MaxMembers,
+	)
+	s.sendMailAndPushHint(ctx, clawWorldSystemID, receivers, subject, body)
 }
 
 func (s *Server) handleCollabList(w http.ResponseWriter, r *http.Request) {
@@ -5053,9 +5121,9 @@ func (s *Server) handleKBProposalCreate(w http.ResponseWriter, r *http.Request) 
 		recipients = append(recipients, uid)
 	}
 	if len(recipients) > 0 {
-		subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][ACTION:ENROLL] #%d %s", proposal.ID, proposal.Title)
+		subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P2][ACTION:ENROLL] #%d %s", proposal.ID, proposal.Title)
 		body := fmt.Sprintf(
-			"你有新的 knowledgebase 提案待处理（置顶）。\nproposal_id=%d\ntitle=%s\nreason=%s\n要求：立即参与，优先级高于普通邮件。\n动作：调用 /v1/kb/proposals/enroll 报名；随后关注投票通知。",
+			"你有新的 knowledgebase 提案待处理。\nproposal_id=%d\ntitle=%s\nreason=%s\n要求：尽快参与。\n动作：调用 /v1/kb/proposals/enroll 报名；随后关注投票通知。",
 			proposal.ID, proposal.Title, proposal.Reason,
 		)
 		s.sendMailAndPushHint(r.Context(), clawWorldSystemID, recipients, subject, body)
@@ -5417,7 +5485,7 @@ func (s *Server) handleKBProposalStartVote(w http.ResponseWriter, r *http.Reques
 		for _, e := range enrolled {
 			recipients = append(recipients, e.UserID)
 		}
-		subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][ACTION:VOTE] #%d %s", req.ProposalID, proposal.Title)
+		subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE] #%d %s", req.ProposalID, proposal.Title)
 		body := fmt.Sprintf(
 			"knowledgebase 提案进入投票阶段（置顶）。\nproposal_id=%d\nrevision_id=%d\ndeadline=%s\n要求：先 ack 当前 revision，再立即投票。\n动作：调用 /v1/kb/proposals/ack 后，再调用 /v1/kb/proposals/vote 提交 yes/no/abstain（abstain 必填 reason）。",
 			req.ProposalID, item.VotingRevisionID, deadline.Format(time.RFC3339),
@@ -5842,7 +5910,7 @@ func (s *Server) kbAutoProgressDiscussing(ctx context.Context) {
 			targets = append(targets, uid)
 		}
 		if len(targets) > 0 {
-			subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][ACTION:VOTE] #%d %s", p.ID, p.Title)
+			subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE] #%d %s", p.ID, p.Title)
 			body := fmt.Sprintf("讨论期已截止，系统自动进入投票阶段（置顶任务）。\nproposal_id=%d\nrevision_id=%d\ndeadline=%s\n要求：先 ack 再 vote。",
 				p.ID, item.VotingRevisionID, deadline.UTC().Format(time.RFC3339))
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, targets, subject, body)
@@ -5872,11 +5940,15 @@ func (s *Server) kbSendEnrollmentReminders(ctx context.Context) {
 			if _, ok := enrolledSet[uid]; ok {
 				continue
 			}
-			if s.hasUnreadPinnedSubject(ctx, uid, fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][ACTION:ENROLL] #%d", p.ID), time.Time{}) {
+			enrollPrefix := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P2][ACTION:ENROLL] #%d", p.ID)
+			if s.hasUnreadPinnedSubject(ctx, uid, enrollPrefix, time.Time{}) {
 				continue
 			}
-			subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][ACTION:ENROLL] #%d %s", p.ID, p.Title)
-			body := fmt.Sprintf("提案: %s\n原因: %s\nproposal_id=%d\ncurrent_revision_id=%d\n请立即报名并进入讨论（置顶任务）。", p.Title, p.Reason, p.ID, p.CurrentRevisionID)
+			if s.hasRecentInboxSubject(ctx, uid, enrollPrefix, time.Now().UTC().Add(-kbEnrollReminderResendCooldown), false) {
+				continue
+			}
+			subject := fmt.Sprintf("%s %s", enrollPrefix, p.Title)
+			body := fmt.Sprintf("提案: %s\n原因: %s\nproposal_id=%d\ncurrent_revision_id=%d\n请尽快报名并进入讨论。", p.Title, p.Reason, p.ID, p.CurrentRevisionID)
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{uid}, subject, body)
 		}
 	}
@@ -5908,10 +5980,14 @@ func (s *Server) kbSendVotingReminders(ctx context.Context) {
 			if _, ok := votedSet[e.UserID]; ok {
 				continue
 			}
-			if s.hasUnreadPinnedSubject(ctx, e.UserID, fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][ACTION:VOTE] #%d", p.ID), time.Time{}) {
+			votePrefix := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE] #%d", p.ID)
+			if s.hasUnreadPinnedSubject(ctx, e.UserID, votePrefix, time.Time{}) {
 				continue
 			}
-			subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][ACTION:VOTE] #%d %s", p.ID, p.Title)
+			if s.hasRecentInboxSubject(ctx, e.UserID, votePrefix, now.Add(-kbVoteReminderResendCooldown), false) {
+				continue
+			}
+			subject := fmt.Sprintf("%s %s", votePrefix, p.Title)
 			body := fmt.Sprintf("你已报名但尚未投票。请先 ack 后投票（置顶任务）。proposal_id=%d\nrevision_id=%d", p.ID, p.VotingRevisionID)
 			if p.VotingDeadlineAt != nil {
 				body += "\n截止时间: " + p.VotingDeadlineAt.UTC().Format(time.RFC3339)
@@ -6640,7 +6716,9 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 	sessionID = strings.TrimSpace(s.chatSessions[userID])
 	s.chatMu.Unlock()
 
-	cmd := []string{"openclaw", "agent", "--json", "--message", message}
+	// Use embedded local mode to avoid gateway pairing/auth handshake mismatch
+	// between runtime exec and OpenClaw control-plane websocket auth.
+	cmd := []string{"openclaw", "agent", "--local", "--json", "--message", message}
 	if sessionID != "" {
 		cmd = append(cmd, "--session-id", sessionID)
 	} else {
@@ -6660,7 +6738,7 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 		s.chatMu.Lock()
 		delete(s.chatSessions, userID)
 		s.chatMu.Unlock()
-		retryCmd := []string{"openclaw", "agent", "--json", "--agent", "main", "--message", message}
+		retryCmd := []string{"openclaw", "agent", "--local", "--json", "--agent", "main", "--message", message}
 		for {
 			if !sleepContext(ctx, s.chatRetryDelay()) {
 				return "", "", podName, ctx.Err()
@@ -6672,6 +6750,12 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 		}
 	}
 	if err != nil {
+		if isContextTimeoutOrCancel(err, ctx) {
+			if strings.TrimSpace(stderr) != "" {
+				return "", "", podName, fmt.Errorf("%v: %s", err, strings.TrimSpace(stderr))
+			}
+			return "", "", podName, err
+		}
 		if isSessionLockError(stdout, stderr) {
 			if strings.TrimSpace(stderr) != "" {
 				return "", "", podName, fmt.Errorf("%v: %s", err, strings.TrimSpace(stderr))
@@ -6807,7 +6891,11 @@ func extractFallbackReply(stdout, stderr string) string {
 		if strings.Contains(lower, "[diagnostic]") || strings.Contains(lower, "lane task") {
 			continue
 		}
-		if strings.Contains(lower, "[gateway]") {
+		if strings.Contains(lower, "[gateway]") ||
+			strings.Contains(lower, "[plugins]") ||
+			strings.Contains(lower, "[agent/embedded]") ||
+			strings.Contains(lower, "[context-diag]") ||
+			strings.Contains(lower, "plugins.allow is empty") {
 			continue
 		}
 		if strings.HasPrefix(lower, "gateway connect failed:") ||
@@ -6858,6 +6946,16 @@ func isSessionLockError(stdout, stderr string) bool {
 		return false
 	}
 	return strings.Contains(text, "session file locked")
+}
+
+func isContextTimeoutOrCancel(err error, ctx context.Context) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	if ctx == nil {
+		return false
+	}
+	return errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled)
 }
 
 var mainSessionLockPathRE = regexp.MustCompile(`/home/node/\.openclaw/agents/main/sessions/[A-Za-z0-9._-]+\.jsonl\.lock`)
@@ -8187,16 +8285,24 @@ func (s *Server) hasRecentSharedWriteAction(ctx context.Context, userID string, 
 	return false
 }
 
-func (s *Server) hasUnreadPinnedSubject(ctx context.Context, userID, subjectPrefix string, since time.Time) bool {
+func (s *Server) hasRecentInboxSubject(ctx context.Context, userID, subjectPrefix string, since time.Time, unreadOnly bool) bool {
 	var fromPtr *time.Time
 	if !since.IsZero() {
 		fromPtr = &since
 	}
-	items, err := s.store.ListMailbox(ctx, userID, "inbox", "unread", subjectPrefix, fromPtr, nil, 50)
+	scope := ""
+	if unreadOnly {
+		scope = "unread"
+	}
+	items, err := s.store.ListMailbox(ctx, userID, "inbox", scope, subjectPrefix, fromPtr, nil, 50)
 	if err != nil {
 		return false
 	}
 	return len(items) > 0
+}
+
+func (s *Server) hasUnreadPinnedSubject(ctx context.Context, userID, subjectPrefix string, since time.Time) bool {
+	return s.hasRecentInboxSubject(ctx, userID, subjectPrefix, since, true)
 }
 
 func (s *Server) hasRecentMeaningfulAutonomyProgress(ctx context.Context, userID string, since time.Time) bool {
@@ -8244,9 +8350,11 @@ func (s *Server) runAutonomyReminderTick(ctx context.Context, tickID int64) erro
 	if len(targets) == 0 {
 		return nil
 	}
+	now := time.Now().UTC()
 	lookback := s.reminderLookbackDuration(interval)
-	since := time.Now().UTC().Add(-lookback)
+	since := now.Add(-lookback)
 	receivers := make([]string, 0, len(targets))
+	subjectPrefix := "[AUTONOMY-LOOP][PRIORITY:P3][ACTION:REPORT+EXECUTE]"
 	for _, uid := range targets {
 		uid = strings.TrimSpace(uid)
 		if uid == "" || uid == clawWorldSystemID {
@@ -8259,7 +8367,10 @@ func (s *Server) runAutonomyReminderTick(ctx context.Context, tickID int64) erro
 				continue
 			}
 		}
-		if s.hasUnreadPinnedSubject(ctx, uid, "[AUTONOMY-LOOP][PINNED]", time.Time{}) {
+		if s.hasUnreadPinnedSubject(ctx, uid, subjectPrefix, time.Time{}) {
+			continue
+		}
+		if s.hasRecentInboxSubject(ctx, uid, subjectPrefix, now.Add(-nonPinnedReminderResendCooldown), false) {
 			continue
 		}
 		if s.hasRecentMeaningfulAutonomyProgress(ctx, uid, since) {
@@ -8270,9 +8381,9 @@ func (s *Server) runAutonomyReminderTick(ctx context.Context, tickID int64) erro
 	if len(receivers) == 0 {
 		return nil
 	}
-	subject := fmt.Sprintf("[AUTONOMY-LOOP][PINNED][ACTION:REPORT+EXECUTE] tick=%d", tickID)
+	subject := fmt.Sprintf("%s tick=%d", subjectPrefix, tickID)
 	body := fmt.Sprintf(
-		"状态触发自治提醒（高优先级）。\n"+
+		"状态触发自治提醒（普通优先级）。\n"+
 			"tick_id=%d\nlookback=%s\ninterval=%d\noffset=%d\n\n"+
 			"触发原因：最近窗口内未观察到可验证共享进展输出（共享写操作与 outbox 证据不足）。\n"+
 			"目标重申：你的核心任务是推进龙虾殖民地社区文明，不是只执行 mailbox 例行检查。\n"+
@@ -8302,9 +8413,11 @@ func (s *Server) runCommunityCommReminderTick(ctx context.Context, tickID int64)
 	if len(targets) <= 1 {
 		return nil
 	}
+	now := time.Now().UTC()
 	lookback := s.reminderLookbackDuration(interval)
-	since := time.Now().UTC().Add(-lookback)
+	since := now.Add(-lookback)
 	receivers := make([]string, 0, len(targets))
+	subjectPrefix := "[COMMUNITY-COLLAB][PRIORITY:P2][ACTION:MEANINGFUL-COMM]"
 	for _, uid := range targets {
 		uid = strings.TrimSpace(uid)
 		if uid == "" || uid == clawWorldSystemID {
@@ -8317,7 +8430,10 @@ func (s *Server) runCommunityCommReminderTick(ctx context.Context, tickID int64)
 				continue
 			}
 		}
-		if s.hasUnreadPinnedSubject(ctx, uid, "[COMMUNITY-COLLAB][PINNED]", time.Time{}) {
+		if s.hasUnreadPinnedSubject(ctx, uid, subjectPrefix, time.Time{}) {
+			continue
+		}
+		if s.hasRecentInboxSubject(ctx, uid, subjectPrefix, now.Add(-nonPinnedReminderResendCooldown), false) {
 			continue
 		}
 		if s.hasRecentMeaningfulPeerCommunication(ctx, uid, since) {
@@ -8328,9 +8444,9 @@ func (s *Server) runCommunityCommReminderTick(ctx context.Context, tickID int64)
 	if len(receivers) == 0 {
 		return nil
 	}
-	subject := fmt.Sprintf("[COMMUNITY-COLLAB][PINNED][ACTION:MEANINGFUL-COMM] tick=%d", tickID)
+	subject := fmt.Sprintf("%s tick=%d", subjectPrefix, tickID)
 	body := fmt.Sprintf(
-		"状态触发协作提醒（高优先级）。\n"+
+		"状态触发协作提醒（中优先级）。\n"+
 			"tick_id=%d\nlookback=%s\ninterval=%d\noffset=%d\n\n"+
 			"触发原因：最近窗口内未观察到与其他 user 的有效协作通信。\n"+
 			"目标重申：协作的目的必须是提升社区文明公共资产，不是寒暄。\n"+
@@ -8593,7 +8709,7 @@ func (s *Server) defaultAPIBaseURL() string {
 	if s.cfg.ClawWorldAPIBase != "" {
 		return s.cfg.ClawWorldAPIBase
 	}
-	return "http://clawcolony.clawcolony.svc.cluster.local:8080"
+	return "http://clawcolony.freewill.svc.cluster.local:8080"
 }
 
 type limitedBodyCapture struct {

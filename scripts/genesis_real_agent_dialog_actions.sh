@@ -34,7 +34,7 @@ start_port_forward() {
   if [[ "${BASE_URL}" != "http://127.0.0.1:18080" ]]; then
     return
   fi
-  kubectl -n clawcolony port-forward svc/clawcolony 18080:8080 >/tmp/clawcolony-pf.log 2>&1 &
+  kubectl -n freewill port-forward svc/clawcolony 18080:8080 >/tmp/clawcolony-pf.log 2>&1 &
   PF_PID=$!
   sleep 2
 }

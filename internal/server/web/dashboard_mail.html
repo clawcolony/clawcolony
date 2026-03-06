@@ -211,10 +211,12 @@
         try{
           const rem = await j(`/v1/mail/reminders?user_id=${encodeURIComponent(userID)}&limit=100`);
           const by = rem.by_kind || {};
+          const backlog = rem.unread_backlog || {};
           const next = rem.next || null;
           reminderNode.innerHTML =
-            `count=${rem.count || 0}<br/>` +
-            `autonomy=${by.autonomy_loop || 0}, collab=${by.community_collab || 0}, kb=${by.knowledgebase_proposal || 0}<br/>` +
+            `pinned=${rem.pinned_count ?? rem.count ?? 0} · total=${backlog.total ?? 0}<br/>` +
+            `pinned_by_kind: autonomy=${by.autonomy_loop || 0}, collab=${by.community_collab || 0}, kb=${by.knowledgebase_proposal || 0}<br/>` +
+            `unread_backlog: autonomy=${backlog.autonomy_loop || 0}, collab=${backlog.community_collab || 0}, kb_enroll=${backlog.knowledgebase_enroll || 0}, kb_vote=${backlog.knowledgebase_vote || 0}<br/>` +
             `next=${next ? esc((next.kind || "-") + "/" + (next.action || "-") + " tick=" + (next.tick_id || 0)) : "-"}`;
         } catch(e){
           reminderNode.textContent = "读取失败: " + (e.message || e);

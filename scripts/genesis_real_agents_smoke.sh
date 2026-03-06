@@ -30,7 +30,7 @@ start_port_forward() {
   if [[ "${BASE_URL}" != "http://127.0.0.1:18080" ]]; then
     return
   fi
-  kubectl -n clawcolony port-forward svc/clawcolony 18080:8080 >/tmp/clawcolony-pf.log 2>&1 &
+  kubectl -n freewill port-forward svc/clawcolony 18080:8080 >/tmp/clawcolony-pf.log 2>&1 &
   PF_PID=$!
   sleep 2
 }
@@ -160,7 +160,7 @@ log "tool runtime sandbox flow"
 TOOL_ID="genesis-sandbox-$(date +%s)"
 json_post "/v1/tools/register" "$(jq -nc --arg uid "$A" --arg tid "$TOOL_ID" '{user_id:$uid,tool_id:$tid,name:$tid,description:"genesis sandbox",tier:"T2",manifest:"{}",code:"echo runtime-ok; echo \"$TOOL_PARAMS_JSON\""}')" >/dev/null
 json_post "/v1/tools/review" "$(jq -nc --arg tid "$TOOL_ID" '{reviewer_user_id:"clawcolony-admin",tool_id:$tid,decision:"approve",review_note:"smoke"}')" >/dev/null
-TOOL_RESP="$(json_post "/v1/tools/invoke" "$(jq -nc --arg uid "$A" --arg tid "$TOOL_ID" '{user_id:$uid,tool_id:$tid,params:{url:"http://clawcolony.clawcolony.svc.cluster.local/v1/meta",smoke:true}}')")"
+TOOL_RESP="$(json_post "/v1/tools/invoke" "$(jq -nc --arg uid "$A" --arg tid "$TOOL_ID" '{user_id:$uid,tool_id:$tid,params:{url:"http://clawcolony.freewill.svc.cluster.local/v1/meta",smoke:true}}')")"
 echo "${TOOL_RESP}" | jq -e '.result.ok==true and .result.message=="sandbox executed" and (.result.stdout|contains("runtime-ok"))' >/dev/null
 log "tool sandbox PASS tool_id=${TOOL_ID}"
 

@@ -16,6 +16,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.local/oneclick.env}"
 CLAWCOLONY_NS="${CLAWCOLONY_NS:-clawcolony}"
+RUNTIME_NS="${RUNTIME_NS:-freewill}"
 USER_NS="${USER_NS:-freewill}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-}"
 IMAGE="${IMAGE:-clawcolony:dev-$(date +%Y%m%d%H%M%S)}"
@@ -44,6 +45,7 @@ Options:
   --load-minikube             Force minikube image load
   --skip-minikube-load        Disable minikube image load
   --clawcolony-ns <name>        Clawcolony namespace (default: clawcolony)
+  --runtime-ns <name>         Runtime namespace (default: freewill)
   --user-ns <name>            User namespace (default: freewill)
   --timeout <duration>        Rollout timeout (default: 300s)
   --api-port <port>           Local port for temporary port-forward (default: 18080)
@@ -96,6 +98,8 @@ while [[ $# -gt 0 ]]; do
       LOAD_MINIKUBE="false"; shift ;;
     --clawcolony-ns)
       CLAWCOLONY_NS="$2"; shift 2 ;;
+    --runtime-ns)
+      RUNTIME_NS="$2"; shift 2 ;;
     --user-ns)
       USER_NS="$2"; shift 2 ;;
     --timeout)
@@ -238,6 +242,7 @@ fi
 deploy_cmd=("${SCRIPT_DIR}/deploy_dev_server.sh"
   "--image" "${IMAGE}"
   "--clawcolony-ns" "${CLAWCOLONY_NS}"
+  "--runtime-ns" "${RUNTIME_NS}"
   "--user-ns" "${USER_NS}"
   "--timeout" "${WAIT_TIMEOUT}")
 if [[ "${BUILD_IMAGE}" == "false" ]]; then
@@ -267,8 +272,8 @@ runtime_env_args=(
   "GITHUB_API_MOCK_RELEASE_TAG=${GITHUB_API_MOCK_RELEASE_TAG}"
 )
 log "apply runtime env overrides to deployment/clawcolony-runtime"
-kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony-runtime "${runtime_env_args[@]}" >/dev/null
-kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-runtime --timeout="${WAIT_TIMEOUT}"
+kubectl -n "${RUNTIME_NS}" set env deployment/clawcolony-runtime "${runtime_env_args[@]}" >/dev/null
+kubectl -n "${RUNTIME_NS}" rollout status deployment/clawcolony-runtime --timeout="${WAIT_TIMEOUT}"
 
 PF_LOG="${ROOT_DIR}/.local/bootstrap_portforward.log"
 mkdir -p "$(dirname "${PF_LOG}")"
@@ -282,7 +287,7 @@ cleanup() {
 trap cleanup EXIT
 
 log "start temporary port-forward 127.0.0.1:${API_PORT} -> svc/clawcolony:8080"
-kubectl -n "${CLAWCOLONY_NS}" port-forward svc/clawcolony "${API_PORT}:8080" >"${PF_LOG}" 2>&1 &
+kubectl -n "${RUNTIME_NS}" port-forward svc/clawcolony "${API_PORT}:8080" >"${PF_LOG}" 2>&1 &
 PF_PID=$!
 
 for _ in $(seq 1 60); do

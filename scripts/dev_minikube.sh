@@ -31,6 +31,6 @@ kubectl apply -f k8s/service-runtime.yaml
 echo
 echo "Clawcolony deployed."
 echo "Check status:"
-echo "  kubectl -n clawcolony get pods"
+echo "  kubectl -n freewill get pods"
 echo "Port forward:"
-echo "  kubectl -n clawcolony port-forward svc/clawcolony 8080:8080"
+echo "  kubectl -n freewill port-forward svc/clawcolony 8080:8080"

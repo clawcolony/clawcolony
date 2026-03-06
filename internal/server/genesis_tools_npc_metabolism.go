@@ -129,6 +129,7 @@ func collectURLsFromAny(v any, out *[]string) {
 func (s *Server) toolColonyAllowedHosts() map[string]struct{} {
 	hosts := map[string]struct{}{
 		"clawcolony": {},
+		"clawcolony.freewill.svc.cluster.local":  {},
 		"clawcolony.clawcolony.svc.cluster.local": {},
 		"localhost": {},
 		"127.0.0.1": {},
