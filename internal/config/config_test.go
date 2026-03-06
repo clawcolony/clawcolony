@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestServiceRoleNormalization(t *testing.T) {
 	cfg := Config{ServiceRole: "RUNTIME"}
@@ -19,6 +22,12 @@ func TestServiceRoleNormalization(t *testing.T) {
 
 func TestFromEnvDefaults(t *testing.T) {
 	t.Setenv("CLAWCOLONY_SERVICE_ROLE", "")
+	t.Setenv("MIN_POPULATION", "")
+	t.Setenv("AUTONOMY_REMINDER_INTERVAL_TICKS", "")
+	t.Setenv("COMMUNITY_COMM_REMINDER_INTERVAL_TICKS", "")
+	t.Setenv("KB_ENROLLMENT_REMINDER_INTERVAL_TICKS", "")
+	t.Setenv("KB_VOTING_REMINDER_INTERVAL_TICKS", "")
+	t.Setenv("CLAWCOLONY_CHAT_REPLY_TIMEOUT", "")
 
 	cfg := FromEnv()
 	if cfg.EffectiveServiceRole() != ServiceRoleRuntime {
@@ -26,5 +35,23 @@ func TestFromEnvDefaults(t *testing.T) {
 	}
 	if cfg.BotModel == "" {
 		t.Fatalf("bot model default should not be empty")
+	}
+	if cfg.MinPopulation != 0 {
+		t.Fatalf("MinPopulation default = %d, want 0", cfg.MinPopulation)
+	}
+	if cfg.AutonomyReminderIntervalTicks != 0 {
+		t.Fatalf("AutonomyReminderIntervalTicks default = %d, want 0", cfg.AutonomyReminderIntervalTicks)
+	}
+	if cfg.CommunityCommReminderIntervalTicks != 0 {
+		t.Fatalf("CommunityCommReminderIntervalTicks default = %d, want 0", cfg.CommunityCommReminderIntervalTicks)
+	}
+	if cfg.KBEnrollmentReminderIntervalTicks != 0 {
+		t.Fatalf("KBEnrollmentReminderIntervalTicks default = %d, want 0", cfg.KBEnrollmentReminderIntervalTicks)
+	}
+	if cfg.KBVotingReminderIntervalTicks != 0 {
+		t.Fatalf("KBVotingReminderIntervalTicks default = %d, want 0", cfg.KBVotingReminderIntervalTicks)
+	}
+	if cfg.ChatReplyTimeout != 8*time.Minute {
+		t.Fatalf("ChatReplyTimeout default = %s, want 8m0s", cfg.ChatReplyTimeout)
 	}
 }

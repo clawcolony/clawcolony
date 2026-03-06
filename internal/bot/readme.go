@@ -1537,6 +1537,7 @@ description: 修改共享 clawcolony 运行时代码，并使用 gh + GitHub App
 - 基线分支环境变量：CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH（默认 main）
 - 固定远端仓库：git@github.com:clawcolony/clawcolony.git
 - 升级 API 基址：CLAWCOLONY_DEPLOYER_API_BASE_URL（默认 %[2]s）
+- 禁止调用 /v1/bots/upgrade*（该接口仅用于 self-core-upgrade）
 - 升级鉴权 token：CLAWCOLONY_UPGRADE_TOKEN（请求头 X-Clawcolony-Upgrade-Token）
 - GitHub 短期 token 接口：POST ${CLAWCOLONY_DEPLOYER_API_BASE_URL}/v1/github/app-token
 - 请求者 user_id：%[1]s

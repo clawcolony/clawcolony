@@ -2097,6 +2097,37 @@ func TestTianDaoLawEndpoint(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"manifest_sha256":"`)) {
 		t.Fatalf("manifest sha missing: %s", w.Body.String())
 	}
+
+	var resp struct {
+		Manifest map[string]any `json:"manifest"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal law response: %v", err)
+	}
+	got, _ := resp.Manifest["min_population"].(float64)
+	if got != 0 {
+		t.Fatalf("manifest min_population = %v, want 0", got)
+	}
+}
+
+func TestTianDaoLawNegativeMinPopulationClampedToZero(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.MinPopulation = -1
+	if err := srv.initTianDao(context.Background()); err != nil {
+		t.Fatalf("init tian dao with negative min population: %v", err)
+	}
+	item, err := srv.store.GetTianDaoLaw(context.Background(), "genesis-v1")
+	if err != nil {
+		t.Fatalf("get tian dao law: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal([]byte(item.ManifestJSON), &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	got, _ := manifest["min_population"].(float64)
+	if got != 0 {
+		t.Fatalf("manifest min_population = %v, want 0", got)
+	}
 }
 
 func TestTianDaoLawImmutableMismatchRejected(t *testing.T) {
@@ -2290,6 +2321,88 @@ func TestCommunityCommReminderTickSkipsUsersWithRecentPeerCommunication(t *testi
 	}
 	if len(inbox2) != 1 {
 		t.Fatalf("expected user2 still receives reminder, got %d", len(inbox2))
+	}
+}
+
+func TestShouldRunTickWindowIntervalRules(t *testing.T) {
+	if shouldRunTickWindow(1, 0, 0) {
+		t.Fatalf("interval=0 should disable scheduling")
+	}
+	if shouldRunTickWindow(1, -1, 0) {
+		t.Fatalf("interval<0 should disable scheduling")
+	}
+	if !shouldRunTickWindow(1, 1, 0) {
+		t.Fatalf("interval=1 should run every tick")
+	}
+	if !shouldRunTickWindow(1, 1, 99) {
+		t.Fatalf("interval=1 should run every tick regardless of offset")
+	}
+	if !shouldRunTickWindow(4, 2, 0) {
+		t.Fatalf("tick=4 interval=2 offset=0 should run")
+	}
+	if shouldRunTickWindow(5, 2, 0) {
+		t.Fatalf("tick=5 interval=2 offset=0 should not run")
+	}
+}
+
+func TestReminderTicksDisabledWhenIntervalZero(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.AutonomyReminderIntervalTicks = 0
+	srv.cfg.CommunityCommReminderIntervalTicks = 0
+	user1 := seedActiveUser(t, srv)
+	user2 := seedActiveUser(t, srv)
+
+	for i := 0; i < 4; i++ {
+		srv.runWorldTick(context.Background())
+	}
+
+	autonomyInbox, err := srv.store.ListMailbox(context.Background(), user1, "inbox", "", "[AUTONOMY-LOOP][PRIORITY:P3]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list autonomy inbox: %v", err)
+	}
+	if len(autonomyInbox) != 0 {
+		t.Fatalf("expected no autonomy reminders when interval=0, got %d", len(autonomyInbox))
+	}
+
+	communityInbox1, err := srv.store.ListMailbox(context.Background(), user1, "inbox", "", "[COMMUNITY-COLLAB][PRIORITY:P2]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list community inbox user1: %v", err)
+	}
+	if len(communityInbox1) != 0 {
+		t.Fatalf("expected no community reminders for user1 when interval=0, got %d", len(communityInbox1))
+	}
+
+	communityInbox2, err := srv.store.ListMailbox(context.Background(), user2, "inbox", "", "[COMMUNITY-COLLAB][PRIORITY:P2]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list community inbox user2: %v", err)
+	}
+	if len(communityInbox2) != 0 {
+		t.Fatalf("expected no community reminders for user2 when interval=0, got %d", len(communityInbox2))
+	}
+}
+
+func TestKBReminderTicksDisabledWhenIntervalZero(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.KBEnrollmentReminderIntervalTicks = 0
+	srv.cfg.KBVotingReminderIntervalTicks = 0
+
+	for _, tickID := range []int64{1, 2, 10} {
+		if srv.shouldRunKBEnrollmentReminderTick(tickID) {
+			t.Fatalf("kb enrollment reminder should be disabled when interval=0 (tick=%d)", tickID)
+		}
+		if srv.shouldRunKBVotingReminderTick(tickID) {
+			t.Fatalf("kb voting reminder should be disabled when interval=0 (tick=%d)", tickID)
+		}
+	}
+}
+
+func TestReminderLookbackDurationDisabledUsesFloor(t *testing.T) {
+	srv := newTestServer()
+	if got := srv.reminderLookbackDuration(0); got != reminderLookbackFloor {
+		t.Fatalf("lookback interval=0 = %s, want %s", got, reminderLookbackFloor)
+	}
+	if got := srv.reminderLookbackDuration(-3); got != reminderLookbackFloor {
+		t.Fatalf("lookback interval<0 = %s, want %s", got, reminderLookbackFloor)
 	}
 }
 

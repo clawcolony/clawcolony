@@ -799,8 +799,8 @@ func (s *Server) initTianDao(ctx context.Context) error {
 		extinctionThreshold = 30
 	}
 	minPopulation := s.cfg.MinPopulation
-	if minPopulation <= 0 {
-		minPopulation = 1
+	if minPopulation < 0 {
+		minPopulation = 0
 	}
 	metabolismInterval := s.cfg.MetabolismInterval
 	if metabolismInterval <= 0 {
@@ -8030,11 +8030,7 @@ func (s *Server) runLowEnergyAlertTick(ctx context.Context, tickID int64) error 
 }
 
 func (s *Server) autonomyReminderIntervalTicks() int64 {
-	interval := s.cfg.AutonomyReminderIntervalTicks
-	if interval == 0 {
-		interval = 8
-	}
-	return interval
+	return s.cfg.AutonomyReminderIntervalTicks
 }
 
 func (s *Server) autonomyReminderOffsetTicks(interval int64) int64 {
@@ -8049,11 +8045,7 @@ func (s *Server) autonomyReminderOffsetTicks(interval int64) int64 {
 }
 
 func (s *Server) communityCommReminderIntervalTicks() int64 {
-	interval := s.cfg.CommunityCommReminderIntervalTicks
-	if interval == 0 {
-		interval = 8
-	}
-	return interval
+	return s.cfg.CommunityCommReminderIntervalTicks
 }
 
 func (s *Server) communityCommReminderOffsetTicks(interval int64) int64 {
@@ -8071,10 +8063,10 @@ func (s *Server) communityCommReminderOffsetTicks(interval int64) int64 {
 }
 
 func shouldRunTickWindow(tickID, interval, offset int64) bool {
-	if interval < 0 {
+	if interval <= 0 {
 		return false
 	}
-	if interval <= 1 {
+	if interval == 1 {
 		return true
 	}
 	if tickID <= 0 {
@@ -8088,11 +8080,7 @@ func shouldRunTickWindow(tickID, interval, offset int64) bool {
 }
 
 func (s *Server) kbEnrollmentReminderIntervalTicks() int64 {
-	interval := s.cfg.KBEnrollmentReminderIntervalTicks
-	if interval == 0 {
-		interval = 10
-	}
-	return interval
+	return s.cfg.KBEnrollmentReminderIntervalTicks
 }
 
 func (s *Server) kbEnrollmentReminderOffsetTicks(interval int64) int64 {
@@ -8107,11 +8095,7 @@ func (s *Server) kbEnrollmentReminderOffsetTicks(interval int64) int64 {
 }
 
 func (s *Server) kbVotingReminderIntervalTicks() int64 {
-	interval := s.cfg.KBVotingReminderIntervalTicks
-	if interval == 0 {
-		interval = 10
-	}
-	return interval
+	return s.cfg.KBVotingReminderIntervalTicks
 }
 
 func (s *Server) kbVotingReminderOffsetTicks(interval int64) int64 {
@@ -8139,7 +8123,7 @@ func (s *Server) shouldRunKBVotingReminderTick(tickID int64) bool {
 
 func (s *Server) reminderLookbackDuration(intervalTicks int64) time.Duration {
 	if intervalTicks <= 0 {
-		intervalTicks = 1
+		return reminderLookbackFloor
 	}
 	d := time.Duration(intervalTicks*2) * s.worldTickInterval()
 	if d < reminderLookbackFloor {

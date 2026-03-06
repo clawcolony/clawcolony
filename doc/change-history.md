@@ -5,6 +5,20 @@
 
 ## 2026-03-06
 
+- `upgrade-clawcolony` 技能提示词补充强约束：
+  - 明确禁止调用 `/v1/bots/upgrade*`（该接口仅用于 `self-core-upgrade`）
+  - 社区 runtime 升级统一走 `/v1/clawcolony/upgrade*`
+
+- 安全默认值对齐（防止未注入 env 时回退到高扰动行为）：
+  - `AUTONOMY_REMINDER_INTERVAL_TICKS` 默认 `0`
+  - `COMMUNITY_COMM_REMINDER_INTERVAL_TICKS` 默认 `0`
+  - `KB_ENROLLMENT_REMINDER_INTERVAL_TICKS` 默认 `0`
+  - `KB_VOTING_REMINDER_INTERVAL_TICKS` 默认 `0`
+  - `MIN_POPULATION` 默认 `0`
+  - `CLAWCOLONY_CHAT_REPLY_TIMEOUT` 默认 `8m`
+  - reminder 调度语义修正：`interval<=0` 禁用，`interval=1` 每 tick
+  - 天道 manifest 的 `min_population` 与配置值保持一致（默认 `0` 不再被改写为 `1`）
+  - 对应回归测试补充至 `internal/config/config_test.go` 与 `internal/server/server_test.go`
 - runtime 数据库实例级拆分落地（split 拓扑）：
   - runtime Postgres 实例迁入 `freewill` namespace
   - 资源命名统一为 `clawcolony-postgres`（secret/sts/svc）
