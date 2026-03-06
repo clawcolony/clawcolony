@@ -23,7 +23,6 @@ WAIT_TIMEOUT="300s"
 IMAGE="clawcolony:dev-$(date +%Y%m%d%H%M%S)"
 BUILD_IMAGE="true"
 LOAD_TO_MINIKUBE="auto"
-SPLIT_SERVICES="false"
 
 usage() {
   cat <<'USAGE'
@@ -35,7 +34,6 @@ Options:
   --skip-build             Skip docker build step.
   --load-minikube          Force minikube image load step.
   --skip-minikube-load     Disable minikube image load step.
-  --split-services         Deploy runtime + deployer as separate services.
   --context <name>         kubectl context to use.
   --clawcolony-ns <name>     Clawcolony namespace (default: clawcolony).
   --user-ns <name>         User namespace for agents (default: freewill).
@@ -60,10 +58,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-minikube-load)
       LOAD_TO_MINIKUBE="false"
-      shift
-      ;;
-    --split-services)
-      SPLIT_SERVICES="true"
       shift
       ;;
     --context)
@@ -150,26 +144,12 @@ kubectl -n "${CLAWCOLONY_NS}" rollout status statefulset/clawcolony-nats --timeo
 echo "[5/9] wait PostgreSQL rollout"
 kubectl -n "${CLAWCOLONY_NS}" rollout status statefulset/clawcolony-postgres --timeout="${WAIT_TIMEOUT}"
 
-if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-  echo "[6/9] deploy clawcolony runtime + deployer"
-  sed "s|{{CLAWCOLONY_IMAGE}}|${IMAGE}|g" k8s/clawcolony-runtime-deployment.yaml | kubectl apply -f -
-  sed "s|{{CLAWCOLONY_IMAGE}}|${IMAGE}|g" k8s/clawcolony-deployer-svc-deployment.yaml | kubectl apply -f -
-  kubectl apply -f k8s/service-runtime.yaml
-else
-  echo "[6/9] deploy clawcolony (single service role)"
-  sed "s|{{CLAWCOLONY_IMAGE}}|${IMAGE}|g" k8s/clawcolony-deployment.yaml | kubectl apply -f -
-  kubectl apply -f k8s/service.yaml
-fi
+echo "[6/9] deploy clawcolony runtime service"
+sed "s|{{CLAWCOLONY_IMAGE}}|${IMAGE}|g" k8s/clawcolony-runtime-deployment.yaml | kubectl apply -f -
+kubectl apply -f k8s/service-runtime.yaml
 
-if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-  echo "[7/9] wait clawcolony runtime rollout"
-  kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-runtime --timeout="${WAIT_TIMEOUT}"
-  echo "[7/9] wait clawcolony deployer rollout"
-  kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-deployer --timeout="${WAIT_TIMEOUT}"
-else
-  echo "[7/9] wait clawcolony rollout"
-  kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony --timeout="${WAIT_TIMEOUT}"
-fi
+echo "[7/9] wait clawcolony runtime rollout"
+kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-runtime --timeout="${WAIT_TIMEOUT}"
 
 echo "[8/9] quick status"
 kubectl -n "${CLAWCOLONY_NS}" get pods -o wide
@@ -190,19 +170,8 @@ echo "Image: ${IMAGE}"
 echo
 echo "Useful checks:"
 echo "  kubectl -n ${CLAWCOLONY_NS} get pods"
-if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-  echo "  kubectl -n ${CLAWCOLONY_NS} logs deploy/clawcolony-runtime --tail=200"
-  echo "  kubectl -n ${CLAWCOLONY_NS} logs deploy/clawcolony-deployer --tail=200"
-else
-  echo "  kubectl -n ${CLAWCOLONY_NS} logs deploy/clawcolony --tail=200"
-fi
+echo "  kubectl -n ${CLAWCOLONY_NS} logs deploy/clawcolony-runtime --tail=200"
 echo
 echo "Dashboard (via port-forward):"
 echo "  kubectl -n ${CLAWCOLONY_NS} port-forward svc/clawcolony 8080:8080"
-if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-  echo "  kubectl -n ${CLAWCOLONY_NS} port-forward svc/clawcolony-deployer 18081:8080"
-  echo "  runtime dashboard: http://127.0.0.1:8080/dashboard"
-  echo "  deployer api base: http://127.0.0.1:18081"
-else
-  echo "  open: http://127.0.0.1:8080/dashboard"
-fi
+echo "  open: http://127.0.0.1:8080/dashboard"

@@ -29,8 +29,7 @@ REGISTER_TIMEOUT_SECONDS="${REGISTER_TIMEOUT_SECONDS:-2400}"
 REGISTER_POLL_SECONDS="${REGISTER_POLL_SECONDS:-5}"
 REGISTER_FAIL_FAST="${REGISTER_FAIL_FAST:-true}"
 VERIFY_ISOLATION="${VERIFY_ISOLATION:-true}"
-SPLIT_SERVICES="${SPLIT_SERVICES:-false}"
-DEPLOYER_API_PORT="${DEPLOYER_API_PORT:-18081}"
+SPLIT_SERVICES="false"
 
 usage() {
   cat <<'USAGE'
@@ -48,9 +47,7 @@ Options:
   --user-ns <name>            User namespace (default: freewill)
   --timeout <duration>        Rollout timeout (default: 300s)
   --api-port <port>           Local port for temporary port-forward (default: 18080)
-  --deployer-api-port <port>  Local port for deployer API in split mode (default: 18081)
   --agents <n>                Number of users to register (default: 3)
-  --split-services            Deploy runtime + deployer split mode
   --skip-register             Deploy only, do not register users
   --register-timeout <sec>    Timeout per register task (default: 2400)
   --register-poll <sec>       Poll interval per register task (default: 5)
@@ -105,12 +102,11 @@ while [[ $# -gt 0 ]]; do
       WAIT_TIMEOUT="$2"; shift 2 ;;
     --api-port)
       API_PORT="$2"; shift 2 ;;
-    --deployer-api-port)
-      DEPLOYER_API_PORT="$2"; shift 2 ;;
     --agents)
       AGENTS="$2"; shift 2 ;;
     --split-services)
-      SPLIT_SERVICES="true"; shift ;;
+      echo "WARN: --split-services is not supported in runtime repo; ignored." >&2
+      shift ;;
     --skip-register)
       SKIP_REGISTER="true"; shift ;;
     --register-timeout)
@@ -150,7 +146,6 @@ SKIP_REGISTER="$(normalize_bool "${SKIP_REGISTER}")"
 REGISTER_FAIL_FAST="$(normalize_bool "${REGISTER_FAIL_FAST}")"
 BUILD_IMAGE="$(normalize_bool "${BUILD_IMAGE}")"
 VERIFY_ISOLATION="$(normalize_bool "${VERIFY_ISOLATION}")"
-SPLIT_SERVICES="$(normalize_bool "${SPLIT_SERVICES}")"
 
 BOT_ENV_SECRET_NAME="${BOT_ENV_SECRET_NAME:-aibot-llm-secret}"
 BOT_GIT_SSH_SECRET_NAME="${BOT_GIT_SSH_SECRET_NAME:-}"
@@ -189,11 +184,6 @@ if ! [[ "${REGISTER_POLL_SECONDS}" =~ ^[0-9]+$ ]]; then
   echo "invalid --register-poll value: ${REGISTER_POLL_SECONDS}" >&2
   exit 1
 fi
-if ! [[ "${DEPLOYER_API_PORT}" =~ ^[0-9]+$ ]]; then
-  echo "invalid --deployer-api-port value: ${DEPLOYER_API_PORT}" >&2
-  exit 1
-fi
-
 if [[ -n "${KUBE_CONTEXT}" ]]; then
   log "switch kubectl context -> ${KUBE_CONTEXT}"
   kubectl config use-context "${KUBE_CONTEXT}" >/dev/null
@@ -261,10 +251,6 @@ fi
 if [[ -n "${KUBE_CONTEXT}" ]]; then
   deploy_cmd+=("--context" "${KUBE_CONTEXT}")
 fi
-if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-  deploy_cmd+=("--split-services")
-fi
-
 log "deploy base stack"
 "${deploy_cmd[@]}"
 
@@ -280,36 +266,17 @@ runtime_env_args=(
   "GITHUB_API_MOCK_MACHINE_USER=${GITHUB_API_MOCK_MACHINE_USER}"
   "GITHUB_API_MOCK_RELEASE_TAG=${GITHUB_API_MOCK_RELEASE_TAG}"
 )
-deployer_env_args=("${runtime_env_args[@]}")
-if [[ -n "${UPGRADE_REPO_URL:-}" ]]; then
-  deployer_env_args+=("UPGRADE_REPO_URL=${UPGRADE_REPO_URL}")
-fi
-
-if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-  log "apply env overrides to deployment/clawcolony-runtime"
-  kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony-runtime "${runtime_env_args[@]}" >/dev/null
-  kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-runtime --timeout="${WAIT_TIMEOUT}"
-  log "apply env overrides to deployment/clawcolony-deployer"
-  kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony-deployer "${deployer_env_args[@]}" >/dev/null
-  kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-deployer --timeout="${WAIT_TIMEOUT}"
-else
-  log "apply runtime env overrides to deployment/clawcolony"
-  kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony "${deployer_env_args[@]}" >/dev/null
-  kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony --timeout="${WAIT_TIMEOUT}"
-fi
+log "apply runtime env overrides to deployment/clawcolony-runtime"
+kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony-runtime "${runtime_env_args[@]}" >/dev/null
+kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-runtime --timeout="${WAIT_TIMEOUT}"
 
 PF_LOG="${ROOT_DIR}/.local/bootstrap_portforward.log"
-PF_DEPLOYER_LOG="${ROOT_DIR}/.local/bootstrap_portforward_deployer.log"
 mkdir -p "$(dirname "${PF_LOG}")"
 
 PF_PID=""
-PF_DEPLOYER_PID=""
 cleanup() {
   if [[ -n "${PF_PID}" ]] && kill -0 "${PF_PID}" >/dev/null 2>&1; then
     kill "${PF_PID}" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "${PF_DEPLOYER_PID}" ]] && kill -0 "${PF_DEPLOYER_PID}" >/dev/null 2>&1; then
-    kill "${PF_DEPLOYER_PID}" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -317,11 +284,6 @@ trap cleanup EXIT
 log "start temporary port-forward 127.0.0.1:${API_PORT} -> svc/clawcolony:8080"
 kubectl -n "${CLAWCOLONY_NS}" port-forward svc/clawcolony "${API_PORT}:8080" >"${PF_LOG}" 2>&1 &
 PF_PID=$!
-if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-  log "start temporary port-forward 127.0.0.1:${DEPLOYER_API_PORT} -> svc/clawcolony-deployer:8080"
-  kubectl -n "${CLAWCOLONY_NS}" port-forward svc/clawcolony-deployer "${DEPLOYER_API_PORT}:8080" >"${PF_DEPLOYER_LOG}" 2>&1 &
-  PF_DEPLOYER_PID=$!
-fi
 
 for _ in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:${API_PORT}/healthz" >/dev/null 2>&1; then
@@ -331,23 +293,10 @@ for _ in $(seq 1 60); do
 done
 curl -fsS "http://127.0.0.1:${API_PORT}/healthz" >/dev/null
 log "api health check passed"
-if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-  for _ in $(seq 1 60); do
-    if curl -fsS "http://127.0.0.1:${DEPLOYER_API_PORT}/healthz" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
-  curl -fsS "http://127.0.0.1:${DEPLOYER_API_PORT}/healthz" >/dev/null
-  log "deployer api health check passed"
-fi
 
 if [[ "${SKIP_REGISTER}" == "true" || "${AGENTS}" == "0" ]]; then
   log "skip register stage"
   log "done. dashboard: http://127.0.0.1:${API_PORT}/dashboard (while this script is running)"
-  if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-    log "deployer base: http://127.0.0.1:${DEPLOYER_API_PORT}"
-  fi
   exit 0
 fi
 
@@ -355,10 +304,7 @@ register_one() {
   local idx="$1"
   local resp task_id status now started elapsed user_id user_name last_step_msg
   local register_base="http://127.0.0.1:${API_PORT}"
-  if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-    register_base="http://127.0.0.1:${DEPLOYER_API_PORT}"
-  fi
-  resp="$(curl -fsS -X POST "${register_base}/v1/openclaw/admin/action" \
+  resp="$(curl -fsS -X POST "${register_base}/v1/dashboard-admin/openclaw/admin/action" \
     -H "Content-Type: application/json" \
     -d '{"action":"register"}')"
   task_id="$(echo "${resp}" | jq -r '.register_task_id // empty')"
@@ -370,7 +316,7 @@ register_one() {
 
   started="$(date +%s)"
   while true; do
-    status="$(curl -fsS "${register_base}/v1/openclaw/admin/register/task?register_task_id=${task_id}")"
+    status="$(curl -fsS "${register_base}/v1/dashboard-admin/openclaw/admin/register/task?register_task_id=${task_id}")"
     user_id="$(echo "${status}" | jq -r '.task.user_id // empty')"
     user_name="$(echo "${status}" | jq -r '.task.user_name // empty')"
     last_step_msg="$(echo "${status}" | jq -r '.last_step.message // empty')"
@@ -419,11 +365,7 @@ fi
 log "open dashboard:"
 log "  http://127.0.0.1:${API_PORT}/dashboard"
 log "openclaw overview:"
-if [[ "${SPLIT_SERVICES}" == "true" ]]; then
-  log "  http://127.0.0.1:${DEPLOYER_API_PORT}/v1/openclaw/admin/overview"
-else
-  log "  http://127.0.0.1:${API_PORT}/v1/openclaw/admin/overview"
-fi
+log "  http://127.0.0.1:${API_PORT}/v1/dashboard-admin/openclaw/admin/overview"
 
 if (( failed_count > 0 )); then
   exit 1

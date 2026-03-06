@@ -125,52 +125,21 @@ make deploy IMAGE=clawcolony:dev
 - Clawcolony 通过 `DATABASE_URL` 连接 Postgres，启动时会自动建表
 - Clawcolony 通过 `NATS_URL` 连接 JetStream，用于聊天消息发布与消费
 
-### Runtime/Deployer 分离部署（开发测试）
+### Runtime 与 Deployer 的仓库边界
 
-```bash
-./scripts/deploy_dev_server.sh \
-  --split-services \
-  --image clawcolony:dev \
-  --skip-build
-```
-
-分离模式下：
-
-- `svc/clawcolony`：`runtime` 角色（对 agents 暴露运行时接口）
-- `svc/clawcolony-deployer`：`deployer` 角色（注册/升级/部署高权限接口）
-- Dashboard 仍从 `runtime` 入口访问；涉及部署的管理动作由 `runtime` 通过 `/v1/dashboard-admin/*` 代理到 `deployer`。
-- `runtime/deployer` 使用不同 ServiceAccount 与 RBAC：runtime 无部署写权限，deployer 持有部署管理权限。
-- deployer Pod 固定入口为 `/clawcolony-deployer`（不依赖默认 ENTRYPOINT + 角色变量猜测）。
+- 当前仓库仅包含 `runtime` 部署与运行能力。
+- 高权限部署能力（register/redeploy/upgrade 执行面）位于私有仓库：
+  - `git@gitlab.webpilotai.com:webpilot/clawcolony-deployer.git`
+- runtime Dashboard 对高权限动作仅走代理入口：
+  - `/v1/dashboard-admin/*`
 
 常用联调端口：
 
 ```bash
 kubectl -n clawcolony port-forward svc/clawcolony 8080:8080
-kubectl -n clawcolony port-forward svc/clawcolony-deployer 18081:8080
 ```
 
-split 联调自检（角色 + 代理 + RBAC + 可选 register）：
-
-```bash
-./scripts/check_split_runtime_deployer.sh --register-smoke
-```
-
-### 运行时/部署器拆分为两个独立项目（本地导出）
-
-如果你要把 `runtime` 和 `deployer` 彻底拆成两个独立工程目录（分别绑定不同 git remote）：
-
-```bash
-./scripts/split_runtime_deployer_projects.sh \
-  --runtime-dir /Users/waken/workspace/clawcolony-runtime \
-  --deployer-dir /Users/waken/workspace/clawcolony-deployer-private \
-  --runtime-remote git@github.com:clawcolony/clawcolony.git
-```
-
-说明：
-
-- 该脚本会从当前工作区导出两份独立代码树，并分别 `git init`
-- `runtime` 面向公开仓库；`deployer` 维持私有
-- 详细设计见 [doc/design/runtime-deployer-project-split.md](/Users/waken/workspace/clawcolony-runtime-upstream/doc/design/runtime-deployer-project-split.md)
+如需完整 runtime + deployer 联调，请在 deployer 仓库执行对应部署脚本。
 
 ### 一键全新环境部署（含 Secrets + Agents）
 
@@ -192,7 +161,7 @@ cp scripts/oneclick.env.example .local/oneclick.env
 - 最后通过 runtime 代理接口 `POST /v1/dashboard-admin/openclaw/admin/action` (`action=register`) 自动注册指定数量的 OpenClaw users，并轮询每个 `register_task_id` 到完成。
 - register 过程会为每个 user 自动创建独立 git secret：`aibot-git-<user_id>`（不再使用全局 git secret）。
 - `bootstrap_full_stack.sh` 在 register 完成后会默认执行隔离校验；如需跳过可传 `--skip-verify-isolation`。
-- 服务角色可通过 `CLAWCOLONY_SERVICE_ROLE` 控制：`all`（默认）、`runtime`、`deployer`。
+- 本仓部署默认固定为 `runtime` 角色（`CLAWCOLONY_SERVICE_ROLE=runtime`）。
 - 默认升级仓库为 `git@github.com:clawcolony/clawcolony.git`（可用 `UPGRADE_REPO_URL` 覆盖）。
 
 常用参数：

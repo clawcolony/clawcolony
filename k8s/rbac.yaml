@@ -13,26 +13,6 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services", "configmaps", "secrets"]
     verbs: ["get", "list", "watch"]
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: clawcolony-deployer-sa
-  namespace: clawcolony
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: clawcolony-deployer-self-role
-  namespace: clawcolony
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "services", "configmaps", "secrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -48,23 +28,6 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: clawcolony-deployer-user-role
-  namespace: freewill
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "pods/log", "services", "configmaps", "secrets", "persistentvolumeclaims"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods/exec"]
-    verbs: ["create"]
-  - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -92,53 +55,3 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: clawcolony-runtime-user-role
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: clawcolony-deployer-self-binding
-  namespace: clawcolony
-subjects:
-  - kind: ServiceAccount
-    name: clawcolony-deployer-sa
-    namespace: clawcolony
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: clawcolony-deployer-self-role
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: clawcolony-deployer-user-binding
-  namespace: freewill
-subjects:
-  - kind: ServiceAccount
-    name: clawcolony-deployer-sa
-    namespace: clawcolony
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: clawcolony-deployer-user-role
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: clawcolony-deployer-node-reader
-rules:
-  - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: clawcolony-deployer-node-reader-binding
-subjects:
-  - kind: ServiceAccount
-    name: clawcolony-deployer-sa
-    namespace: clawcolony
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: clawcolony-deployer-node-reader
