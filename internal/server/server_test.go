@@ -33,9 +33,6 @@ func newTestServer() *Server {
 	bots := bot.NewManager(st, bot.NewNoopProvisioner(), "http://clawcolony.freewill.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
 	s := New(cfg, st, bots)
 	s.kubeClient = nil
-	s.resolveUpgradeRepoURL = func(_ context.Context, _ string) string {
-		return s.cfg.UpgradeRepoURL
-	}
 	attachRegisterShim(s)
 	return s
 }
@@ -889,8 +886,6 @@ func TestMailMarkReadQueryAndContactsContext(t *testing.T) {
 func TestBotUpgradeRequiresInternalToken(t *testing.T) {
 	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
-	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
-	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
 
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
 	if w.Code != http.StatusAccepted {
@@ -914,8 +909,6 @@ func TestBotUpgradeRequiresInternalToken(t *testing.T) {
 func TestBotUpgradeEnforcesBranchPolicy(t *testing.T) {
 	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
-	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
-	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
 
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
 	if w.Code != http.StatusAccepted {
@@ -954,8 +947,6 @@ func TestBotUpgradeEnforcesBranchPolicy(t *testing.T) {
 func TestBotUpgradeReturnsTaskIDAndSupportsTaskQuery(t *testing.T) {
 	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
-	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
-	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
 
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
 	if w.Code != http.StatusAccepted {
@@ -1007,8 +998,6 @@ func TestBotUpgradeReturnsTaskIDAndSupportsTaskQuery(t *testing.T) {
 func TestBotUpgradeEmitsToolCostEvent(t *testing.T) {
 	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
-	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
-	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
 	srv.cfg.ToolCostRateMilli = 1000
 
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
@@ -1045,8 +1034,6 @@ func TestBotUpgradeEmitsToolCostEvent(t *testing.T) {
 func TestBotUpgradeBlockedWhenUserIsDyingForT3(t *testing.T) {
 	t.Skip("moved to management-plane repo: runtime no longer exposes /v1/bots/upgrade* routes")
 	srv := newTestServer()
-	srv.cfg.UpgradeRepoURL = "https://example.com/repo.git"
-	srv.cfg.UpgradeAuthToken = "upgrade-dev-token"
 
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
 	if w.Code != http.StatusAccepted {
@@ -2687,9 +2674,6 @@ func TestWorldTickExtinctionFreeze(t *testing.T) {
 func TestWorldTickMinPopulationRevivalAutoRegistersUsers(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.MinPopulation = 3
-	srv.cfg.GitHubMockEnabled = true
-	srv.cfg.GitHubMockOwner = "clawcolony"
-	srv.cfg.GitHubMockMachine = "claw-archivist"
 	srv.cfg.BotDefaultImage = "openclaw:mock"
 
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
@@ -4357,20 +4341,5 @@ func TestMetabolismValidatorsAndClusterTopK(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"status":"active"`)) {
 		t.Fatalf("expected active when validators meet threshold: %s", w.Body.String())
-	}
-}
-
-func TestUpgradeFaultInjectionHelpers(t *testing.T) {
-	srv := newTestServer()
-	srv.cfg.UpgradeFaultInjectStep = "after_rollout"
-
-	if err := srv.maybeInjectUpgradeFault(1, "before_set_image"); err != nil {
-		t.Fatalf("unexpected fault on non-target step: %v", err)
-	}
-	if err := srv.maybeInjectUpgradeFault(1, "after_rollout"); err != nil {
-		t.Fatalf("runtime should not inject upgrade faults: %v", err)
-	}
-	if err := srv.rollbackUpgradeImage(context.Background(), 1, "user-x", ""); err == nil {
-		t.Fatalf("runtime rollback should be management-plane-only")
 	}
 }

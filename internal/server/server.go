@@ -83,9 +83,6 @@ type Server struct {
 	mailNotifyMu         sync.Mutex
 	mailNotified         map[string]time.Time
 	openclawProxy        *http.Transport
-	githubMockMu         sync.Mutex
-	githubMockRepo       map[string]time.Time
-	githubMockKeys       map[string][]string
 	alertNotifyMu        sync.Mutex
 	alertLastSent        map[string]time.Time
 	alertLastAmt         map[string]int64
@@ -107,8 +104,6 @@ type Server struct {
 	worldFreezeAtRisk    int
 	worldFreezeThreshold int
 	toolSandboxExec      toolSandboxExecutor
-	// compatibility hook kept for shared test helpers; runtime does not execute upgrades.
-	resolveUpgradeRepoURL func(ctx context.Context, userID string) string
 }
 
 type missionPolicy struct {
@@ -350,8 +345,6 @@ func New(cfg config.Config, st store.Store, bots *bot.Manager) *Server {
 		chatExecSem:     make(chan struct{}, chatExecMaxConc),
 		chatUserExecSem: make(map[string]chan struct{}),
 		mailNotified:    make(map[string]time.Time),
-		githubMockRepo:  make(map[string]time.Time),
-		githubMockKeys:  make(map[string][]string),
 		alertLastSent:   make(map[string]time.Time),
 		alertLastAmt:    make(map[string]int64),
 		openclawProxy: &http.Transport{
@@ -6557,15 +6550,6 @@ func (s *Server) runCmd(ctx context.Context, dir string, env []string, name stri
 		return combined, err
 	}
 	return combined, nil
-}
-
-func (s *Server) maybeInjectUpgradeFault(_ int64, _ string) error {
-	// Runtime service has no upgrade execution plane.
-	return nil
-}
-
-func (s *Server) rollbackUpgradeImage(_ context.Context, _ int64, _ string, _ string) error {
-	return errors.New("upgrade rollback is management-plane-only")
 }
 
 func (s *Server) appendChat(userID, from, to, body string) chatMessage {

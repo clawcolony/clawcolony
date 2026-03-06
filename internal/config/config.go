@@ -16,34 +16,13 @@ type Config struct {
 	ClawWorldAPIBase                   string
 	BotDefaultImage                    string
 	BotEnvSecretName                   string
-	BotGitSSHSecret                    string
-	BotGitSSHHost                      string
 	BotSourceRepoBranch                string
 	BotModel                           string
 	BotStatePVCSize                    string
-	UpgradeRepoURL                     string
-	UpgradeRepoUser                    string
-	UpgradeRepoToken                   string
-	UpgradeWorkDir                     string
-	UpgradeTimeout                     time.Duration
-	UpgradeDockerfile                  string
-	UpgradeImagePref                   string
-	UpgradeAuthToken                   string
-	UpgradeBuildMemory                 string
-	UpgradeBuildCPUs                   string
-	UpgradeBuildNoCache                bool
-	UpgradeBuildArgs                   string
-	UpgradeAutoRollback                bool
-	UpgradeCanarySeconds               int
-	UpgradeFaultInjectStep             string
 	ColonyRepoURL                      string
 	ColonyRepoBranch                   string
 	ColonyRepoLocalPath                string
 	ColonyRepoSync                     bool
-	GitHubMockEnabled                  bool
-	GitHubMockOwner                    string
-	GitHubMockMachine                  string
-	GitHubMockRelease                  string
 	TianDaoLawKey                      string
 	TianDaoLawVersion                  int64
 	LifeCostPerTick                    int64
@@ -100,34 +79,13 @@ func FromEnv() Config {
 		ClawWorldAPIBase:                   getEnv("CLAWCOLONY_API_BASE_URL", "http://clawcolony.freewill.svc.cluster.local:8080"),
 		BotDefaultImage:                    getEnv("BOT_DEFAULT_IMAGE", "openclaw:onepod-dev"),
 		BotEnvSecretName:                   getEnv("BOT_ENV_SECRET_NAME", "aibot-llm-secret"),
-		BotGitSSHSecret:                    getEnv("BOT_GIT_SSH_SECRET_NAME", ""),
-		BotGitSSHHost:                      getEnv("BOT_GIT_SSH_HOST", "github.com"),
 		BotSourceRepoBranch:                getEnv("BOT_SOURCE_REPO_BRANCH", "main"),
 		BotModel:                           getEnv("BOT_OPENCLAW_MODEL", "openai/gpt-4.1-mini"),
 		BotStatePVCSize:                    getEnv("BOT_STATE_PVC_SIZE", "5Gi"),
-		UpgradeRepoURL:                     getEnv("UPGRADE_REPO_URL", "git@github.com:clawcolony/clawcolony.git"),
-		UpgradeRepoUser:                    getEnv("UPGRADE_REPO_USER", "oauth2"),
-		UpgradeRepoToken:                   getEnv("UPGRADE_REPO_TOKEN", ""),
-		UpgradeWorkDir:                     getEnv("UPGRADE_WORKDIR", "/tmp/clawcolony-upgrades"),
-		UpgradeTimeout:                     getEnvDuration("UPGRADE_TIMEOUT", 30*time.Minute),
-		UpgradeDockerfile:                  getEnv("UPGRADE_DOCKERFILE", "Dockerfile"),
-		UpgradeImagePref:                   getEnv("UPGRADE_IMAGE_PREFIX", "openclaw:upgrade"),
-		UpgradeAuthToken:                   getEnv("UPGRADE_INTERNAL_TOKEN", ""),
-		UpgradeBuildMemory:                 getEnv("UPGRADE_DOCKER_BUILD_MEMORY", ""),
-		UpgradeBuildCPUs:                   getEnv("UPGRADE_DOCKER_BUILD_CPUS", ""),
-		UpgradeBuildNoCache:                getEnvBool("UPGRADE_DOCKER_BUILD_NO_CACHE", false),
-		UpgradeBuildArgs:                   getEnv("UPGRADE_DOCKER_BUILD_ARGS", ""),
-		UpgradeAutoRollback:                getEnvBool("UPGRADE_AUTO_ROLLBACK_ENABLED", true),
-		UpgradeCanarySeconds:               getEnvInt("UPGRADE_CANARY_SECONDS", 0),
-		UpgradeFaultInjectStep:             getEnv("UPGRADE_FAULT_INJECT_STEP", ""),
 		ColonyRepoURL:                      getEnv("COLONY_REPO_URL", ""),
 		ColonyRepoBranch:                   getEnv("COLONY_REPO_BRANCH", "main"),
 		ColonyRepoLocalPath:                getEnv("COLONY_REPO_LOCAL_PATH", "/tmp/clawcolony-civilization-repo"),
 		ColonyRepoSync:                     getEnvBool("COLONY_REPO_SYNC_ENABLED", false),
-		GitHubMockEnabled:                  getEnvBool("GITHUB_API_MOCK_ENABLED", false),
-		GitHubMockOwner:                    getEnv("GITHUB_API_MOCK_OWNER", "clawcolony"),
-		GitHubMockMachine:                  getEnv("GITHUB_API_MOCK_MACHINE_USER", "claw-archivist"),
-		GitHubMockRelease:                  getEnv("GITHUB_API_MOCK_RELEASE_TAG", ""),
 		TianDaoLawKey:                      getEnv("TIAN_DAO_LAW_KEY", "genesis-v1"),
 		TianDaoLawVersion:                  getEnvInt64("TIAN_DAO_LAW_VERSION", 1),
 		LifeCostPerTick:                    getEnvInt64("LIFE_COST_PER_TICK", 1),

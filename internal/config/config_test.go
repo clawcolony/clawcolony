@@ -17,15 +17,14 @@ func TestServiceRoleNormalization(t *testing.T) {
 	}
 }
 
-func TestFromEnvDefaultsIncludeUpgradeRepoURL(t *testing.T) {
-	t.Setenv("UPGRADE_REPO_URL", "")
+func TestFromEnvDefaults(t *testing.T) {
 	t.Setenv("CLAWCOLONY_SERVICE_ROLE", "")
 
 	cfg := FromEnv()
-	if cfg.UpgradeRepoURL != "git@github.com:clawcolony/clawcolony.git" {
-		t.Fatalf("UpgradeRepoURL default = %q", cfg.UpgradeRepoURL)
-	}
 	if cfg.EffectiveServiceRole() != ServiceRoleRuntime {
 		t.Fatalf("service role default = %q", cfg.EffectiveServiceRole())
+	}
+	if cfg.BotModel == "" {
+		t.Fatalf("bot model default should not be empty")
 	}
 }
