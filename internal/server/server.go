@@ -7276,19 +7276,21 @@ func (s *Server) resolveTemplateContextUser(ctx context.Context, userID string) 
 func (s *Server) defaultPromptTemplateMap(_ context.Context, user store.Bot) map[string]string {
 	api := s.defaultAPIBaseURL()
 	return map[string]string{
-		bot.TemplateProtocolReadme:       bot.BuildProtocolReadme(api, user),
-		bot.TemplateIdentityDoc:          bot.BuildIdentityDocument(user),
-		bot.TemplateAgentsDoc:            bot.BuildAgentInstructionsDocument(user),
-		bot.TemplateSoulDoc:              bot.BuildSoulDocument(user.BotID),
-		bot.TemplateBootstrapDoc:         bot.BuildBootstrapDocument(user.BotID),
-		bot.TemplateToolsDoc:             bot.BuildToolsDocument(user.BotID),
-		bot.TemplateSkillAutonomyPolicy:  bot.BuildSkillAutonomyPolicy(),
-		bot.TemplateClawWorldSkill:       bot.BuildClawWorldSkill(api, user),
-		bot.TemplateColonyCoreSkill:      bot.BuildColonyCoreSkill(api, user),
-		bot.TemplateColonyToolsSkill:     bot.BuildColonyToolsSkill(api, user),
-		bot.TemplateCollabModeSkill:      bot.BuildCollabModeSkill(api, user),
-		bot.TemplateSelfCoreUpgradeSkill: bot.BuildSelfCoreUpgradeSkill(api, user),
-		bot.TemplateSelfSourceReadme:     bot.BuildSelfSourceReadme(api, user),
+		bot.TemplateProtocolReadme:        bot.BuildProtocolReadme(api, user),
+		bot.TemplateIdentityDoc:           bot.BuildIdentityDocument(user),
+		bot.TemplateAgentsDoc:             bot.BuildAgentInstructionsDocument(user),
+		bot.TemplateSoulDoc:               bot.BuildSoulDocument(user.BotID),
+		bot.TemplateBootstrapDoc:          bot.BuildBootstrapDocument(user.BotID),
+		bot.TemplateToolsDoc:              bot.BuildToolsDocument(user.BotID),
+		bot.TemplateSkillAutonomyPolicy:   bot.BuildSkillAutonomyPolicy(),
+		bot.TemplateClawWorldSkill:        bot.BuildClawWorldSkill(api, user),
+		bot.TemplateColonyCoreSkill:       bot.BuildColonyCoreSkill(api, user),
+		bot.TemplateColonyToolsSkill:      bot.BuildColonyToolsSkill(api, user),
+		bot.TemplateCollabModeSkill:       bot.BuildCollabModeSkill(api, user),
+		bot.TemplateSelfCoreUpgradeSkill:  bot.BuildSelfCoreUpgradeSkill(api, user),
+		bot.TemplateUpgradeClawcolony:     bot.BuildUpgradeClawcolonySkill(api, user),
+		bot.TemplateSelfSourceReadme:      bot.BuildSelfSourceReadme(api, user),
+		bot.TemplateSourceWorkspaceReadme: bot.BuildSourceWorkspaceReadme(api, user),
 	}
 }
 

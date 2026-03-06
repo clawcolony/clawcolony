@@ -39,7 +39,9 @@ type RuntimeProfile struct {
 	GangliaStackSkill        string `json:"ganglia_stack_skill"`
 	CollabModeSkill          string `json:"collab_mode_skill"`
 	SelfCoreUpgradeSkill     string `json:"self_core_upgrade_skill"`
+	UpgradeClawcolonySkill   string `json:"upgrade_clawcolony_skill"`
 	SelfSourceReadme         string `json:"self_source_readme"`
+	SourceWorkspaceReadme    string `json:"source_workspace_readme"`
 	SkillAutonomyPolicy      string `json:"skill_autonomy_policy"`
 	KnowledgeBaseMCPManifest string `json:"knowledgebase_mcp_manifest"`
 	KnowledgeBaseMCPPlugin   string `json:"knowledgebase_mcp_plugin"`
@@ -57,21 +59,23 @@ type Manager struct {
 }
 
 const (
-	TemplateProtocolReadme       = "protocol_readme"
-	TemplateIdentityDoc          = "identity_doc"
-	TemplateAgentsDoc            = "agents_doc"
-	TemplateSoulDoc              = "soul_doc"
-	TemplateBootstrapDoc         = "bootstrap_doc"
-	TemplateToolsDoc             = "tools_doc"
-	TemplateSkillAutonomyPolicy  = "skill_autonomy_policy"
-	TemplateClawWorldSkill       = "clawcolony_skill"
-	TemplateColonyCoreSkill      = "colony_core_skill"
-	TemplateColonyToolsSkill     = "colony_tools_skill"
-	TemplateKnowledgeBaseSkill   = "knowledge_base_skill"
-	TemplateGangliaStackSkill    = "ganglia_stack_skill"
-	TemplateCollabModeSkill      = "collab_mode_skill"
-	TemplateSelfCoreUpgradeSkill = "self_core_upgrade_skill"
-	TemplateSelfSourceReadme     = "self_source_readme"
+	TemplateProtocolReadme        = "protocol_readme"
+	TemplateIdentityDoc           = "identity_doc"
+	TemplateAgentsDoc             = "agents_doc"
+	TemplateSoulDoc               = "soul_doc"
+	TemplateBootstrapDoc          = "bootstrap_doc"
+	TemplateToolsDoc              = "tools_doc"
+	TemplateSkillAutonomyPolicy   = "skill_autonomy_policy"
+	TemplateClawWorldSkill        = "clawcolony_skill"
+	TemplateColonyCoreSkill       = "colony_core_skill"
+	TemplateColonyToolsSkill      = "colony_tools_skill"
+	TemplateKnowledgeBaseSkill    = "knowledge_base_skill"
+	TemplateGangliaStackSkill     = "ganglia_stack_skill"
+	TemplateCollabModeSkill       = "collab_mode_skill"
+	TemplateSelfCoreUpgradeSkill  = "self_core_upgrade_skill"
+	TemplateUpgradeClawcolony     = "upgrade_clawcolony_skill"
+	TemplateSelfSourceReadme      = "self_source_readme"
+	TemplateSourceWorkspaceReadme = "source_workspace_readme"
 )
 
 func NewManager(st store.Store, provisioner Provisioner, apiBase, model string) *Manager {
@@ -240,7 +244,9 @@ func (m *Manager) buildRuntimeProfile(ctx context.Context, botItem store.Bot) (R
 		GangliaStackSkill:        m.pickTemplate(templates, TemplateGangliaStackSkill, BuildGangliaStackSkill(m.apiBase, botItem), botItem),
 		CollabModeSkill:          m.pickTemplate(templates, TemplateCollabModeSkill, BuildCollabModeSkill(m.apiBase, botItem), botItem),
 		SelfCoreUpgradeSkill:     m.pickTemplate(templates, TemplateSelfCoreUpgradeSkill, BuildSelfCoreUpgradeSkill(m.apiBase, botItem), botItem),
+		UpgradeClawcolonySkill:   m.pickTemplate(templates, TemplateUpgradeClawcolony, BuildUpgradeClawcolonySkill(m.apiBase, botItem), botItem),
 		SelfSourceReadme:         m.pickTemplate(templates, TemplateSelfSourceReadme, BuildSelfSourceReadme(m.apiBase, botItem), botItem),
+		SourceWorkspaceReadme:    m.pickTemplate(templates, TemplateSourceWorkspaceReadme, BuildSourceWorkspaceReadme(m.apiBase, botItem), botItem),
 		KnowledgeBaseMCPManifest: BuildKnowledgeBaseMCPManifest(),
 		KnowledgeBaseMCPPlugin:   BuildKnowledgeBaseMCPPlugin(m.apiBase, botItem),
 		OpenClawConfig:           BuildOpenClawConfig(m.model),
@@ -318,6 +324,7 @@ mcp_and_skills:
 - ganglia-stack: 神经节锻造与整合
 - collab-mode: 复杂协作流程
 - self-core-upgrade: 自我代码升级
+- upgrade-clawcolony: 社区 runtime 代码升级
 - mcp-knowledgebase.*: 知识库相关读写主工具集
 `)
 		doc = ensureSection(doc, "mcp_definition:", `
