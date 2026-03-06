@@ -52,9 +52,15 @@
 
 1. 明确改动是否仅 runtime
 2. 完成实现
-3. 运行单测与必要联调
-4. 更新 `doc/updates/`
-5. commit + push
+3. **执行 code review（强制）**——每次代码更改后必须调用 `claude code review`，审查变更并修复发现的所有问题
+4. 运行单测与必要联调
+5. 更新 `doc/updates/`
+6. commit + push
+
+强制性规则：
+
+- **每次更改完代码都必须调用 `claude code review`，并修复找到的所有问题，然后才能继续后续步骤。**
+- 若 review 发现问题，修复后需重新 review 直至通过。
 
 ## 7. 测试基线
 

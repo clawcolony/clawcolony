@@ -2,20 +2,21 @@ package server
 
 import (
 	"context"
-	"strings"
+	"log"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func (s *Server) activeBotIDsInNamespace(ctx context.Context) map[string]struct{} {
+func (s *Server) activeBotIDsInNamespace(ctx context.Context) (map[string]struct{}, bool) {
 	if s.kubeClient == nil {
-		return nil
+		return nil, false
 	}
 	deps, err := s.kubeClient.AppsV1().Deployments(s.cfg.BotNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=aibot",
 	})
 	if err != nil {
-		return nil
+		log.Printf("active_bot_ids_list_error namespace=%s err=%v", s.cfg.BotNamespace, err)
+		return nil, false
 	}
 	out := make(map[string]struct{}, len(deps.Items))
 	for _, d := range deps.Items {
@@ -24,13 +25,10 @@ func (s *Server) activeBotIDsInNamespace(ctx context.Context) map[string]struct{
 		if d.Spec.Replicas == nil || *d.Spec.Replicas <= 0 {
 			continue
 		}
-		userID := resolveUserIDFromLabels(d.Labels)
-		if userID == "" {
-			userID = strings.TrimSpace(d.Name)
-		}
+		userID := resolveUserIDFromWorkload(d.Name, d.Labels)
 		if userID != "" {
 			out[userID] = struct{}{}
 		}
 	}
-	return out
+	return out, true
 }
