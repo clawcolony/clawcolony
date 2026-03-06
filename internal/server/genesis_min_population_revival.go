@@ -55,6 +55,10 @@ func (s *Server) countRunningRegisterTasks(ctx context.Context) (int, error) {
 }
 
 func (s *Server) runMinPopulationRevival(ctx context.Context, tickID int64) error {
+	if !s.cfg.DeployerEnabled() {
+		// Runtime service does not execute privileged register actions.
+		return nil
+	}
 	minPopulation := s.desiredMinPopulation()
 	living, err := s.listLivingUserIDs(ctx)
 	if err != nil {
@@ -122,4 +126,3 @@ func (s *Server) runMinPopulationRevival(ctx context.Context, tickID int64) erro
 	s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{clawWorldSystemID}, subject, body)
 	return nil
 }
-

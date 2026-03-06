@@ -56,22 +56,6 @@ spec:
               value: "openai/gpt-5.1-codex"
             - name: BOT_STATE_PVC_SIZE
               value: "2Gi"
-            - name: UPGRADE_REPO_URL
-              value: "git@github.com:clawcolony/clawcolony.git"
-            - name: UPGRADE_WORKDIR
-              value: "/tmp/clawcolony-upgrades"
-            - name: UPGRADE_TIMEOUT
-              value: "30m"
-            - name: UPGRADE_DOCKERFILE
-              value: "Dockerfile"
-            - name: UPGRADE_DOCKER_BUILD_MEMORY
-              value: "2g"
-            - name: UPGRADE_DOCKER_BUILD_CPUS
-              value: "2"
-            - name: UPGRADE_DOCKER_BUILD_NO_CACHE
-              value: "true"
-            - name: UPGRADE_IMAGE_PREFIX
-              value: "openclaw:upgrade"
             - name: GITHUB_API_MOCK_ENABLED
               value: "false"
             - name: GITHUB_API_MOCK_OWNER

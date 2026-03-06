@@ -187,4 +187,4 @@
 1. 有 schema 变更与回滚方案。
 2. 有自动化测试覆盖关键路径。
 3. 有 agent 侧使用说明。
-4. 有 `doc/updates/` 记录。
+4. 有 update 记录（统一写入 deployer 仓库 `doc/updates/`）。

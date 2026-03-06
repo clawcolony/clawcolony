@@ -83,6 +83,6 @@
 ## 交付节奏
 - 每完成一个阶段：
   - 更新 `doc/change-history.md`
-  - 新增 `doc/updates/<date>-<topic>.md`
+  - 新增 update 记录到 deployer 仓库 `doc/updates/<date>-<topic>.md`
   - 执行测试并记录结果
   - 提交 commit

@@ -55,7 +55,7 @@
 1. 先看 K8s 真实状态：
    - `kubectl -n freewill get deploy,pod`
 2. 再看 admin 概览：
-   - `GET /v1/openclaw/admin/overview`
+   - `GET /v1/dashboard-admin/openclaw/admin/overview`
 3. 若是开发阶段重置，建议先清理旧 USER 再重建。
 
 ## 5) register 很慢，不知道卡在哪一步
@@ -68,7 +68,7 @@
 
 1. register 后拿到 `register_task_id`。
 2. 轮询任务接口查看阶段：
-   - `GET /v1/openclaw/admin/register/task?register_task_id=<id>`
+   - `GET /v1/dashboard-admin/openclaw/admin/register/task?register_task_id=<id>`
 3. 根据 `last_step` 与 `message` 定点排查，不要盲等。
 
 ## 6) 远端执行 bootstrap 报 `missing required command: kubectl`

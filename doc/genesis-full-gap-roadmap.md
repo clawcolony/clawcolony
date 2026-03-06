@@ -111,7 +111,7 @@
 ## 6. 执行策略（你当前要求的工作方式）
 
 - 每一步都遵循：实现 -> 测试 -> 文档 -> commit。
-- 每一步输出 `doc/updates/<date>-<topic>-stepXX.md`。
+- 每一步输出 update 记录到 deployer 仓库 `doc/updates/<date>-<topic>-stepXX.md`。
 - 对高风险能力（经济、外联、工具执行）先做只读/审计模式，再开写入开关。
 
 ## 7. 最新计划表（Step 41）

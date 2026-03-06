@@ -1066,11 +1066,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/register/task", s.handleDashboardAdminProxy)
 	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/register/history", s.handleDashboardAdminProxy)
 	s.mux.HandleFunc("/v1/dashboard-admin/openclaw/admin/github/health", s.handleDashboardAdminProxy)
-	s.mux.HandleFunc("/v1/openclaw/admin/overview", s.handleOpenClawAdminOverview)
-	s.mux.HandleFunc("/v1/openclaw/admin/action", s.handleOpenClawAdminAction)
-	s.mux.HandleFunc("/v1/openclaw/admin/register/task", s.handleOpenClawAdminRegisterTask)
-	s.mux.HandleFunc("/v1/openclaw/admin/register/history", s.handleOpenClawAdminRegisterHistory)
-	s.mux.HandleFunc("/v1/openclaw/admin/github/health", s.handleOpenClawAdminGitHubHealth)
 	s.mux.HandleFunc("/v1/tasks/pi", s.handlePiTaskMeta)
 	s.mux.HandleFunc("/v1/tasks/pi/claim", s.handlePiTaskClaim)
 	s.mux.HandleFunc("/v1/tasks/pi/submit", s.handlePiTaskSubmit)
@@ -7678,42 +7673,13 @@ func (s *Server) handleDashboardAdminProxy(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "dashboard admin target is not allowed")
 		return
 	}
-	if s.cfg.RuntimeEnabled() && !s.cfg.DeployerEnabled() {
-		s.forwardDashboardAdminRequest(w, r, targetPath)
+	// Runtime project is a pure proxy for dashboard admin operations.
+	// All privileged actions must be forwarded to deployer service.
+	if !s.cfg.RuntimeEnabled() {
+		writeError(w, http.StatusNotFound, "dashboard admin proxy is runtime-only")
 		return
 	}
-	s.dispatchDashboardAdminLocal(w, r, targetPath)
-}
-
-func (s *Server) dispatchDashboardAdminLocal(w http.ResponseWriter, r *http.Request, targetPath string) {
-	req := r.Clone(r.Context())
-	u := *r.URL
-	u.Path = targetPath
-	req.URL = &u
-	switch targetPath {
-	case "/v1/prompts/templates/apply":
-		s.handlePromptTemplateApply(w, req)
-	case "/v1/bots/upgrade":
-		s.handleBotUpgrade(w, req)
-	case "/v1/bots/upgrade/task":
-		s.handleBotUpgradeTask(w, req)
-	case "/v1/bots/upgrade/history":
-		s.handleBotUpgradeHistory(w, req)
-	case "/v1/bots/upgrade/steps":
-		s.handleBotUpgradeSteps(w, req)
-	case "/v1/openclaw/admin/overview":
-		s.handleOpenClawAdminOverview(w, req)
-	case "/v1/openclaw/admin/action":
-		s.handleOpenClawAdminAction(w, req)
-	case "/v1/openclaw/admin/register/task":
-		s.handleOpenClawAdminRegisterTask(w, req)
-	case "/v1/openclaw/admin/register/history":
-		s.handleOpenClawAdminRegisterHistory(w, req)
-	case "/v1/openclaw/admin/github/health":
-		s.handleOpenClawAdminGitHubHealth(w, req)
-	default:
-		writeError(w, http.StatusNotFound, "dashboard admin handler not found")
-	}
+	s.forwardDashboardAdminRequest(w, r, targetPath)
 }
 
 func (s *Server) forwardDashboardAdminRequest(w http.ResponseWriter, r *http.Request, targetPath string) {
@@ -8471,16 +8437,16 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/collab/participants?collab_id=<id>&status=<status>&limit=<n>",
 		"GET /v1/collab/artifacts?collab_id=<id>&user_id=<id>&limit=<n>",
 		"GET /v1/collab/events?collab_id=<id>&limit=<n>",
-		"POST /v1/bots/upgrade",
-		"GET /v1/bots/upgrade/task?upgrade_task_id=<id>",
-		"GET /v1/bots/upgrade/history?user_id=<id>&limit=<n>",
-		"GET /v1/bots/upgrade/steps?audit_id=<id>&limit=<n>",
-		"GET /v1/openclaw/admin/overview",
-		"POST /v1/openclaw/admin/action",
-		"GET /v1/openclaw/admin/register/task?register_task_id=<id>",
-		"GET /v1/openclaw/admin/register/history?limit=<n>",
 		"GET /v1/system/request-logs?limit=<n>",
-		"GET /v1/openclaw/admin/github/health",
+		"POST /v1/dashboard-admin/bots/upgrade",
+		"GET /v1/dashboard-admin/bots/upgrade/task?upgrade_task_id=<id>",
+		"GET /v1/dashboard-admin/bots/upgrade/history?user_id=<id>&limit=<n>",
+		"GET /v1/dashboard-admin/bots/upgrade/steps?audit_id=<id>&limit=<n>",
+		"GET /v1/dashboard-admin/openclaw/admin/overview",
+		"POST /v1/dashboard-admin/openclaw/admin/action",
+		"GET /v1/dashboard-admin/openclaw/admin/register/task?register_task_id=<id>",
+		"GET /v1/dashboard-admin/openclaw/admin/register/history?limit=<n>",
+		"GET /v1/dashboard-admin/openclaw/admin/github/health",
 	}
 }
 

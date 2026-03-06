@@ -170,7 +170,7 @@ split 联调自检（角色 + 代理 + RBAC + 可选 register）：
 
 - 该脚本会从当前工作区导出两份独立代码树，并分别 `git init`
 - `runtime` 面向公开仓库；`deployer` 维持私有
-- 详细设计见 [doc/design/runtime-deployer-project-split.md](/Users/waken/workspace/landlord/doc/design/runtime-deployer-project-split.md)
+- 详细设计见 [doc/design/runtime-deployer-project-split.md](/Users/waken/workspace/clawcolony-runtime-upstream/doc/design/runtime-deployer-project-split.md)
 
 ### 一键全新环境部署（含 Secrets + Agents）
 
@@ -189,7 +189,7 @@ cp scripts/oneclick.env.example .local/oneclick.env
   - `clawcolony/clawcolony-upgrade-secret`
   - `clawcolony/clawcolony-github`（当 `GITHUB_API_MOCK_ENABLED=false`）
 - 然后调用 `scripts/deploy_dev_server.sh` 部署并等待就绪。
-- 最后调用 `POST /v1/openclaw/admin/action` (`action=register`) 自动注册指定数量的 OpenClaw users，并轮询每个 `register_task_id` 到完成。
+- 最后通过 runtime 代理接口 `POST /v1/dashboard-admin/openclaw/admin/action` (`action=register`) 自动注册指定数量的 OpenClaw users，并轮询每个 `register_task_id` 到完成。
 - register 过程会为每个 user 自动创建独立 git secret：`aibot-git-<user_id>`（不再使用全局 git secret）。
 - `bootstrap_full_stack.sh` 在 register 完成后会默认执行隔离校验；如需跳过可传 `--skip-verify-isolation`。
 - 服务角色可通过 `CLAWCOLONY_SERVICE_ROLE` 控制：`all`（默认）、`runtime`、`deployer`。
@@ -424,11 +424,11 @@ psql "postgres://clawcolony:clawcolony@127.0.0.1:5432/clawcolony?sslmode=disable
 - `GET /v1/bots/upgrade/task?upgrade_task_id=<id>`（按任务 ID 查看进度与状态）
 - `GET /v1/bots/upgrade/history?user_id=<id>&limit=<n>`
 - `GET /v1/bots/upgrade/steps?audit_id=<id>&limit=<n>`
-- `GET /v1/openclaw/admin/overview`
-- `POST /v1/openclaw/admin/action`（`action=register|restart|redeploy|delete`；其中 `register` 为异步任务）
-- `GET /v1/openclaw/admin/register/task?register_task_id=<id>`
-- `GET /v1/openclaw/admin/register/history?limit=<n>`
-- `GET /v1/openclaw/admin/github/health`
+- `GET /v1/dashboard-admin/openclaw/admin/overview`
+- `POST /v1/dashboard-admin/openclaw/admin/action`（`action=register|restart|redeploy|delete`；其中 `register` 为异步任务）
+- `GET /v1/dashboard-admin/openclaw/admin/register/task?register_task_id=<id>`
+- `GET /v1/dashboard-admin/openclaw/admin/register/history?limit=<n>`
+- `GET /v1/dashboard-admin/openclaw/admin/github/health`
 - `GET /dashboard`
 
 说明：
@@ -451,8 +451,8 @@ psql "postgres://clawcolony:clawcolony@127.0.0.1:5432/clawcolony?sslmode=disable
     - `UPGRADE_DOCKER_BUILD_ARGS`（额外 build 参数，按空格拆分）
 - OpenClaw 注册接口差异（重要）：
   - `POST /v1/bots/register`：轻量注册，仅创建 user + 部署 pod。
-  - `POST /v1/openclaw/admin/action` + `{"action":"register"}`：完整注册，触发 GitHub 仓库创建、代码同步、Deploy Key 下发与部署。
-  - `action=register` 现在是异步：提交后返回 `register_task_id`，需轮询 `/v1/openclaw/admin/register/task` 查看实时步骤和最终状态。
+  - `POST /v1/dashboard-admin/openclaw/admin/action` + `{"action":"register"}`：完整注册，触发 GitHub 仓库创建、代码同步、Deploy Key 下发与部署。
+  - `action=register` 现在是异步：提交后返回 `register_task_id`，需轮询 `/v1/dashboard-admin/openclaw/admin/register/task` 查看实时步骤和最终状态。
 - 创世纪天道参数（环境变量）：
   - `TIAN_DAO_LAW_KEY`
   - `TIAN_DAO_LAW_VERSION`
@@ -471,14 +471,18 @@ psql "postgres://clawcolony:clawcolony@127.0.0.1:5432/clawcolony?sslmode=disable
 
 ## 文档与变更记录（强制）
 
-Clawcolony 要求所有更新都必须有文档记录，统一放在 `doc/` 目录：
+Runtime 仓库要求所有设计与运行说明持续维护在 `doc/` 目录：
 
-- 设计文档：`doc/design.md`
-- 历史变更：`doc/change-history.md`
-- 每次更新记录：`doc/updates/*.md`
+- 设计文档：`doc/design.md`、`doc/design/*.md`
+- 里程碑历史：`doc/change-history.md`
+- 运行手册：`doc/runbooks/*.md`
 
-当存在非文档变更时，必须同步新增 `doc/updates/` 记录文件。  
-可通过以下命令检查：
+详细 update 流水统一维护在 deployer 私有仓库：
+
+- `git@gitlab.webpilotai.com:webpilot/clawcolony-deployer.git`
+- 路径：`doc/updates/*.md`
+
+runtime 仓库可通过以下命令做本地文档一致性检查：
 
 ```bash
 make check-doc

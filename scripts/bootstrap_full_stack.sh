@@ -268,7 +268,7 @@ fi
 log "deploy base stack"
 "${deploy_cmd[@]}"
 
-set_env_args=(
+runtime_env_args=(
   "BOT_ENV_SECRET_NAME=${BOT_ENV_SECRET_NAME}"
   "BOT_GIT_SSH_SECRET_NAME=${BOT_GIT_SSH_SECRET_NAME}"
   "BOT_GIT_SSH_HOST=${BOT_GIT_SSH_HOST}"
@@ -280,20 +280,21 @@ set_env_args=(
   "GITHUB_API_MOCK_MACHINE_USER=${GITHUB_API_MOCK_MACHINE_USER}"
   "GITHUB_API_MOCK_RELEASE_TAG=${GITHUB_API_MOCK_RELEASE_TAG}"
 )
+deployer_env_args=("${runtime_env_args[@]}")
 if [[ -n "${UPGRADE_REPO_URL:-}" ]]; then
-  set_env_args+=("UPGRADE_REPO_URL=${UPGRADE_REPO_URL}")
+  deployer_env_args+=("UPGRADE_REPO_URL=${UPGRADE_REPO_URL}")
 fi
 
 if [[ "${SPLIT_SERVICES}" == "true" ]]; then
   log "apply env overrides to deployment/clawcolony-runtime"
-  kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony-runtime "${set_env_args[@]}" >/dev/null
+  kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony-runtime "${runtime_env_args[@]}" >/dev/null
   kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-runtime --timeout="${WAIT_TIMEOUT}"
   log "apply env overrides to deployment/clawcolony-deployer"
-  kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony-deployer "${set_env_args[@]}" >/dev/null
+  kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony-deployer "${deployer_env_args[@]}" >/dev/null
   kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony-deployer --timeout="${WAIT_TIMEOUT}"
 else
   log "apply runtime env overrides to deployment/clawcolony"
-  kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony "${set_env_args[@]}" >/dev/null
+  kubectl -n "${CLAWCOLONY_NS}" set env deployment/clawcolony "${deployer_env_args[@]}" >/dev/null
   kubectl -n "${CLAWCOLONY_NS}" rollout status deployment/clawcolony --timeout="${WAIT_TIMEOUT}"
 fi
 

@@ -105,8 +105,8 @@ func TestRoleAccessDeployerBlocksRuntimeRoutes(t *testing.T) {
 	}
 
 	w = doJSONRequest(t, h, http.MethodGet, "/v1/openclaw/admin/overview", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("deployer mode should allow admin overview, got=%d body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("runtime repo should not expose admin overview directly, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -121,8 +121,8 @@ func TestRoleAccessAllAllowsBoth(t *testing.T) {
 	}
 
 	w = doJSONRequest(t, h, http.MethodGet, "/v1/openclaw/admin/overview", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("all mode should allow deployer route, got=%d body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("runtime repo should not expose deployer route directly, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -153,17 +153,26 @@ func TestDashboardAdminProxyRuntimeForwardsToDeployer(t *testing.T) {
 }
 
 func TestDashboardAdminProxyAllDispatchesLocal(t *testing.T) {
+	var gotPath, gotQuery, gotMethod string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		gotMethod = r.Method
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "source": "deployer"})
+	}))
+	defer upstream.Close()
+
 	srv := newTestServer()
 	srv.cfg.ServiceRole = config.ServiceRoleAll
-	srv.cfg.GitHubMockEnabled = true
+	srv.cfg.DeployerAPIBase = upstream.URL
 	h := srv.roleAccessMiddleware(srv.mux)
 
 	w := doJSONRequest(t, h, http.MethodGet, "/v1/dashboard-admin/openclaw/admin/github/health", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("dashboard-admin local dispatch status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("dashboard-admin proxy status=%d body=%s", w.Code, w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte(`"mock_mode":true`)) {
-		t.Fatalf("expected mock github health response: %s", w.Body.String())
+	if gotMethod != http.MethodGet || gotPath != "/v1/openclaw/admin/github/health" || gotQuery != "" {
+		t.Fatalf("unexpected forwarded request method=%s path=%s query=%s", gotMethod, gotPath, gotQuery)
 	}
 }
 
@@ -1035,6 +1044,7 @@ func TestBotUpgradeBlockedWhenUserIsDyingForT3(t *testing.T) {
 }
 
 func TestOpenClawAdminRegisterTaskEndpoints(t *testing.T) {
+	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes direct /v1/openclaw/admin/* routes")
 	srv := newTestServer()
 	task, err := srv.store.CreateRegisterTask(context.Background(), store.RegisterTask{
 		Provider:  "openclaw",
@@ -1072,6 +1082,7 @@ func TestOpenClawAdminRegisterTaskEndpoints(t *testing.T) {
 }
 
 func TestOpenClawAdminActionBlockedByToolTierGate(t *testing.T) {
+	t.Skip("moved to clawcolony-deployer repo: runtime no longer exposes direct /v1/openclaw/admin/* routes")
 	srv := newTestServer()
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
 	if w.Code != http.StatusAccepted {
