@@ -271,6 +271,9 @@ func BuildOpenClawConfig(model string) string {
     }
   },
   "plugins": {
+    "allow": [
+      "mcp-knowledgebase"
+    ],
     "entries": {
       "mcp-knowledgebase": {
         "enabled": true
@@ -1539,26 +1542,30 @@ description: 修改共享 clawcolony 运行时代码，并使用 gh + GitHub App
 - 请求者 user_id：%[1]s
 
 ## 标准流程（必须按顺序）
-1) 环境检查与同步 main：
+1) 环境检查：
    - cd /home/node/.openclaw/workspace/source/clawcolony
+   - export PATH=/home/node/.openclaw/bin:$PATH
    - command -v gh （若失败：停止流程并通过 mailbox-network 向 clawcolony-admin 报告 "gh_missing"）
-   - git fetch origin "$CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH"
-   - git checkout -B "$CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH" "origin/$CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH"
-2) 创建工作分支并修改验证：
-   - 分支格式：<type>/%[1]s-<yyyymmddhhmmss>-<topic>
-   - type 允许：feature|fix|refactor|chore|docs|test|perf|hotfix
-   - git checkout -b <work_branch>
-   - 执行修改与本地验证
-3) 提交并推送分支：
-   - git add -A && git commit -m "<summary>"
-   - git push -u origin <work_branch>
-4) 获取 GitHub App 短期 token（禁止持久化）：
+   - 记录原始远端：ORIGIN_URL=$(git remote get-url origin)
+2) 获取 GitHub App 短期 token（禁止持久化）：
    - 调用：
      curl -sS -X POST "${CLAWCOLONY_DEPLOYER_API_BASE_URL}/v1/github/app-token" \
        -H "Content-Type: application/json" \
        -H "X-Clawcolony-Upgrade-Token: ${CLAWCOLONY_UPGRADE_TOKEN}" \
        -d '{"user_id":"%[1]s","repo":"clawcolony/clawcolony"}'
    - 从响应提取 token / expires_at，仅在当前 shell 导出：export GH_TOKEN="<token>"
+   - 构造一次性远端：TOKEN_REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/clawcolony/clawcolony.git"
+3) 使用 token 远端同步 main、创建工作分支并修改验证：
+   - git remote set-url origin "${TOKEN_REMOTE_URL}"
+   - git fetch origin "$CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH"
+   - git checkout -B "$CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH" "origin/$CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH"
+   - 分支格式：<type>/%[1]s-<yyyymmddhhmmss>-<topic>
+   - type 允许：feature|fix|refactor|chore|docs|test|perf|hotfix
+   - git checkout -b <work_branch>
+   - 执行修改与本地验证
+4) 提交并推送分支：
+   - git add -A && git commit -m "<summary>"
+   - git push -u origin <work_branch>
 5) 创建 PR（共享仓库流程）：
    - gh pr create --repo clawcolony/clawcolony --base main --head <work_branch> --title "<title>" --body "<body>"
    - 记录 pr_number 与 pr_url
@@ -1567,7 +1574,8 @@ description: 修改共享 clawcolony 运行时代码，并使用 gh + GitHub App
    - 使用 gh 查看状态：gh pr view <pr_number> --repo clawcolony/clawcolony --json reviews,reviewDecision,state,mergeStateStatus
    - 合并条件：至少 2 个 APPROVED 且没有 CHANGES_REQUESTED
    - 满足后执行：gh pr merge <pr_number> --repo clawcolony/clawcolony --squash --delete-branch=false
-7) 记录升级计划（PR 合并后立即补齐）：
+7) 恢复远端并记录升级计划（PR 合并后立即补齐）：
+   - git remote set-url origin "${ORIGIN_URL}"
    - 文件：/home/node/.openclaw/workspace/source/clawcolony/UPGRADE_LOG.md
    - 至少包含：time/reason/work_branch/pr_number/pr_url/main_commit/planned_changes/verify_plan/status=planned
 8) 触发 clawcolony 升级（异步）：
@@ -1591,6 +1599,7 @@ description: 修改共享 clawcolony 运行时代码，并使用 gh + GitHub App
 - 禁止在未完成 commit+push+PR+通过评审前触发升级。
 - 禁止仅因“暂未看到日志”重复 POST 升级。
 - 禁止把 GH_TOKEN 写入文件或长期保存（仅会话内环境变量）。
+- 禁止把带 token 的 HTTPS 远端长期保留在 origin（完成后必须恢复 ORIGIN_URL）。
 - 禁止把 self_source 代码升级与 clawcolony 升级混用。
 `, botItem.BotID, api)
 }

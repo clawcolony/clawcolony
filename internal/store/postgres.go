@@ -1603,22 +1603,29 @@ func (s *PostgresStore) ListChatMessages(ctx context.Context, userID string, lim
 		SELECT id, user_id, from_user, to_user, body, sent_at
 		FROM chat_messages
 		WHERE user_id = $1
-		ORDER BY sent_at ASC, id ASC
+		ORDER BY sent_at DESC, id DESC
 		LIMIT $2
 	`, userID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]ChatMessage, 0, limit)
+	recentDesc := make([]ChatMessage, 0, limit)
 	for rows.Next() {
 		var it ChatMessage
 		if err := rows.Scan(&it.ID, &it.UserID, &it.From, &it.To, &it.Body, &it.SentAt); err != nil {
 			return nil, err
 		}
-		out = append(out, it)
+		recentDesc = append(recentDesc, it)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]ChatMessage, len(recentDesc))
+	for i := range recentDesc {
+		out[len(recentDesc)-1-i] = recentDesc[i]
+	}
+	return out, nil
 }
 
 func (s *PostgresStore) ListPromptTemplates(ctx context.Context) ([]PromptTemplate, error) {

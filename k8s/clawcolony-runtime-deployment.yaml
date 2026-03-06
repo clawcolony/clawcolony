@@ -30,6 +30,10 @@ spec:
               value: ":8080"
             - name: CLAWCOLONY_SERVICE_ROLE
               value: "runtime"
+            - name: CLAWCOLONY_CHAT_REPLY_TIMEOUT
+              value: "8m"
+            - name: MIN_POPULATION
+              value: "0"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -51,19 +55,19 @@ spec:
             - name: TOOL_T3_ALLOWED_HOSTS
               value: "api.openai.com,github.com,raw.githubusercontent.com"
             - name: AUTONOMY_REMINDER_INTERVAL_TICKS
-              value: "20"
+              value: "0"
             - name: AUTONOMY_REMINDER_OFFSET_TICKS
               value: "0"
             - name: COMMUNITY_COMM_REMINDER_INTERVAL_TICKS
-              value: "20"
+              value: "0"
             - name: COMMUNITY_COMM_REMINDER_OFFSET_TICKS
               value: "10"
             - name: KB_ENROLLMENT_REMINDER_INTERVAL_TICKS
-              value: "15"
+              value: "0"
             - name: KB_ENROLLMENT_REMINDER_OFFSET_TICKS
               value: "2"
             - name: KB_VOTING_REMINDER_INTERVAL_TICKS
-              value: "15"
+              value: "0"
             - name: KB_VOTING_REMINDER_OFFSET_TICKS
               value: "8"
           readinessProbe:

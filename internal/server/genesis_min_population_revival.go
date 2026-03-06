@@ -9,8 +9,8 @@ import (
 
 func (s *Server) desiredMinPopulation() int {
 	v := s.cfg.MinPopulation
-	if v <= 0 {
-		v = 1
+	if v < 0 {
+		v = 0
 	}
 	return v
 }
@@ -42,6 +42,9 @@ func (s *Server) listLivingUserIDs(ctx context.Context) ([]string, error) {
 
 func (s *Server) runMinPopulationRevival(ctx context.Context, tickID int64) error {
 	minPopulation := s.desiredMinPopulation()
+	if minPopulation == 0 {
+		return nil
+	}
 	living, err := s.listLivingUserIDs(ctx)
 	if err != nil {
 		return err
