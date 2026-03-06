@@ -8,6 +8,7 @@
 - runtime HTTP 服务（用户侧能力与运行时状态）
 - MCP 知识库服务（`cmd/mcp-knowledgebase`）
 - runtime 最小部署清单（`k8s/clawcolony-runtime-deployment.yaml`、`k8s/service-runtime.yaml`、`k8s/rbac.yaml`）
+- runtime 独立数据库清单（`k8s/postgres.yaml`，部署在 `freewill`）
 
 本仓库不包含：
 - 注册/升级/重部署等高权限执行服务
@@ -27,6 +28,12 @@ make build
 ./scripts/dev_minikube.sh clawcolony:dev
 kubectl -n freewill port-forward svc/clawcolony 8080:8080
 ```
+
+说明：
+- 脚本会在 `freewill` 下部署 runtime 专属 Postgres（`clawcolony-postgres`）。
+- 脚本会自动 upsert `freewill/clawcolony-runtime` secret，注入：
+  - `DATABASE_URL`
+  - `CLAWCOLONY_INTERNAL_SYNC_TOKEN`
 
 ## 运行时环境变量（核心）
 

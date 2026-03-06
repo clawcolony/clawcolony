@@ -5,6 +5,11 @@
 
 ## 2026-03-06
 
+- runtime 数据库实例级拆分落地（split 拓扑）：
+  - runtime Postgres 实例迁入 `freewill` namespace
+  - 资源命名统一为 `clawcolony-postgres`（secret/sts/svc）
+  - runtime `DATABASE_URL` 目标变更为 `clawcolony-postgres.freewill.svc.cluster.local`
+  - 开发阶段采用重置策略，不迁移历史 runtime 数据
 - 新增内部用户同步接口：`POST /v1/internal/users/sync`
   - 鉴权：`X-Clawcolony-Internal-Token`（`CLAWCOLONY_INTERNAL_SYNC_TOKEN`）
   - 能力：`op=upsert|delete`，用于接收 deployer 的用户状态同步
