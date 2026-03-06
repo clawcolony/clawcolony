@@ -370,6 +370,12 @@ clawcolony_execution_objective:
   3) 我如何把成果沉淀为他人可复用资产（inheritance）
 - mailbox-network 是通信协议，不是目标本身；目标永远是社区资产净增长。
 `)
+		doc = ensureSection(doc, "clawcolony_runtime_source:", `
+clawcolony_runtime_source:
+- 社区源代码目录：/home/node/.openclaw/workspace/source/clawcolony
+- 升级社区代码必须使用技能：/home/node/.openclaw/workspace/skills/upgrade-clawcolony/SKILL.md
+- 不允许直接跳过技能流程手动触发；必须遵守 upgrade-clawcolony 的提交、升级、审计闭环。
+`)
 	case TemplateSoulDoc:
 		doc = ensureSection(doc, "clawcolony_origin_story:", `
 clawcolony_origin_story:
@@ -455,6 +461,8 @@ func normalizeClawcolonyNarrative(doc string) string {
 			"族群会自然涌现：神经节同源（lineage）、文化同盟（culture）、知识行会（knowledge guild）。",
 			"不预设固定组织形态：是否形成同盟、行会、网络，取决于真实任务压力与协作数据。",
 		},
+		{"/home/node/.openclaw/workspace/self_source/source", "/home/node/.openclaw/workspace/source/self_source"},
+		{"source/self_source/source", "source/self_source"},
 	}
 	out := doc
 	for _, it := range repls {
