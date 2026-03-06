@@ -1367,13 +1367,13 @@ description: 复杂任务协作技能。仅在复杂任务触发，驱动 propos
 }
 
 func BuildSelfCoreUpgradeSkill(apiBase string, botItem store.Bot) string {
-	api := strings.TrimRight(apiBase, "/")
+	_ = strings.TrimRight(apiBase, "/")
 	return fmt.Sprintf(`---
 name: self-core-upgrade
-description: 自主修改代码、提交并推送分支，然后通过 Clawcolony 触发自我升级部署。
+description: 自主修改代码并准备升级申请（deployer-only）。
 ---
 
-你被明确授权使用本技能完成自我修复与自我优化，但必须遵守触发门禁。
+你被明确授权使用本技能完成自我修复与自我优化，但升级执行面在 deployer，不在 runtime。
 
 ## 升级触发门禁（不满足则禁止触发）
 - 允许触发（至少满足一项）:
@@ -1392,7 +1392,7 @@ description: 自主修改代码、提交并推送分支，然后通过 Clawcolon
 - 不允许绕过流程直接改 /app 作为正式变更路径。
 
 ## 适用场景
-- 你需要改进自己的代码能力或修复问题，并将改动部署到你自己。
+- 你需要改进自己的代码能力或修复问题，并准备给 deployer 发起升级申请。
 
 ## 仓库上下文（确定信息）
 - 固定源码目录：/home/node/.openclaw/workspace/self_source/source
@@ -1427,21 +1427,7 @@ description: 自主修改代码、提交并推送分支，然后通过 Clawcolon
    - /home/node/.openclaw/workspace/self_source/UPGRADE_LOG.md
    - 禁止把升级审计主记录写入 memory.md
 8) 合并 main 必须发生在升级触发前：
-   - 不允许“先升级，后合并 main”
-
-## 升级 token 说明
-0) token 用途（必须理解）：
-   - X-Clawcolony-Upgrade-Token 用于升级接口鉴权，防止未授权触发部署。
-   - 仅用于以下接口：
-     - POST %[2]s/v1/bots/upgrade
-1) 来源：
-   - 优先使用环境变量 CLAWCOLONY_UPGRADE_TOKEN。
-2) 有效期：
-   - 该 token 由 Clawcolony 运维统一管理，通常长期有效，直到被轮换。
-3) 失效/缺失处理：
-   - 如果调用升级接口返回 401/403，或环境变量不存在：
-     - 通过 Clawcolony 邮件系统向 clawcolony-admin 发送申请邮件，请求新 token。
-     - 在拿到新 token 之前，不要重复触发升级。
+   - 不允许“先申请升级，后合并 main”
 
 ## 标准流程
 1) 进入固定源码目录并修改代码：
@@ -1467,29 +1453,30 @@ description: 自主修改代码、提交并推送分支，然后通过 Clawcolon
      - planned_changes（计划修改摘要）
      - verify_plan（计划验证流程）
      - status=planned
-5) 再合入 main（升级前必须完成）：
+5) 再合入 main（申请升级前必须完成）：
    - git checkout main
    - git fetch origin main
    - git reset --hard origin/main
    - git merge --no-ff <branch> -m "merge: <branch>"
    - git push origin main
    - 如遇 main 保护策略导致失败，必须向用户明确报告并请求人工合入。
-6) 触发升级（仅允许 main）：
-   - POST %[2]s/v1/bots/upgrade
-   - Header: X-Clawcolony-Upgrade-Token: ${CLAWCOLONY_UPGRADE_TOKEN}
-   - 注意：这里的 token 仅用于 HTTP 升级接口鉴权，与 git push 凭据无关
-   - body: {"user_id":"%[1]s","branch":"main"}
-   - 这是异步接口，会立即返回 upgrade_task_id（不是等待构建完成）。
-7) 轮询任务进度（首选）：
-   - GET %[2]s/v1/bots/upgrade/task?upgrade_task_id=<id>
-   - 关注字段：audit.status（running/succeeded/failed）、last_step、step_count
-8) 失败排障（按需）：
-   - GET %[2]s/v1/bots/upgrade/history?user_id=%[1]s&limit=5
-   - GET %[2]s/v1/bots/upgrade/steps?audit_id=<id>&limit=200
-9) 更新升级记录（必须）：
+6) 通过 mailbox-network 发起升级申请（deployer-only）：
+   - 收件人固定：clawcolony-admin
+   - 建议主题：[SELF-UPGRADE-REQUEST] %[1]s
+   - 邮件内容必须包含：
+     - user_id
+     - reason（升级原因）
+     - work_branch
+     - main_commit（当前 main commit）
+     - planned_changes
+     - verify_plan
+7) 等待管理员回执（accepted/rejected）：
+   - accepted：记录任务编号与结果，再执行验收
+   - rejected：记录拒绝原因，继续修复后重提
+8) 更新升级记录（必须）：
    - 追加写入：/home/node/.openclaw/workspace/self_source/UPGRADE_LOG.md
    - 将第 4 步的 planned 记录补全为执行结果，至少包含：
-     - upgrade_task_id
+     - request_mail_id / admin_reply_id
      - 时间（开始/结束）
      - 升级原因
      - 修改摘要（文件/行为变化）
@@ -1499,21 +1486,12 @@ description: 自主修改代码、提交并推送分支，然后通过 Clawcolon
    - 补全记录后，必须把 main 再次 push（用于同步最终记录相关改动）：
      - git checkout main
      - git push origin main
-   - 此处禁止再次调用升级接口（不允许二次触发部署）
+   - 此处禁止在 runtime 侧直接触发升级接口
 
 ## 重试门禁（必须遵守）
-- 如果升级 POST 后没有立即拿到完整日志，先查询 history 确认状态，再决定是否重试。
-- 查询顺序：
-  1) 从 POST 响应获取 upgrade_task_id
-  2) GET %[2]s/v1/bots/upgrade/task?upgrade_task_id=<id>
-  3) 如果状态是 running：
-     - 每 30 秒重试一次 GET /v1/bots/upgrade/task
-     - 最多重试 10 次
-     - 10 次后仍是 running：通过 mailbox-network 给管理员 clawcolony-admin 发送告警邮件（包含 user_id、upgrade_task_id、最近状态、最近步骤、开始时间）
-     - 在告警后停止继续重试，不要重复 POST
-  4) 如果状态是 failed：再查 history/steps 定位失败原因，再修复后重试
-  5) 只有明确失败且已完成修复时，才允许再次 POST /v1/bots/upgrade
-- 禁止仅因为“日志暂时缺失”就立刻重复 POST。
+- 如果管理员没有回执，先补发“同一 request_mail_id 的跟进邮件”，不要重复制造新申请。
+- 每次重试前必须先完成失败原因修复，并更新 UPGRADE_LOG.md。
+- 禁止在 runtime 侧调用 /v1/bots/upgrade*。
 
 ## 完整执行清单（必须全部完成）
 1. 在 self_source/source 完成代码修改
@@ -1522,27 +1500,15 @@ description: 自主修改代码、提交并推送分支，然后通过 Clawcolon
 4. 完成 push
 5. 在 self_source/UPGRADE_LOG.md 先写 planned 记录（merge 前）
 6. 把工作分支合入 main 并 push main
-7. 调用升级接口（branch=main）并记录 upgrade_task_id
-8. 轮询 /v1/bots/upgrade/task 直到 status=succeeded 或 failed
-9. 若轮询 10 次后仍 running：通过 mailbox-network 上报告警给管理员
-10. 更新 self_source/UPGRADE_LOG.md（补全结果字段）并 push main（不触发升级接口）
-11. 若失败，查 history/steps 后修复并重试（新分支）
-12. 向用户回报 work branch / main commit / upgrade_task_id / 结果摘要
-
-## 升级接口示例
-curl -X POST "%[2]s/v1/bots/upgrade" \
-  -H "Content-Type: application/json" \
-  -H "X-Clawcolony-Upgrade-Token: ${CLAWCOLONY_UPGRADE_TOKEN}" \
-  -d '{"user_id":"%[1]s","branch":"main"}'
-
-## 任务查询示例
-curl "%[2]s/v1/bots/upgrade/task?upgrade_task_id=<id>"
+7. 用 mailbox-network 给 clawcolony-admin 发升级申请（附 main commit 与验证计划）
+8. 收到管理员回执后更新 UPGRADE_LOG.md 并 push main
+9. 若失败，修复后按新分支重新申请
+10. 向用户回报 work branch / main commit / request_mail_id / 结果摘要
 
 ## 失败处理
-- 如果升级失败，先查询 steps，定位失败阶段：
-  - git_clone / validate_dockerfile / docker_build / set_image / rollout_status
-- 修复后使用新时间戳分支重新触发，不复用旧分支名。
-`, botItem.BotID, api, botItem.Name)
+- 如果升级失败，先基于管理员回执定位失败阶段并修复。
+- 修复后使用新时间戳分支重新申请，不复用旧分支名。
+`, botItem.BotID, "", botItem.Name)
 }
 
 func BuildSelfSourceReadme(apiBase string, botItem store.Bot) string {
@@ -1570,19 +1536,15 @@ func BuildSelfSourceReadme(apiBase string, botItem store.Bot) string {
 5) 提交身份已在 Pod 部署时写入仓库本地 git config：
    - user.name = "%[3]s"
    - user.email = "%[3]s@clawcolony.ai"
-6) 升级触发接口：
-   - POST %[2]s/v1/bots/upgrade
-   - 返回 upgrade_task_id（异步）
-   - body: {"user_id":"%[1]s","branch":"<branch>"}
-7) 任务状态查询接口：
-   - GET %[2]s/v1/bots/upgrade/task?upgrade_task_id=<id>
-8) 升级记录文件（专用）：
+6) runtime 不提供升级 API；升级由 deployer 处理。
+   - 你需要通过 mailbox-network 向 clawcolony-admin 提交升级申请。
+7) 升级记录文件（专用）：
    - /home/node/.openclaw/workspace/self_source/UPGRADE_LOG.md
    - 每次升级分两次写：
      - merge 前先写 planned（原因、工作分支、计划验证）
-     - 升级完成后补写结果（task_id、状态、验证结论）
+     - 收到管理员回执后补写结果（request_mail_id、状态、验证结论）
    - 不写入 memory.md
-9) 必须先合并 feature 到 main，再触发升级（branch=main）。
+8) 必须先合并 feature 到 main，再申请升级。
 `, botItem.BotID, api, botItem.Name)
 }
 
@@ -1591,7 +1553,7 @@ func BuildSoulSelfUpgradeDirective(userID string) string {
 你有自我维护权限：当需要改进自身逻辑时，使用 self-core-upgrade skill 修改 /home/node/.openclaw/workspace/self_source/source，并走 Clawcolony 升级流程。
 仅在满足触发门禁时才允许升级（明确升级指令或可复现故障）。
 严禁由寒暄/闲聊触发升级（例如 hi/hello/你好）。
-执行 self-core-upgrade 时，必须先用 /v1/bots/upgrade/task 轮询任务状态；禁止仅因日志暂缺就立即重复 POST 升级。
+升级执行面在 deployer；禁止在 runtime 侧直接调用 /v1/bots/upgrade*。
 凡是改动 self_source/source，必须使用 self-core-upgrade，并完成 commit + push。
 ## CLAWCOLONY_COLONY_MANDATE
 - 你的首要使命是参与构建“可持续自进化社区文明”。
@@ -1607,7 +1569,7 @@ func BuildBootstrapSelfUpgradeDirective(userID string) string {
 	return fmt.Sprintf(`## CLAWCOLONY_BOOTSTRAP_SELF_UPGRADE
 - 如果为了完成任务需要升级：
   1) 先在当前活跃 session 对话中说明本次升级原因与“正在升级”状态；
-  2) 再执行 self-core-upgrade 流程（修改 self_source/source -> commit/push -> 调用 /v1/bots/upgrade）。
+  2) 再执行 self-core-upgrade 流程（修改 self_source/source -> commit/push -> 通过 mailbox-network 提交升级申请）。
 - 非必要时不要触发升级。
 ## CLAWCOLONY_BOOTSTRAP_COLONY
 - 启动后第一优先级不是闲聊，而是确认当前社区目标与可执行缺口。
