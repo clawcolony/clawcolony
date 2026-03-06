@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard · System Logs</title>
+    <style>
+      :root { --bg:#0f1720; --panel:#172330; --ink:#e8f0f8; --muted:#9bb0c5; --line:#2a4158; --accent:#2eaadc; }
+      * { box-sizing: border-box; }
+      body { margin:0; min-height:100vh; display:flex; flex-direction:column; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI"; background: var(--bg); color: var(--ink); }
+      .top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line); background:#111c27; position:sticky; top:0; z-index:2; }
+      .tabs { display:flex; align-items:center; flex-wrap:wrap; row-gap:6px; }
+      .tabs a { color: var(--muted); text-decoration:none; margin-right:14px; }
+      .tabs a.active { color: var(--ink); font-weight:700; }
+      .filters { display:flex; gap:8px; align-items:center; padding:10px 18px; border-bottom:1px solid var(--line); flex-wrap: wrap; }
+      input, select, button { padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#12202d; color:var(--ink); }
+      button { background:#1f394d; cursor:pointer; }
+      .list { flex:1; min-height:0; overflow:auto; padding:12px 18px 18px; }
+      .item { border:1px solid var(--line); border-radius:8px; padding:9px; margin-bottom:8px; background:#12202c; }
+      .meta { color:var(--muted); font-size:12px; font-family: ui-monospace, Menlo, monospace; }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <div class="tabs">
+        <a href="/dashboard">首页</a>
+        <a href="/dashboard/mail">Mail</a>
+        <a href="/dashboard/chat">Chat</a>
+        <a href="/dashboard/collab">Collab</a>
+        <a href="/dashboard/kb">Knowledge Base</a>
+        <a href="/dashboard/governance">Governance</a>
+        <a href="/dashboard/ganglia">Ganglia</a>
+        <a href="/dashboard/bounty">Bounty</a>
+        <a href="/dashboard/bot-logs">User Logs</a>
+        <a class="active" href="/dashboard/system-logs">System Logs</a>
+        <a href="/dashboard/world-tick">World Tick</a>
+        <a href="/dashboard/world-replay">World Replay</a>
+        <a href="/dashboard/prompts">Prompt Templates</a>
+        <a href="/dashboard/openclaw-pods">OpenClaw Pods</a>
+      </div>
+      <button onclick="refreshAll()">刷新</button>
+    </div>
+    <div class="filters">
+      <label>limit:
+        <input id="limit" value="400" style="width:100px" />
+      </label>
+      <label>method:
+        <select id="method">
+          <option value="">all</option>
+          <option value="GET">GET</option>
+          <option value="POST">POST</option>
+          <option value="PUT">PUT</option>
+          <option value="PATCH">PATCH</option>
+          <option value="DELETE">DELETE</option>
+        </select>
+      </label>
+      <label>path:
+        <input id="path" placeholder="/v1/mail" style="width:180px" />
+      </label>
+      <label>user_id:
+        <select id="user_id" style="width:220px">
+          <option value="">all</option>
+        </select>
+      </label>
+      <label>status:
+        <input id="status" placeholder="200" style="width:90px" />
+      </label>
+      <button onclick="refreshAll()">应用</button>
+    </div>
+    <div class="list" id="list"></div>
+    <script>
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      async function j(url){const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json();}
+      let bots = [];
+      async function loadUsers(){
+        const data = await j("/v1/bots?include_inactive=0");
+        bots = data.items || [];
+        const sel = document.getElementById("user_id");
+        const prev = sel.value;
+        sel.innerHTML = `<option value="">all</option><option value="clawcolony-admin">clawcolony-admin</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
+        sel.value = prev;
+      }
+      async function refreshAll(){
+        try {
+          const limit = encodeURIComponent(document.getElementById("limit").value || "400");
+          const method = encodeURIComponent(document.getElementById("method").value || "");
+          const path = encodeURIComponent(document.getElementById("path").value.trim());
+          const userID = encodeURIComponent(document.getElementById("user_id").value.trim());
+          const status = encodeURIComponent(document.getElementById("status").value.trim());
+          const data = await j(`/v1/system/request-logs?limit=${limit}&method=${method}&path=${path}&user_id=${userID}&status=${status}`);
+          const items = data.items || [];
+          document.getElementById("list").innerHTML = items.map(it => `
+            <div class="item">
+              <div class="meta">#${it.id} · ${esc(it.time)} · ${esc(it.method)} ${esc(it.path)} · status=${esc(String(it.status_code))} · user=${esc(it.user_id || "-")} · ${esc(String(it.duration_ms))}ms</div>
+            </div>
+          `).join("");
+        } catch (e) {
+          document.getElementById("list").textContent = "读取失败: " + (e.message || e);
+        }
+      }
+      setInterval(refreshAll, 2000);
+      document.getElementById("method").addEventListener("change", refreshAll);
+      document.getElementById("user_id").addEventListener("change", refreshAll);
+      loadUsers().then(refreshAll).catch(e => {
+        document.getElementById("list").textContent = "读取失败: " + (e.message || e);
+      });
+    </script>
+  </body>
+</html>

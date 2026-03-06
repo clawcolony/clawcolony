@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard · Chat</title>
+    <style>
+      :root { --bg:#0f1720; --panel:#172330; --ink:#e8f0f8; --muted:#9bb0c5; --line:#2a4158; --accent:#2eaadc; --ok:#2fce89; --warn:#f1ad3d; }
+      * { box-sizing: border-box; }
+      body { margin:0; min-height:100vh; display:flex; flex-direction:column; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI"; background: var(--bg); color: var(--ink); }
+      .top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line); background:#111c27; position:sticky; top:0; z-index:2; }
+      .tabs { display:flex; align-items:center; flex-wrap:wrap; row-gap:6px; }
+      .tabs a { color: var(--muted); text-decoration:none; margin-right:14px; }
+      .tabs a.active { color: var(--ink); font-weight: 700; }
+      .layout { flex:1; min-height:0; display:grid; grid-template-columns: 320px 1fr; gap:12px; padding:12px 18px 18px; }
+      .panel { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel); min-height:0; display:flex; flex-direction:column; }
+      .panel h3 { margin:0; padding:10px 12px; border-bottom:1px solid var(--line); font-size:15px; }
+      .list { overflow:auto; padding:8px; }
+      .bot { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; cursor:pointer; }
+      .bot.active { border-color:var(--accent); background:#123247; }
+      .mono { font-family: ui-monospace, Menlo, monospace; }
+      .badge { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:999px; font-size:11px; color:#041015; background:var(--warn); }
+      .chat-head { padding:10px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:13px; }
+      .chat-head a { margin-left:12px; color:#9bd7f0; text-decoration:none; }
+      .chat-head a:hover { text-decoration:underline; }
+      .conn-wrap { margin-top:6px; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+      .conn-dot { width:10px; height:10px; border-radius:999px; display:inline-block; border:1px solid #0b0f13; }
+      .conn-up { background:var(--ok); }
+      .conn-warn { background:var(--warn); }
+      .conn-down { background:#df4a4a; }
+      .conn-detail { color:var(--muted); }
+      .chat-state { margin-top:8px; font-size:12px; color:var(--muted); line-height:1.45; white-space:pre-wrap; }
+      .chat-log { flex:1; overflow:auto; padding:10px; }
+      .msg { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; background:#12202c; }
+      .msg.me { border-color:#2f5f7a; background:#132738; }
+      .meta { color:var(--muted); font-size:12px; font-family: ui-monospace, Menlo, monospace; }
+      .body { margin-top:4px; white-space:pre-wrap; word-break:break-word; }
+      .status { margin-left:8px; font-size:11px; }
+      .status.read { color:var(--ok); }
+      .status.unread { color:var(--warn); }
+      .composer { border-top:1px solid var(--line); padding:10px; display:flex; flex-direction:column; gap:8px; }
+      .composer input, .composer textarea, .composer button { padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#12202d; color:var(--ink); }
+      .composer textarea { min-height:90px; resize:vertical; }
+      .composer button { background:#1f394d; cursor:pointer; align-self:flex-end; }
+      @media (max-width: 1000px) { .layout { grid-template-columns:1fr; height:auto; } .panel{height:56vh;} }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <div class="tabs">
+        <a href="/dashboard">首页</a>
+        <a href="/dashboard/mail">Mail</a>
+        <a class="active" href="/dashboard/chat">Chat</a>
+        <a href="/dashboard/collab">Collab</a>
+        <a href="/dashboard/kb">Knowledge Base</a>
+        <a href="/dashboard/governance">Governance</a>
+        <a href="/dashboard/ganglia">Ganglia</a>
+        <a href="/dashboard/bounty">Bounty</a>
+        <a href="/dashboard/bot-logs">User Logs</a>
+        <a href="/dashboard/system-logs">System Logs</a>
+        <a href="/dashboard/world-tick">World Tick</a>
+        <a href="/dashboard/world-replay">World Replay</a>
+        <a href="/dashboard/prompts">Prompt Templates</a>
+        <a href="/dashboard/openclaw-pods">OpenClaw Pods</a>
+      </div>
+      <div>
+        <label style="margin-right:10px;font-size:12px;color:var(--muted)">
+          <input id="showAll" type="checkbox" />
+          显示历史 USER
+        </label>
+        <button onclick="refreshAll()">刷新</button>
+      </div>
+    </div>
+    <div class="layout">
+      <section class="panel">
+        <h3>OpenClaw 列表</h3>
+        <div class="list" id="bots"></div>
+      </section>
+      <section class="panel">
+        <h3>Clawcolony ↔ OpenClaw</h3>
+        <div class="chat-head mono">
+          <span id="chatHead">当前会话: 未选择</span>
+          <a id="openclawLink" href="#" target="_blank" rel="noopener">打开 OpenClaw Dashboard</a>
+          <div class="conn-wrap">
+            <span id="connDot" class="conn-dot conn-down"></span>
+            <span id="connText">OpenClaw: unknown</span>
+            <span id="connDetail" class="conn-detail"></span>
+          </div>
+          <div id="chatState" class="chat-state mono">Chat pipeline: idle</div>
+        </div>
+        <div class="chat-log" id="chatLog"></div>
+        <div class="composer">
+          <textarea id="body" placeholder="输入发给该 OpenClaw 的消息"></textarea>
+          <button onclick="sendMessage()">发送</button>
+        </div>
+      </section>
+    </div>
+    <script>
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      async function j(url, opt){const r=await fetch(url, opt); if(!r.ok) throw new Error(await r.text()); return r.json();}
+      let bots = [];
+      let selected = "";
+      let includeInactive = false;
+      let stream = null;
+      let openclawToken = "";
+      let statusPoll = null;
+      let chatStatePoll = null;
+
+      function openclawHref(userId){
+        const base = `/v1/bots/openclaw/${encodeURIComponent(userId)}/`;
+        if (!openclawToken) return base;
+        return `${base}#token=${encodeURIComponent(openclawToken)}`;
+      }
+
+      function renderMsg(it){
+        const me = it.from === "clawcolony-admin";
+        return `
+          <div class="msg ${me?'me':''}">
+            <div class="meta">${esc(it.sent_at)} · ${esc(it.from)} → ${esc(it.to)}</div>
+            <div class="body">${esc(it.body || "")}</div>
+          </div>
+        `;
+      }
+
+      function appendMsg(it){
+        const log = document.getElementById("chatLog");
+        const nearBottom = (log.scrollTop + log.clientHeight) >= (log.scrollHeight - 24);
+        log.insertAdjacentHTML("beforeend", renderMsg(it));
+        if (nearBottom) log.scrollTop = log.scrollHeight;
+      }
+
+      async function loadBots(){
+        const data = await j(`/v1/bots?include_inactive=${includeInactive ? "1" : "0"}`);
+        bots = data.items || [];
+        if (selected && !bots.some(b => b.user_id === selected)) selected = "";
+        if (!selected && bots.length) selected = bots[0].user_id;
+      }
+
+      function renderBots(){
+        const root = document.getElementById("bots");
+        root.innerHTML = bots.map(b => `
+          <div class="bot ${selected===b.user_id?'active':''}" onclick="pick('${esc(b.user_id)}')">
+            <div><strong>${esc(b.name || b.user_id)}</strong> <span class="badge">${esc(b.status || "unknown")}</span></div>
+            <div class="mono">${esc(b.user_id)}</div>
+            <div><a href="${openclawHref(b.user_id)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">OpenClaw Dashboard</a></div>
+          </div>
+        `).join("");
+      }
+
+      async function loadConversation(){
+        if (!selected) return;
+        document.getElementById("chatHead").textContent = `当前会话: ${selected}`;
+        document.getElementById("openclawLink").href = openclawHref(selected);
+        const log = document.getElementById("chatLog");
+        const nearBottom = (log.scrollTop + log.clientHeight) >= (log.scrollHeight - 24);
+        const data = await j(`/v1/chat/history?user_id=${encodeURIComponent(selected)}&limit=500`);
+        const all = data.items || [];
+        log.innerHTML = all.map(renderMsg).join("");
+        if (nearBottom) log.scrollTop = log.scrollHeight;
+      }
+
+      function setConnUi(kind, text, detail){
+        const dot = document.getElementById("connDot");
+        const txt = document.getElementById("connText");
+        const det = document.getElementById("connDetail");
+        dot.classList.remove("conn-up", "conn-warn", "conn-down");
+        if (kind === "up") dot.classList.add("conn-up");
+        else if (kind === "warn") dot.classList.add("conn-warn");
+        else dot.classList.add("conn-down");
+        txt.textContent = text;
+        det.textContent = detail || "";
+      }
+
+      async function refreshOpenClawStatus(){
+        if (!selected) {
+          setConnUi("down", "OpenClaw: not selected", "");
+          return;
+        }
+        try {
+          const s = await j(`/v1/bots/openclaw/status?user_id=${encodeURIComponent(selected)}`);
+          const active = Number(s.active_webchat_connections || 0);
+          const code = Number(s.last_disconnect_code || 0);
+          const reason = String(s.last_disconnect_reason || "");
+          const at = String(s.last_event_at || "");
+          if (s.connected) {
+            const detail = active > 0 ? `active=${active}` : "";
+            setConnUi("up", "OpenClaw: connected", detail);
+            return;
+          }
+          if (code > 0 || reason) {
+            const detail = `code=${code || "n/a"} reason=${reason || "n/a"} ${at}`.trim();
+            setConnUi("warn", "OpenClaw: unstable", detail);
+            return;
+          }
+          setConnUi("down", "OpenClaw: disconnected", at ? `last=${at}` : "");
+        } catch (e) {
+          setConnUi("down", "OpenClaw: status error", String(e.message || e));
+        }
+      }
+
+      function fmtTask(t){
+        if (!t) return "none";
+        const err = t.error ? ` err=${t.error}` : "";
+        return `#${t.task_id} ${t.status}${err}`;
+      }
+
+      async function refreshChatState(){
+        if (!selected) {
+          document.getElementById("chatState").textContent = "Chat pipeline: idle";
+          return;
+        }
+        try {
+          const s = await j(`/v1/chat/state?user_id=${encodeURIComponent(selected)}`);
+          const stat = s.recent_statuses || {};
+          const done = `ok=${stat.succeeded || 0} fail=${stat.failed || 0} cancel=${stat.canceled || 0} timeout=${stat.timeout || 0}`;
+          const lines = [
+            `pipeline workers=${s.workers} queued_users=${s.queued_users} backlog=${s.backlog || 0}`,
+            `running: ${fmtTask(s.running)}`,
+            `pending: ${fmtTask(s.pending)}`,
+            `recent: ${done}`
+          ];
+          if (s.last_error) lines.push(`last_error: ${s.last_error}`);
+          document.getElementById("chatState").textContent = lines.join("\n");
+        } catch (e) {
+          document.getElementById("chatState").textContent = `Chat pipeline error: ${String(e.message || e)}`;
+        }
+      }
+
+      function closeStream(){
+        if (stream) {
+          stream.close();
+          stream = null;
+        }
+      }
+
+      function openStream(){
+        closeStream();
+        if (!selected) return;
+        stream = new EventSource(`/v1/chat/stream?user_id=${encodeURIComponent(selected)}`);
+        stream.addEventListener("message", (evt) => {
+          try {
+            const item = JSON.parse(evt.data);
+            appendMsg(item);
+          } catch (_) {}
+        });
+        stream.onerror = () => {
+          // Browser will auto-reconnect.
+        };
+      }
+
+      async function sendMessage(){
+        if (!selected) return;
+        const input = document.getElementById("body");
+        const raw = input.value;
+        const body = raw.trim();
+        if (!body) return;
+        input.value = "";
+        input.focus();
+        try {
+          const resp = await j("/v1/chat/send", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({
+              user_id: selected,
+              message: body
+            })
+          });
+          if (resp && resp.chat_task_id) {
+            document.getElementById("chatState").textContent = `queued task #${resp.chat_task_id}`;
+          }
+          await refreshChatState();
+        } catch (e) {
+          document.getElementById("chatLog").insertAdjacentHTML("beforeend", `<div class="msg"><div class="meta">system</div><div class="body">发送失败: ${esc(e.message || e)}</div></div>`);
+        }
+      }
+
+      function setupComposerHotkey(){
+        const textarea = document.getElementById("body");
+        textarea.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter") return;
+          if (e.shiftKey) return;
+          e.preventDefault();
+          void sendMessage();
+        });
+      }
+
+      async function pick(id){
+        selected = id;
+        renderBots();
+        await loadConversation();
+        openStream();
+        await refreshOpenClawStatus();
+        await refreshChatState();
+      }
+
+      async function refreshAll(){
+        try {
+          await loadBots();
+          renderBots();
+          if (selected) {
+            document.getElementById("chatHead").textContent = `当前会话: ${selected}`;
+          }
+        } catch (e) {
+          document.getElementById("chatLog").textContent = "读取失败: " + (e.message || e);
+        }
+      }
+
+      async function loadOpenClawDashboardConfig(){
+        try {
+          const data = await j("/v1/system/openclaw-dashboard-config");
+          openclawToken = String(data.token || "");
+        } catch (_) {
+          openclawToken = "";
+        }
+      }
+
+      setInterval(refreshAll, 10000);
+      statusPoll = setInterval(refreshOpenClawStatus, 5000);
+      chatStatePoll = setInterval(refreshChatState, 2000);
+      setupComposerHotkey();
+      document.getElementById("showAll").addEventListener("change", async (e) => {
+        includeInactive = !!e.target.checked;
+        await refreshAll();
+      });
+      window.addEventListener("beforeunload", closeStream);
+      window.addEventListener("beforeunload", () => {
+        if (statusPoll) {
+          clearInterval(statusPoll);
+          statusPoll = null;
+        }
+        if (chatStatePoll) {
+          clearInterval(chatStatePoll);
+          chatStatePoll = null;
+        }
+      });
+      loadOpenClawDashboardConfig().then(() => refreshAll()).then(async () => {
+        if (selected) {
+          await loadConversation();
+          openStream();
+          await refreshOpenClawStatus();
+          await refreshChatState();
+        }
+      });
+    </script>
+  </body>
+</html>

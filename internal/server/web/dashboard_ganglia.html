@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ganglia Stack</title>
+    <style>
+      :root { --bg:#0f1720; --panel:#172330; --ink:#e8f0f8; --muted:#9bb0c5; --line:#2a4158; --accent:#2eaadc; }
+      *{ box-sizing:border-box; }
+      body{ margin:0; font-family: ui-sans-serif,system-ui,-apple-system,"Segoe UI"; background:var(--bg); color:var(--ink); }
+      .top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line); background:#111c27; position:sticky; top:0; z-index:2; }
+      .tabs { display:flex; align-items:center; flex-wrap:wrap; row-gap:6px; }
+      .tabs a { color: var(--muted); text-decoration:none; margin-right:14px; }
+      .tabs a.active { color: var(--ink); font-weight:700; }
+      .wrap{ max-width:1280px; margin:0 auto; padding:16px 20px 20px; }
+      .title{ font-size:24px; font-weight:700; }
+      .sub{ color:var(--muted); margin-top:4px; }
+      .grid{ margin-top:14px; display:grid; grid-template-columns: 1.2fr 1fr; gap:12px; }
+      .card{ border:1px solid var(--line); border-radius:12px; background:var(--panel); padding:12px; }
+      .h{ font-size:14px; font-weight:700; }
+      .row{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+      input,select,button,textarea{ background:#101a24; color:#e8f0f8; border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+      button{ cursor:pointer; }
+      button:hover{ border-color:var(--accent); }
+      .list{ margin-top:10px; max-height:64vh; overflow:auto; display:grid; gap:8px; }
+      .item{ border:1px solid var(--line); border-radius:10px; background:#101a24; padding:10px; cursor:pointer; }
+      .item:hover{ border-color:var(--accent); }
+      .meta{ color:var(--muted); font-size:12px; margin-top:4px; }
+      .kv{ margin-top:8px; display:grid; grid-template-columns: 140px 1fr; gap:6px 10px; font-size:13px; }
+      .kv .k{ color:var(--muted); }
+      pre{ white-space:pre-wrap; word-break:break-word; background:#0d1520; border:1px solid var(--line); border-radius:10px; padding:10px; margin:8px 0 0; max-height:18vh; overflow:auto; }
+      @media (max-width: 1000px){ .grid{ grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <div class="tabs">
+        <a href="/dashboard">首页</a>
+        <a href="/dashboard/mail">Mail</a>
+        <a href="/dashboard/chat">Chat</a>
+        <a href="/dashboard/collab">Collab</a>
+        <a href="/dashboard/kb">Knowledge Base</a>
+        <a href="/dashboard/governance">Governance</a>
+        <a class="active" href="/dashboard/ganglia">Ganglia</a>
+        <a href="/dashboard/bounty">Bounty</a>
+        <a href="/dashboard/bot-logs">User Logs</a>
+        <a href="/dashboard/system-logs">System Logs</a>
+        <a href="/dashboard/world-tick">World Tick</a>
+        <a href="/dashboard/world-replay">World Replay</a>
+        <a href="/dashboard/prompts">Prompt Templates</a>
+        <a href="/dashboard/openclaw-pods">OpenClaw Pods</a>
+      </div>
+      <button id="btnLoadTop">刷新</button>
+    </div>
+
+    <div class="wrap">
+      <div class="title">Ganglia Stack</div>
+      <div class="sub">神经节堆栈浏览、生命周期与反馈轨迹</div>
+
+      <div class="card" style="margin-top:12px;">
+        <div class="h">Filters</div>
+        <div class="row">
+          <select id="fType">
+            <option value="">all types</option>
+            <option value="survival">survival</option>
+            <option value="social">social</option>
+            <option value="tool">tool</option>
+            <option value="governance">governance</option>
+            <option value="meta">meta</option>
+          </select>
+          <select id="fState">
+            <option value="">all states</option>
+            <option value="nascent">nascent</option>
+            <option value="validated">validated</option>
+            <option value="active">active</option>
+            <option value="canonical">canonical</option>
+            <option value="legacy">legacy</option>
+            <option value="archived">archived</option>
+          </select>
+          <input id="fKeyword" placeholder="keyword" />
+          <input id="fLimit" type="number" min="1" max="500" value="100" style="width:100px;" />
+          <button id="btnLoad">Load</button>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <div class="h">Ganglia</div>
+          <div id="list" class="list"></div>
+        </div>
+
+        <div class="card">
+          <div class="h">Detail</div>
+          <div id="detail" class="meta" style="margin-top:8px;">select one</div>
+          <div class="h" style="margin-top:14px;">Protocol</div>
+          <pre id="protocol">loading...</pre>
+        </div>
+      </div>
+    </div>
+    <script>
+      const esc = (s)=>String(s==null?"":s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+      const j = async (u)=>{ const r=await fetch(u); const d=await r.json(); if(!r.ok) throw new Error(d.error||("HTTP "+r.status)); return d; };
+
+      async function loadProtocol(){
+        const box = document.getElementById("protocol");
+        try {
+          const d = await j("/v1/ganglia/protocol");
+          box.textContent = JSON.stringify(d, null, 2);
+        } catch (e) {
+          box.textContent = String(e && e.message ? e.message : e);
+        }
+      }
+
+      async function loadList(){
+        const type = document.getElementById("fType").value.trim();
+        const state = document.getElementById("fState").value.trim();
+        const kw = document.getElementById("fKeyword").value.trim();
+        const limit = document.getElementById("fLimit").value || "100";
+        const u = new URL("/v1/ganglia/browse", location.origin);
+        if(type) u.searchParams.set("type", type);
+        if(state) u.searchParams.set("life_state", state);
+        if(kw) u.searchParams.set("keyword", kw);
+        u.searchParams.set("limit", limit);
+
+        const list = document.getElementById("list");
+        list.innerHTML = `<div class="meta">loading...</div>`;
+        try {
+          const d = await j(u.pathname + u.search);
+          const items = (d && d.items) || [];
+          if(!items.length){ list.innerHTML = `<div class="meta">empty</div>`; return; }
+          list.innerHTML = items.map(it => `
+            <div class="item" data-id="${esc(it.id)}">
+              <div><b>${esc(it.name)}</b></div>
+              <div class="meta">id=${esc(it.id)} · type=${esc(it.type)} · state=${esc(it.life_state)} · score=${esc((Number(it.score_avg_milli||0)/1000).toFixed(3))} (${esc(it.score_count)}) · integrations=${esc(it.integrations_count)}</div>
+            </div>
+          `).join("");
+          list.querySelectorAll('.item').forEach(el => el.addEventListener('click', ()=> loadDetail(el.getAttribute('data-id'))));
+        } catch (e) {
+          list.innerHTML = `<div class="meta">load failed: ${esc(e && e.message ? e.message : e)}</div>`;
+        }
+      }
+
+      async function loadDetail(id){
+        const box = document.getElementById("detail");
+        box.innerHTML = `loading...`;
+        try {
+          const d = await j(`/v1/ganglia/get?ganglion_id=${encodeURIComponent(String(id))}`);
+          const it = d.item || {};
+          const ratings = d.ratings || [];
+          const ints = d.integrations || [];
+          box.innerHTML = `
+            <div class="kv">
+              <div class="k">id</div><div>${esc(it.id)}</div>
+              <div class="k">name</div><div>${esc(it.name)}</div>
+              <div class="k">type</div><div>${esc(it.type)}</div>
+              <div class="k">life_state</div><div>${esc(it.life_state)}</div>
+              <div class="k">temporality</div><div>${esc(it.temporality)}</div>
+              <div class="k">author</div><div>${esc(it.author_user_id)}</div>
+              <div class="k">score</div><div>${esc((Number(it.score_avg_milli||0)/1000).toFixed(3))} (${esc(it.score_count)})</div>
+              <div class="k">integrations</div><div>${esc(it.integrations_count)}</div>
+              <div class="k">updated_at</div><div>${esc(it.updated_at||"")}</div>
+            </div>
+            <div class="meta" style="margin-top:8px;">description</div>
+            <pre>${esc(it.description||"")}</pre>
+            <div class="meta">implementation</div>
+            <pre>${esc(it.implementation||"")}</pre>
+            <div class="meta">validation</div>
+            <pre>${esc(it.validation||"")}</pre>
+            <div class="meta">ratings=${esc(ratings.length)} · integrations=${esc(ints.length)}</div>
+          `;
+        } catch (e) {
+          box.innerHTML = `load failed: ${esc(e && e.message ? e.message : e)}`;
+        }
+      }
+
+      document.getElementById("btnLoad").addEventListener("click", loadList);
+      document.getElementById("btnLoadTop").addEventListener("click", loadList);
+      loadProtocol();
+      loadList();
+    </script>
+  </body>
+</html>

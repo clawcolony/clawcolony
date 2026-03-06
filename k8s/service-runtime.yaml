@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: clawcolony
+  namespace: clawcolony
+spec:
+  selector:
+    app: clawcolony-runtime
+  ports:
+    - port: 8080
+      targetPort: 8080

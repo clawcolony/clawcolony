@@ -1,0 +1,3148 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+)
+
+type PostgresStore struct {
+	db *sql.DB
+}
+
+func NewPostgres(ctx context.Context, dsn string) (*PostgresStore, error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open postgres: %w", err)
+	}
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping postgres: %w", err)
+	}
+	s := &PostgresStore{db: db}
+	if err := s.migrate(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *PostgresStore) Close() error { return s.db.Close() }
+
+func (s *PostgresStore) migrate(ctx context.Context) error {
+	const migrateLockKey int64 = 864209731
+	if _, err := s.db.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrateLockKey); err != nil {
+		return fmt.Errorf("migrate postgres: acquire advisory lock: %w", err)
+	}
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = s.db.ExecContext(unlockCtx, `SELECT pg_advisory_unlock($1)`, migrateLockKey)
+	}()
+
+	stmts := []string{
+		`DO $$
+		BEGIN
+			IF to_regclass('public.user_accounts') IS NULL AND to_regclass('public.bot_accounts') IS NOT NULL THEN
+				ALTER TABLE bot_accounts RENAME TO user_accounts;
+			END IF;
+		END $$`,
+		`DO $$
+		BEGIN
+			IF to_regclass('public.user_accounts') IS NOT NULL
+			   AND EXISTS (
+			     SELECT 1 FROM information_schema.columns
+			     WHERE table_schema='public' AND table_name='user_accounts' AND column_name='bot_id'
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1 FROM information_schema.columns
+			     WHERE table_schema='public' AND table_name='user_accounts' AND column_name='user_id'
+			   ) THEN
+				ALTER TABLE user_accounts RENAME COLUMN bot_id TO user_id;
+			END IF;
+		END $$`,
+		`DO $$
+		BEGIN
+			IF to_regclass('public.token_accounts') IS NOT NULL
+			   AND EXISTS (
+			     SELECT 1 FROM information_schema.columns
+			     WHERE table_schema='public' AND table_name='token_accounts' AND column_name='bot_id'
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1 FROM information_schema.columns
+			     WHERE table_schema='public' AND table_name='token_accounts' AND column_name='user_id'
+			   ) THEN
+				ALTER TABLE token_accounts RENAME COLUMN bot_id TO user_id;
+			END IF;
+		END $$`,
+		`DO $$
+		BEGIN
+			IF to_regclass('public.token_ledger') IS NOT NULL
+			   AND EXISTS (
+			     SELECT 1 FROM information_schema.columns
+			     WHERE table_schema='public' AND table_name='token_ledger' AND column_name='bot_id'
+			   )
+			   AND NOT EXISTS (
+			     SELECT 1 FROM information_schema.columns
+			     WHERE table_schema='public' AND table_name='token_ledger' AND column_name='user_id'
+			   ) THEN
+				ALTER TABLE token_ledger RENAME COLUMN bot_id TO user_id;
+			END IF;
+		END $$`,
+		`CREATE TABLE IF NOT EXISTS user_accounts (
+			user_id TEXT PRIMARY KEY,
+			user_name TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL DEFAULT 'generic',
+			status TEXT NOT NULL DEFAULT 'unknown',
+			initialized BOOLEAN NOT NULL DEFAULT false,
+			gateway_token TEXT NOT NULL DEFAULT '',
+			upgrade_token TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS gateway_token TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS upgrade_token TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS token_accounts (
+			user_id TEXT PRIMARY KEY,
+			balance BIGINT NOT NULL DEFAULT 0,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS token_ledger (
+			id BIGSERIAL PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			op_type TEXT NOT NULL,
+			amount BIGINT NOT NULL,
+			balance_after BIGINT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_token_ledger_user ON token_ledger(user_id, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS mail_messages (
+			id BIGSERIAL PRIMARY KEY,
+			sender_address TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			body TEXT NOT NULL,
+			sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS mail_mailboxes (
+			id BIGSERIAL PRIMARY KEY,
+			message_id BIGINT NOT NULL REFERENCES mail_messages(id) ON DELETE CASCADE,
+			owner_address TEXT NOT NULL,
+			folder TEXT NOT NULL,
+			to_address TEXT NOT NULL,
+			is_read BOOLEAN NOT NULL DEFAULT false,
+			read_at TIMESTAMPTZ NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_mail_mailboxes_owner ON mail_mailboxes(owner_address, folder, is_read, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_mail_mailboxes_message ON mail_mailboxes(message_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_mail_messages_subject ON mail_messages USING gin (to_tsvector('simple', subject || ' ' || body))`,
+		`CREATE TABLE IF NOT EXISTS mail_contacts (
+			owner_address TEXT NOT NULL,
+			contact_address TEXT NOT NULL,
+			display_name TEXT NOT NULL DEFAULT '',
+			tags TEXT NOT NULL DEFAULT '',
+			role TEXT NOT NULL DEFAULT '',
+			skills TEXT NOT NULL DEFAULT '',
+			current_project TEXT NOT NULL DEFAULT '',
+			availability TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY(owner_address, contact_address)
+		)`,
+		`ALTER TABLE mail_contacts ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE mail_contacts ADD COLUMN IF NOT EXISTS skills TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE mail_contacts ADD COLUMN IF NOT EXISTS current_project TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE mail_contacts ADD COLUMN IF NOT EXISTS availability TEXT NOT NULL DEFAULT ''`,
+		`UPDATE mail_messages
+		 SET sender_address = 'clawcolony-admin'
+		 WHERE sender_address IN ('clawcolony-system', 'clawcolony')`,
+		`UPDATE mail_mailboxes
+		 SET owner_address = 'clawcolony-admin'
+		 WHERE owner_address IN ('clawcolony-system', 'clawcolony')`,
+		`UPDATE mail_mailboxes
+		 SET to_address = 'clawcolony-admin'
+		 WHERE to_address IN ('clawcolony-system', 'clawcolony')`,
+		`UPDATE mail_contacts
+		 SET owner_address = 'clawcolony-admin'
+		 WHERE owner_address IN ('clawcolony-system', 'clawcolony')`,
+		`UPDATE mail_contacts
+		 SET contact_address = 'clawcolony-admin'
+		 WHERE contact_address IN ('clawcolony-system', 'clawcolony')`,
+		`DO $$
+		BEGIN
+			IF to_regclass('public.chat_messages') IS NOT NULL THEN
+				UPDATE chat_messages
+				SET from_user = 'clawcolony-admin'
+				WHERE from_user IN ('clawcolony-system', 'clawcolony');
+				UPDATE chat_messages
+				SET to_user = 'clawcolony-admin'
+				WHERE to_user IN ('clawcolony-system', 'clawcolony');
+			END IF;
+		END $$`,
+		`CREATE TABLE IF NOT EXISTS upgrade_audits (
+			id BIGSERIAL PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			repo_url TEXT NOT NULL,
+			branch TEXT NOT NULL,
+			requested_by TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			image TEXT NOT NULL DEFAULT '',
+			error_text TEXT NOT NULL DEFAULT '',
+			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			finished_at TIMESTAMPTZ NULL,
+			duration_ms BIGINT NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_upgrade_audits_user_started ON upgrade_audits(user_id, started_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS upgrade_steps (
+			id BIGSERIAL PRIMARY KEY,
+			audit_id BIGINT NOT NULL REFERENCES upgrade_audits(id) ON DELETE CASCADE,
+			step_name TEXT NOT NULL,
+			status TEXT NOT NULL,
+			command_text TEXT NOT NULL DEFAULT '',
+			output_text TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_upgrade_steps_audit_created ON upgrade_steps(audit_id, created_at ASC, id ASC)`,
+		`CREATE TABLE IF NOT EXISTS register_tasks (
+			id BIGSERIAL PRIMARY KEY,
+			provider TEXT NOT NULL DEFAULT 'openclaw',
+			user_id TEXT NOT NULL DEFAULT '',
+			user_name TEXT NOT NULL DEFAULT '',
+			repo_full_name TEXT NOT NULL DEFAULT '',
+			image TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			error_text TEXT NOT NULL DEFAULT '',
+			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			finished_at TIMESTAMPTZ NULL,
+			duration_ms BIGINT NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_register_tasks_started ON register_tasks(started_at DESC, id DESC)`,
+		`CREATE TABLE IF NOT EXISTS register_task_steps (
+			id BIGSERIAL PRIMARY KEY,
+			task_id BIGINT NOT NULL REFERENCES register_tasks(id) ON DELETE CASCADE,
+			step_name TEXT NOT NULL,
+			status TEXT NOT NULL,
+			message_text TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_register_task_steps_created ON register_task_steps(task_id, created_at ASC, id ASC)`,
+		`CREATE TABLE IF NOT EXISTS chat_messages (
+			id BIGSERIAL PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			from_user TEXT NOT NULL,
+			to_user TEXT NOT NULL,
+			body TEXT NOT NULL,
+			sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_chat_messages_user_sent ON chat_messages(user_id, sent_at ASC, id ASC)`,
+		`CREATE TABLE IF NOT EXISTS prompt_templates (
+			key TEXT PRIMARY KEY,
+			content TEXT NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS collab_sessions (
+			collab_id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			goal TEXT NOT NULL,
+			complexity TEXT NOT NULL DEFAULT 'normal',
+			phase TEXT NOT NULL,
+			proposer_user_id TEXT NOT NULL,
+			orchestrator_user_id TEXT NOT NULL DEFAULT '',
+			min_members INT NOT NULL DEFAULT 2,
+			max_members INT NOT NULL DEFAULT 3,
+			status_summary TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			closed_at TIMESTAMPTZ NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_collab_sessions_phase_updated ON collab_sessions(phase, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_collab_sessions_proposer_updated ON collab_sessions(proposer_user_id, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS collab_participants (
+			id BIGSERIAL PRIMARY KEY,
+			collab_id TEXT NOT NULL REFERENCES collab_sessions(collab_id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			role TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			pitch TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(collab_id, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_collab_participants_collab_status ON collab_participants(collab_id, status, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS collab_artifacts (
+			id BIGSERIAL PRIMARY KEY,
+			collab_id TEXT NOT NULL REFERENCES collab_sessions(collab_id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			role TEXT NOT NULL DEFAULT '',
+			kind TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			content TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'submitted',
+			review_note TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_collab_artifacts_collab_updated ON collab_artifacts(collab_id, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS collab_events (
+			id BIGSERIAL PRIMARY KEY,
+			collab_id TEXT NOT NULL REFERENCES collab_sessions(collab_id) ON DELETE CASCADE,
+			actor_user_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			payload TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_collab_events_collab_id ON collab_events(collab_id, id DESC)`,
+		`CREATE TABLE IF NOT EXISTS kb_entries (
+			id BIGSERIAL PRIMARY KEY,
+			section TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL DEFAULT '',
+			content TEXT NOT NULL DEFAULT '',
+			version BIGINT NOT NULL DEFAULT 1,
+			updated_by TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			is_deleted BOOLEAN NOT NULL DEFAULT false
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_entries_section_updated ON kb_entries(section, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS kb_proposals (
+			id BIGSERIAL PRIMARY KEY,
+			proposer_user_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			status TEXT NOT NULL,
+			current_revision_id BIGINT NOT NULL DEFAULT 0,
+			voting_revision_id BIGINT NOT NULL DEFAULT 0,
+			vote_threshold_pct INT NOT NULL DEFAULT 80,
+			vote_window_seconds INT NOT NULL DEFAULT 300,
+			enrolled_count INT NOT NULL DEFAULT 0,
+			vote_yes INT NOT NULL DEFAULT 0,
+			vote_no INT NOT NULL DEFAULT 0,
+			vote_abstain INT NOT NULL DEFAULT 0,
+			participation_count INT NOT NULL DEFAULT 0,
+			decision_reason TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			voting_deadline_at TIMESTAMPTZ NULL,
+			closed_at TIMESTAMPTZ NULL,
+			applied_at TIMESTAMPTZ NULL
+		)`,
+		`ALTER TABLE kb_proposals ADD COLUMN IF NOT EXISTS current_revision_id BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE kb_proposals ADD COLUMN IF NOT EXISTS voting_revision_id BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE kb_proposals ADD COLUMN IF NOT EXISTS discussion_deadline_at TIMESTAMPTZ NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_proposals_status_updated ON kb_proposals(status, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS kb_proposal_changes (
+			id BIGSERIAL PRIMARY KEY,
+			proposal_id BIGINT NOT NULL UNIQUE REFERENCES kb_proposals(id) ON DELETE CASCADE,
+			op_type TEXT NOT NULL,
+			target_entry_id BIGINT NULL,
+			section TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL DEFAULT '',
+			old_content TEXT NOT NULL DEFAULT '',
+			new_content TEXT NOT NULL DEFAULT '',
+			diff_text TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS kb_proposal_enrollments (
+			id BIGSERIAL PRIMARY KEY,
+			proposal_id BIGINT NOT NULL REFERENCES kb_proposals(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(proposal_id, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_enrollments_proposal ON kb_proposal_enrollments(proposal_id, created_at ASC, id ASC)`,
+		`CREATE TABLE IF NOT EXISTS kb_votes (
+			id BIGSERIAL PRIMARY KEY,
+			proposal_id BIGINT NOT NULL REFERENCES kb_proposals(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			vote TEXT NOT NULL,
+			reason TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(proposal_id, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_votes_proposal ON kb_votes(proposal_id, updated_at ASC, id ASC)`,
+		`CREATE TABLE IF NOT EXISTS kb_revisions (
+			id BIGSERIAL PRIMARY KEY,
+			proposal_id BIGINT NOT NULL REFERENCES kb_proposals(id) ON DELETE CASCADE,
+			revision_no BIGINT NOT NULL,
+			base_revision_id BIGINT NOT NULL DEFAULT 0,
+			created_by TEXT NOT NULL,
+			op_type TEXT NOT NULL,
+			target_entry_id BIGINT NULL,
+			section TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL DEFAULT '',
+			old_content TEXT NOT NULL DEFAULT '',
+			new_content TEXT NOT NULL DEFAULT '',
+			diff_text TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_revisions_proposal_revision ON kb_revisions(proposal_id, revision_no ASC, id ASC)`,
+		`CREATE TABLE IF NOT EXISTS kb_acks (
+			id BIGSERIAL PRIMARY KEY,
+			proposal_id BIGINT NOT NULL REFERENCES kb_proposals(id) ON DELETE CASCADE,
+			revision_id BIGINT NOT NULL REFERENCES kb_revisions(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(proposal_id, revision_id, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_acks_proposal_revision ON kb_acks(proposal_id, revision_id, id ASC)`,
+		`CREATE TABLE IF NOT EXISTS kb_threads (
+			id BIGSERIAL PRIMARY KEY,
+			proposal_id BIGINT NOT NULL REFERENCES kb_proposals(id) ON DELETE CASCADE,
+			author_user_id TEXT NOT NULL,
+			message_type TEXT NOT NULL DEFAULT 'comment',
+			content TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_threads_proposal ON kb_threads(proposal_id, created_at ASC, id ASC)`,
+		`CREATE TABLE IF NOT EXISTS request_logs (
+			id BIGSERIAL PRIMARY KEY,
+			req_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			method TEXT NOT NULL,
+			path TEXT NOT NULL,
+			user_id TEXT NOT NULL DEFAULT '',
+			status_code INT NOT NULL,
+			duration_ms BIGINT NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_time_id ON request_logs(req_time DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_user_time ON request_logs(user_id, req_time DESC)`,
+		`CREATE TABLE IF NOT EXISTS world_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS ganglia (
+			id BIGSERIAL PRIMARY KEY,
+			name TEXT NOT NULL,
+			ganglion_type TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			implementation TEXT NOT NULL DEFAULT '',
+			validation TEXT NOT NULL DEFAULT '',
+			author_user_id TEXT NOT NULL,
+			supersedes_id BIGINT NOT NULL DEFAULT 0,
+			temporality TEXT NOT NULL DEFAULT 'durable',
+			life_state TEXT NOT NULL DEFAULT 'nascent',
+			score_avg_milli BIGINT NOT NULL DEFAULT 0,
+			score_count BIGINT NOT NULL DEFAULT 0,
+			integrations_count BIGINT NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ganglia_type_state_updated ON ganglia(ganglion_type, life_state, updated_at DESC, id DESC)`,
+		`CREATE TABLE IF NOT EXISTS ganglion_integrations (
+			id BIGSERIAL PRIMARY KEY,
+			ganglion_id BIGINT NOT NULL REFERENCES ganglia(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(ganglion_id, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ganglion_integrations_user_updated ON ganglion_integrations(user_id, updated_at DESC, id DESC)`,
+		`CREATE TABLE IF NOT EXISTS ganglion_ratings (
+			id BIGSERIAL PRIMARY KEY,
+			ganglion_id BIGINT NOT NULL REFERENCES ganglia(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			score INT NOT NULL,
+			feedback TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(ganglion_id, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ganglion_ratings_ganglion_updated ON ganglion_ratings(ganglion_id, updated_at DESC, id DESC)`,
+		`CREATE TABLE IF NOT EXISTS user_life_state (
+			user_id TEXT PRIMARY KEY,
+			state TEXT NOT NULL DEFAULT 'alive',
+			dying_since_tick BIGINT NOT NULL DEFAULT 0,
+			dead_at_tick BIGINT NOT NULL DEFAULT 0,
+			reason TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_life_state_state_updated ON user_life_state(state, updated_at DESC, user_id ASC)`,
+		`CREATE TABLE IF NOT EXISTS world_ticks (
+			id BIGSERIAL PRIMARY KEY,
+			tick_id BIGINT NOT NULL,
+			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			duration_ms BIGINT NOT NULL DEFAULT 0,
+			trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+			replay_of_tick_id BIGINT NOT NULL DEFAULT 0,
+			prev_hash TEXT NOT NULL DEFAULT '',
+			entry_hash TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'ok',
+			error_text TEXT NOT NULL DEFAULT ''
+		)`,
+		`ALTER TABLE world_ticks ADD COLUMN IF NOT EXISTS trigger_type TEXT NOT NULL DEFAULT 'scheduled'`,
+		`ALTER TABLE world_ticks ADD COLUMN IF NOT EXISTS replay_of_tick_id BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE world_ticks ADD COLUMN IF NOT EXISTS prev_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE world_ticks ADD COLUMN IF NOT EXISTS entry_hash TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_world_ticks_tick_id ON world_ticks(tick_id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_world_ticks_started_at ON world_ticks(started_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_world_ticks_entry_hash ON world_ticks(entry_hash)`,
+		`CREATE TABLE IF NOT EXISTS world_tick_steps (
+			id BIGSERIAL PRIMARY KEY,
+			tick_id BIGINT NOT NULL,
+			step_name TEXT NOT NULL,
+			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			duration_ms BIGINT NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'ok',
+			error_text TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_world_tick_steps_tick_id ON world_tick_steps(tick_id DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_world_tick_steps_started_at ON world_tick_steps(started_at DESC, id DESC)`,
+		`CREATE OR REPLACE FUNCTION deny_world_tick_mutation()
+		 RETURNS trigger
+		 LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'world_ticks is append-only';
+		END;
+		$$`,
+		`DROP TRIGGER IF EXISTS trg_world_ticks_append_only ON world_ticks`,
+		`CREATE TRIGGER trg_world_ticks_append_only
+			BEFORE UPDATE OR DELETE ON world_ticks
+			FOR EACH ROW
+			EXECUTE FUNCTION deny_world_tick_mutation()`,
+		`CREATE OR REPLACE FUNCTION deny_world_tick_step_mutation()
+		 RETURNS trigger
+		 LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'world_tick_steps is append-only';
+		END;
+		$$`,
+		`DROP TRIGGER IF EXISTS trg_world_tick_steps_append_only ON world_tick_steps`,
+		`CREATE TRIGGER trg_world_tick_steps_append_only
+			BEFORE UPDATE OR DELETE ON world_tick_steps
+			FOR EACH ROW
+			EXECUTE FUNCTION deny_world_tick_step_mutation()`,
+		`CREATE TABLE IF NOT EXISTS cost_events (
+			id BIGSERIAL PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			tick_id BIGINT NOT NULL DEFAULT 0,
+			cost_type TEXT NOT NULL,
+			amount BIGINT NOT NULL,
+			units BIGINT NOT NULL DEFAULT 0,
+			meta_json TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cost_events_user_created ON cost_events(user_id, created_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_cost_events_tick_id ON cost_events(tick_id DESC, id DESC)`,
+		`CREATE TABLE IF NOT EXISTS tian_dao_laws (
+			law_key TEXT PRIMARY KEY,
+			version BIGINT NOT NULL,
+			manifest_json TEXT NOT NULL,
+			manifest_sha256 TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE OR REPLACE FUNCTION deny_tian_dao_law_mutation()
+		 RETURNS trigger
+		 LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'tian_dao_laws is immutable';
+		END;
+		$$`,
+		`DROP TRIGGER IF EXISTS trg_tian_dao_law_mutation ON tian_dao_laws`,
+		`CREATE TRIGGER trg_tian_dao_law_mutation
+			BEFORE UPDATE OR DELETE ON tian_dao_laws
+			FOR EACH ROW
+			EXECUTE FUNCTION deny_tian_dao_law_mutation()`,
+		`DELETE FROM prompt_templates
+		  WHERE key IN ('agents_append', 'soul_append', 'bootstrap_append', 'tools_append')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migrate postgres: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *PostgresStore) ensureBotTx(ctx context.Context, tx *sql.Tx, botID string) error {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO user_accounts(user_id, user_name, provider, status, initialized, updated_at)
+		VALUES($1, $1, 'system', 'active', true, NOW())
+		ON CONFLICT (user_id) DO NOTHING
+	`, botID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO token_accounts(user_id, balance) VALUES($1, 0) ON CONFLICT (user_id) DO NOTHING`, botID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListBots(ctx context.Context) ([]Bot, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT user_id, user_name, provider, status, initialized, created_at, updated_at
+		FROM user_accounts
+		ORDER BY user_id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Bot, 0)
+	for rows.Next() {
+		var b Bot
+		if err := rows.Scan(&b.BotID, &b.Name, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, b)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) GetBot(ctx context.Context, botID string) (Bot, error) {
+	var b Bot
+	err := s.db.QueryRowContext(ctx, `
+		SELECT user_id, user_name, provider, status, initialized, created_at, updated_at
+		FROM user_accounts WHERE user_id = $1
+	`, botID).Scan(&b.BotID, &b.Name, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return s.UpsertBot(ctx, BotUpsertInput{
+			BotID:       botID,
+			Name:        botID,
+			Provider:    "system",
+			Status:      "active",
+			Initialized: true,
+		})
+	}
+	if err != nil {
+		return Bot{}, err
+	}
+	return b, nil
+}
+
+func (s *PostgresStore) UpsertBot(ctx context.Context, input BotUpsertInput) (Bot, error) {
+	var b Bot
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO user_accounts(user_id, user_name, provider, status, initialized, updated_at)
+		VALUES($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			user_name = EXCLUDED.user_name,
+			provider = EXCLUDED.provider,
+			status = EXCLUDED.status,
+			initialized = EXCLUDED.initialized,
+			updated_at = NOW()
+		RETURNING user_id, user_name, provider, status, initialized, created_at, updated_at
+	`, input.BotID, input.Name, input.Provider, input.Status, input.Initialized).Scan(
+		&b.BotID, &b.Name, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt,
+	)
+	if err != nil {
+		return Bot{}, err
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO token_accounts(user_id, balance) VALUES($1, 0) ON CONFLICT (user_id) DO NOTHING`, b.BotID); err != nil {
+		return Bot{}, err
+	}
+	return b, nil
+}
+
+func (s *PostgresStore) GetBotCredentials(ctx context.Context, userID string) (BotCredentials, error) {
+	var creds BotCredentials
+	creds.UserID = strings.TrimSpace(userID)
+	if creds.UserID == "" {
+		return BotCredentials{}, fmt.Errorf("user_id is required")
+	}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT user_id, gateway_token, upgrade_token
+		FROM user_accounts
+		WHERE user_id = $1
+	`, creds.UserID).Scan(&creds.UserID, &creds.GatewayToken, &creds.UpgradeToken)
+	if err != nil {
+		return BotCredentials{}, err
+	}
+	return creds, nil
+}
+
+func (s *PostgresStore) UpsertBotCredentials(ctx context.Context, creds BotCredentials) (BotCredentials, error) {
+	uid := strings.TrimSpace(creds.UserID)
+	if uid == "" {
+		return BotCredentials{}, fmt.Errorf("user_id is required")
+	}
+	var out BotCredentials
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO user_accounts(user_id, user_name, provider, status, initialized, gateway_token, upgrade_token, updated_at)
+		VALUES($1, $1, 'system', 'active', true, $2, $3, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			gateway_token = CASE
+				WHEN EXCLUDED.gateway_token <> '' THEN EXCLUDED.gateway_token
+				ELSE user_accounts.gateway_token
+			END,
+			upgrade_token = CASE
+				WHEN EXCLUDED.upgrade_token <> '' THEN EXCLUDED.upgrade_token
+				ELSE user_accounts.upgrade_token
+			END,
+			updated_at = NOW()
+		RETURNING user_id, gateway_token, upgrade_token
+	`, uid, strings.TrimSpace(creds.GatewayToken), strings.TrimSpace(creds.UpgradeToken)).Scan(
+		&out.UserID, &out.GatewayToken, &out.UpgradeToken,
+	)
+	if err != nil {
+		return BotCredentials{}, err
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO token_accounts(user_id, balance) VALUES($1, 0) ON CONFLICT (user_id) DO NOTHING`, out.UserID); err != nil {
+		return BotCredentials{}, err
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) EnsureTianDaoLaw(ctx context.Context, item TianDaoLaw) (TianDaoLaw, error) {
+	item.LawKey = strings.TrimSpace(item.LawKey)
+	if item.LawKey == "" {
+		return TianDaoLaw{}, fmt.Errorf("law_key is required")
+	}
+	if strings.TrimSpace(item.ManifestJSON) == "" || strings.TrimSpace(item.ManifestSHA256) == "" {
+		return TianDaoLaw{}, fmt.Errorf("manifest_json and manifest_sha256 are required")
+	}
+	var current TianDaoLaw
+	err := s.db.QueryRowContext(ctx, `
+		SELECT law_key, version, manifest_json, manifest_sha256, created_at
+		FROM tian_dao_laws
+		WHERE law_key = $1
+	`, item.LawKey).Scan(&current.LawKey, &current.Version, &current.ManifestJSON, &current.ManifestSHA256, &current.CreatedAt)
+	if err == nil {
+		if current.Version != item.Version ||
+			current.ManifestSHA256 != item.ManifestSHA256 ||
+			current.ManifestJSON != item.ManifestJSON {
+			return TianDaoLaw{}, fmt.Errorf("tian dao law %s is immutable and does not match existing manifest", item.LawKey)
+		}
+		return current, nil
+	}
+	if err != sql.ErrNoRows {
+		return TianDaoLaw{}, err
+	}
+	err = s.db.QueryRowContext(ctx, `
+		INSERT INTO tian_dao_laws(law_key, version, manifest_json, manifest_sha256, created_at)
+		VALUES($1, $2, $3, $4, NOW())
+		RETURNING law_key, version, manifest_json, manifest_sha256, created_at
+	`, item.LawKey, item.Version, item.ManifestJSON, item.ManifestSHA256).Scan(
+		&item.LawKey, &item.Version, &item.ManifestJSON, &item.ManifestSHA256, &item.CreatedAt,
+	)
+	if err != nil {
+		return TianDaoLaw{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) GetTianDaoLaw(ctx context.Context, lawKey string) (TianDaoLaw, error) {
+	key := strings.TrimSpace(lawKey)
+	if key == "" {
+		return TianDaoLaw{}, fmt.Errorf("law_key is required")
+	}
+	var item TianDaoLaw
+	err := s.db.QueryRowContext(ctx, `
+		SELECT law_key, version, manifest_json, manifest_sha256, created_at
+		FROM tian_dao_laws
+		WHERE law_key = $1
+	`, key).Scan(&item.LawKey, &item.Version, &item.ManifestJSON, &item.ManifestSHA256, &item.CreatedAt)
+	if err != nil {
+		return TianDaoLaw{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) AppendWorldTick(ctx context.Context, item WorldTickRecord) (WorldTickRecord, error) {
+	if strings.TrimSpace(item.TriggerType) == "" {
+		item.TriggerType = "scheduled"
+	}
+	if item.StartedAt.IsZero() {
+		item.StartedAt = time.Now().UTC()
+	} else {
+		item.StartedAt = item.StartedAt.UTC()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return WorldTickRecord{}, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	prevHash := ""
+	var prev WorldTickRecord
+	prevErr := tx.QueryRowContext(ctx, `
+		SELECT tick_id, started_at, duration_ms, trigger_type, replay_of_tick_id, prev_hash, entry_hash, status, error_text
+		FROM world_ticks
+		ORDER BY tick_id DESC, id DESC
+		LIMIT 1
+	`).Scan(
+		&prev.TickID,
+		&prev.StartedAt,
+		&prev.DurationMS,
+		&prev.TriggerType,
+		&prev.ReplayOfTickID,
+		&prev.PrevHash,
+		&prev.EntryHash,
+		&prev.Status,
+		&prev.ErrorText,
+	)
+	if prevErr == nil {
+		prevHash = strings.TrimSpace(prev.EntryHash)
+		if prevHash == "" {
+			prevHash = ComputeWorldTickHash(prev, strings.TrimSpace(prev.PrevHash))
+		}
+	} else if prevErr != sql.ErrNoRows {
+		return WorldTickRecord{}, prevErr
+	}
+
+	item.PrevHash = prevHash
+	item.EntryHash = ComputeWorldTickHash(item, prevHash)
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO world_ticks(tick_id, started_at, duration_ms, trigger_type, replay_of_tick_id, prev_hash, entry_hash, status, error_text)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, started_at
+	`, item.TickID, item.StartedAt, item.DurationMS, item.TriggerType, item.ReplayOfTickID, item.PrevHash, item.EntryHash, item.Status, item.ErrorText).Scan(&item.ID, &item.StartedAt)
+	if err != nil {
+		return WorldTickRecord{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WorldTickRecord{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListWorldTicks(ctx context.Context, limit int) ([]WorldTickRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tick_id, started_at, duration_ms, trigger_type, replay_of_tick_id, prev_hash, entry_hash, status, error_text
+		FROM world_ticks
+		ORDER BY tick_id DESC, id DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]WorldTickRecord, 0, limit)
+	for rows.Next() {
+		var it WorldTickRecord
+		if err := rows.Scan(&it.ID, &it.TickID, &it.StartedAt, &it.DurationMS, &it.TriggerType, &it.ReplayOfTickID, &it.PrevHash, &it.EntryHash, &it.Status, &it.ErrorText); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) AppendWorldTickStep(ctx context.Context, item WorldTickStepRecord) (WorldTickStepRecord, error) {
+	item.StepName = strings.TrimSpace(item.StepName)
+	if item.StepName == "" {
+		return WorldTickStepRecord{}, fmt.Errorf("step_name is required")
+	}
+	if item.Status == "" {
+		item.Status = "ok"
+	}
+	var started any
+	if !item.StartedAt.IsZero() {
+		started = item.StartedAt
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO world_tick_steps(tick_id, step_name, started_at, duration_ms, status, error_text)
+		VALUES($1, $2, COALESCE($3, NOW()), $4, $5, $6)
+		RETURNING id, started_at
+	`, item.TickID, item.StepName, started, item.DurationMS, item.Status, item.ErrorText).Scan(&item.ID, &item.StartedAt)
+	if err != nil {
+		return WorldTickStepRecord{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListWorldTickSteps(ctx context.Context, tickID int64, limit int) ([]WorldTickStepRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tick_id, step_name, started_at, duration_ms, status, error_text
+		FROM world_tick_steps
+		WHERE ($1 = 0 OR tick_id = $1)
+		ORDER BY id DESC
+		LIMIT $2
+	`, tickID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]WorldTickStepRecord, 0, limit)
+	for rows.Next() {
+		var it WorldTickStepRecord
+		if err := rows.Scan(&it.ID, &it.TickID, &it.StepName, &it.StartedAt, &it.DurationMS, &it.Status, &it.ErrorText); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpsertUserLifeState(ctx context.Context, item UserLifeState) (UserLifeState, error) {
+	item.UserID = strings.TrimSpace(item.UserID)
+	item.State = normalizeLifeState(item.State)
+	if item.UserID == "" {
+		return UserLifeState{}, fmt.Errorf("user_id is required")
+	}
+	if item.State == "" {
+		item.State = "alive"
+	}
+	var currentState string
+	err := s.db.QueryRowContext(ctx, `SELECT state FROM user_life_state WHERE user_id = $1`, item.UserID).Scan(&currentState)
+	if err == nil {
+		if normalizeLifeState(currentState) == "dead" && item.State != "dead" {
+			return UserLifeState{}, fmt.Errorf("user life state is immutable once dead: %s", item.UserID)
+		}
+	} else if err != sql.ErrNoRows {
+		return UserLifeState{}, err
+	}
+	err = s.db.QueryRowContext(ctx, `
+		INSERT INTO user_life_state(user_id, state, dying_since_tick, dead_at_tick, reason, updated_at)
+		VALUES($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			state = EXCLUDED.state,
+			dying_since_tick = EXCLUDED.dying_since_tick,
+			dead_at_tick = EXCLUDED.dead_at_tick,
+			reason = EXCLUDED.reason,
+			updated_at = NOW()
+		RETURNING user_id, state, dying_since_tick, dead_at_tick, reason, updated_at
+	`, item.UserID, item.State, item.DyingSinceTick, item.DeadAtTick, item.Reason).
+		Scan(&item.UserID, &item.State, &item.DyingSinceTick, &item.DeadAtTick, &item.Reason, &item.UpdatedAt)
+	if err != nil {
+		return UserLifeState{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) GetUserLifeState(ctx context.Context, userID string) (UserLifeState, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return UserLifeState{}, fmt.Errorf("user_id is required")
+	}
+	var item UserLifeState
+	err := s.db.QueryRowContext(ctx, `
+		SELECT user_id, state, dying_since_tick, dead_at_tick, reason, updated_at
+		FROM user_life_state
+		WHERE user_id = $1
+	`, userID).Scan(&item.UserID, &item.State, &item.DyingSinceTick, &item.DeadAtTick, &item.Reason, &item.UpdatedAt)
+	if err != nil {
+		return UserLifeState{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListUserLifeStates(ctx context.Context, userID, state string, limit int) ([]UserLifeState, error) {
+	userID = strings.TrimSpace(userID)
+	state = normalizeLifeState(state)
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT user_id, state, dying_since_tick, dead_at_tick, reason, updated_at
+		FROM user_life_state
+		WHERE ($1 = '' OR user_id = $1) AND ($2 = '' OR state = $2)
+		ORDER BY updated_at DESC, user_id ASC
+		LIMIT $3
+	`, userID, state, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]UserLifeState, 0, limit)
+	for rows.Next() {
+		var it UserLifeState
+		if err := rows.Scan(&it.UserID, &it.State, &it.DyingSinceTick, &it.DeadAtTick, &it.Reason, &it.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) AppendCostEvent(ctx context.Context, item CostEvent) (CostEvent, error) {
+	item.UserID = strings.TrimSpace(item.UserID)
+	item.CostType = strings.TrimSpace(item.CostType)
+	if item.UserID == "" {
+		return CostEvent{}, fmt.Errorf("user_id is required")
+	}
+	if item.CostType == "" {
+		return CostEvent{}, fmt.Errorf("cost_type is required")
+	}
+	var created any
+	if !item.CreatedAt.IsZero() {
+		created = item.CreatedAt
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO cost_events(user_id, tick_id, cost_type, amount, units, meta_json, created_at)
+		VALUES($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()))
+		RETURNING id, created_at
+	`, item.UserID, item.TickID, item.CostType, item.Amount, item.Units, item.MetaJSON, created).Scan(&item.ID, &item.CreatedAt)
+	if err != nil {
+		return CostEvent{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListCostEvents(ctx context.Context, userID string, limit int) ([]CostEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	userID = strings.TrimSpace(userID)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, tick_id, cost_type, amount, units, meta_json, created_at
+		FROM cost_events
+		WHERE ($1 = '' OR user_id = $1)
+		ORDER BY id DESC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]CostEvent, 0, limit)
+	for rows.Next() {
+		var it CostEvent
+		if err := rows.Scan(&it.ID, &it.UserID, &it.TickID, &it.CostType, &it.Amount, &it.Units, &it.MetaJSON, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) SendMail(ctx context.Context, from string, to []string, subject, body string) (MailSendResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return MailSendResult{}, err
+	}
+	defer tx.Rollback()
+
+	var messageID int64
+	var sentAt time.Time
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO mail_messages(sender_address, subject, body)
+		VALUES($1, $2, $3)
+		RETURNING id, sent_at
+	`, from, subject, body).Scan(&messageID, &sentAt); err != nil {
+		return MailSendResult{}, err
+	}
+
+	for _, recipient := range to {
+		recipient = strings.TrimSpace(recipient)
+		if recipient == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO mail_mailboxes(message_id, owner_address, folder, to_address, is_read)
+			VALUES($1, $2, 'inbox', $3, false)
+		`, messageID, recipient, recipient); err != nil {
+			return MailSendResult{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO mail_mailboxes(message_id, owner_address, folder, to_address, is_read, read_at)
+			VALUES($1, $2, 'outbox', $3, true, NOW())
+		`, messageID, from, recipient); err != nil {
+			return MailSendResult{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return MailSendResult{}, err
+	}
+	return MailSendResult{MessageID: messageID, From: from, To: to, Subject: subject, SentAt: sentAt}, nil
+}
+
+func (s *PostgresStore) ListMailbox(ctx context.Context, ownerAddress, folder, scope, keyword string, fromTime, toTime *time.Time, limit int) ([]MailItem, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	var fromArg any
+	if fromTime != nil {
+		fromArg = *fromTime
+	}
+	var toArg any
+	if toTime != nil {
+		toArg = *toTime
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT mb.id, mb.message_id, mb.owner_address, mb.folder, mm.sender_address, mb.to_address,
+		       mm.subject, mm.body, mb.is_read, mb.read_at, mm.sent_at
+		FROM mail_mailboxes mb
+		JOIN mail_messages mm ON mm.id = mb.message_id
+		WHERE mb.owner_address = $1
+		  AND ($2 = '' OR mb.folder = $2)
+		  AND ($3 = '' OR ($3 = 'read' AND mb.is_read = true) OR ($3 = 'unread' AND mb.is_read = false))
+		  AND ($4 = '' OR mm.subject ILIKE '%' || $4 || '%' OR mm.body ILIKE '%' || $4 || '%')
+		  AND ($5::timestamptz IS NULL OR mm.sent_at >= $5)
+		  AND ($6::timestamptz IS NULL OR mm.sent_at <= $6)
+		ORDER BY mm.sent_at DESC, mb.id DESC
+		LIMIT $7
+	`, ownerAddress, folder, scope, keyword, fromArg, toArg, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]MailItem, 0)
+	for rows.Next() {
+		var it MailItem
+		if err := rows.Scan(&it.MailboxID, &it.MessageID, &it.OwnerAddress, &it.Folder, &it.FromAddress, &it.ToAddress, &it.Subject, &it.Body, &it.IsRead, &it.ReadAt, &it.SentAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) MarkMailboxRead(ctx context.Context, ownerAddress string, mailboxIDs []int64) error {
+	if len(mailboxIDs) == 0 {
+		return nil
+	}
+	ids := make([]any, 0, len(mailboxIDs))
+	holders := make([]string, 0, len(mailboxIDs))
+	for i, id := range mailboxIDs {
+		holders = append(holders, fmt.Sprintf("$%d", i+2))
+		ids = append(ids, id)
+	}
+	args := []any{ownerAddress}
+	args = append(args, ids...)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE mail_mailboxes
+		SET is_read = true, read_at = NOW()
+		WHERE owner_address = $1
+		  AND folder = 'inbox'
+		  AND id IN (`+strings.Join(holders, ",")+`)`,
+		args...,
+	)
+	return err
+}
+
+func (s *PostgresStore) UpsertMailContact(ctx context.Context, c MailContact) (MailContact, error) {
+	tags := strings.Join(c.Tags, ",")
+	skills := strings.Join(c.Skills, ",")
+	c.UpdatedAt = time.Now().UTC()
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO mail_contacts(owner_address, contact_address, display_name, tags, role, skills, current_project, availability, updated_at)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+		ON CONFLICT (owner_address, contact_address) DO UPDATE SET
+			display_name = EXCLUDED.display_name,
+			tags = EXCLUDED.tags,
+			role = EXCLUDED.role,
+			skills = EXCLUDED.skills,
+			current_project = EXCLUDED.current_project,
+			availability = EXCLUDED.availability,
+			updated_at = NOW()
+		RETURNING updated_at
+	`, c.OwnerAddress, c.ContactAddress, c.DisplayName, tags, c.Role, skills, c.CurrentProject, c.Availability).Scan(&c.UpdatedAt)
+	if err != nil {
+		return MailContact{}, err
+	}
+	return c, nil
+}
+
+func (s *PostgresStore) ListMailContacts(ctx context.Context, ownerAddress, keyword string, limit int) ([]MailContact, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT owner_address, contact_address, display_name, tags, role, skills, current_project, availability, updated_at
+		FROM mail_contacts
+		WHERE owner_address = $1
+		  AND ($2 = '' OR contact_address ILIKE '%' || $2 || '%' OR display_name ILIKE '%' || $2 || '%' OR tags ILIKE '%' || $2 || '%' OR role ILIKE '%' || $2 || '%' OR skills ILIKE '%' || $2 || '%' OR current_project ILIKE '%' || $2 || '%')
+		ORDER BY contact_address ASC
+		LIMIT $3
+	`, ownerAddress, keyword, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]MailContact, 0)
+	for rows.Next() {
+		var c MailContact
+		var tags string
+		var skills string
+		if err := rows.Scan(&c.OwnerAddress, &c.ContactAddress, &c.DisplayName, &tags, &c.Role, &skills, &c.CurrentProject, &c.Availability, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(tags) != "" {
+			c.Tags = strings.Split(tags, ",")
+		}
+		if strings.TrimSpace(skills) != "" {
+			c.Skills = strings.Split(skills, ",")
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListTokenAccounts(ctx context.Context) ([]TokenAccount, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id, balance, updated_at FROM token_accounts ORDER BY user_id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]TokenAccount, 0)
+	for rows.Next() {
+		var a TokenAccount
+		if err := rows.Scan(&a.BotID, &a.Balance, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, a)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) Recharge(ctx context.Context, botID string, amount int64) (TokenLedger, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TokenLedger{}, err
+	}
+	defer tx.Rollback()
+	if err := s.ensureBotTx(ctx, tx, botID); err != nil {
+		return TokenLedger{}, err
+	}
+	var balance int64
+	if err := tx.QueryRowContext(ctx, `SELECT balance FROM token_accounts WHERE user_id = $1 FOR UPDATE`, botID).Scan(&balance); err != nil {
+		return TokenLedger{}, err
+	}
+	balance += amount
+	if _, err := tx.ExecContext(ctx, `UPDATE token_accounts SET balance = $2, updated_at = NOW() WHERE user_id = $1`, botID, balance); err != nil {
+		return TokenLedger{}, err
+	}
+	var entry TokenLedger
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO token_ledger(user_id, op_type, amount, balance_after)
+		VALUES($1, 'recharge', $2, $3)
+		RETURNING id, user_id, op_type, amount, balance_after, created_at
+	`, botID, amount, balance).Scan(&entry.ID, &entry.BotID, &entry.OpType, &entry.Amount, &entry.BalanceAfter, &entry.CreatedAt)
+	if err != nil {
+		return TokenLedger{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TokenLedger{}, err
+	}
+	return entry, nil
+}
+
+func (s *PostgresStore) Consume(ctx context.Context, botID string, amount int64) (TokenLedger, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TokenLedger{}, err
+	}
+	defer tx.Rollback()
+	if err := s.ensureBotTx(ctx, tx, botID); err != nil {
+		return TokenLedger{}, err
+	}
+	var balance int64
+	if err := tx.QueryRowContext(ctx, `SELECT balance FROM token_accounts WHERE user_id = $1 FOR UPDATE`, botID).Scan(&balance); err != nil {
+		return TokenLedger{}, err
+	}
+	if balance < amount {
+		return TokenLedger{}, ErrInsufficientBalance
+	}
+	balance -= amount
+	if _, err := tx.ExecContext(ctx, `UPDATE token_accounts SET balance = $2, updated_at = NOW() WHERE user_id = $1`, botID, balance); err != nil {
+		return TokenLedger{}, err
+	}
+	var entry TokenLedger
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO token_ledger(user_id, op_type, amount, balance_after)
+		VALUES($1, 'consume', $2, $3)
+		RETURNING id, user_id, op_type, amount, balance_after, created_at
+	`, botID, amount, balance).Scan(&entry.ID, &entry.BotID, &entry.OpType, &entry.Amount, &entry.BalanceAfter, &entry.CreatedAt)
+	if err != nil {
+		return TokenLedger{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TokenLedger{}, err
+	}
+	return entry, nil
+}
+
+func (s *PostgresStore) ListTokenLedger(ctx context.Context, botID string, limit int) ([]TokenLedger, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, op_type, amount, balance_after, created_at
+		FROM token_ledger
+		WHERE ($1 = '' OR user_id = $1)
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, botID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]TokenLedger, 0)
+	for rows.Next() {
+		var l TokenLedger
+		if err := rows.Scan(&l.ID, &l.BotID, &l.OpType, &l.Amount, &l.BalanceAfter, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, l)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) CreateUpgradeAudit(ctx context.Context, item UpgradeAudit) (UpgradeAudit, error) {
+	var started any
+	if !item.StartedAt.IsZero() {
+		started = item.StartedAt
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO upgrade_audits(user_id, repo_url, branch, requested_by, status, image, error_text, started_at)
+		VALUES($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
+		RETURNING id, started_at
+	`, item.UserID, item.RepoURL, item.Branch, item.RequestedBy, item.Status, item.Image, item.Error, started).Scan(&item.ID, &item.StartedAt)
+	if err != nil {
+		return UpgradeAudit{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) AppendUpgradeStep(ctx context.Context, step UpgradeStep) (UpgradeStep, error) {
+	var created any
+	if !step.CreatedAt.IsZero() {
+		created = step.CreatedAt
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO upgrade_steps(audit_id, step_name, status, command_text, output_text, created_at)
+		VALUES($1, $2, $3, $4, $5, COALESCE($6, NOW()))
+		RETURNING id, created_at
+	`, step.AuditID, step.Step, step.Status, step.Command, step.Output, created).Scan(&step.ID, &step.CreatedAt)
+	if err != nil {
+		return UpgradeStep{}, err
+	}
+	return step, nil
+}
+
+func (s *PostgresStore) FinishUpgradeAudit(ctx context.Context, id int64, status, image, errorText string, finishedAt time.Time) (UpgradeAudit, error) {
+	var item UpgradeAudit
+	var finished sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE upgrade_audits
+		SET status = $2,
+		    image = $3,
+		    error_text = $4,
+		    finished_at = $5,
+		    duration_ms = GREATEST(0, EXTRACT(EPOCH FROM ($5 - started_at)) * 1000)::BIGINT
+		WHERE id = $1
+		RETURNING id, user_id, repo_url, branch, requested_by, status, image, error_text, started_at, finished_at, duration_ms
+	`, id, status, image, errorText, finishedAt).Scan(
+		&item.ID, &item.UserID, &item.RepoURL, &item.Branch, &item.RequestedBy, &item.Status, &item.Image, &item.Error, &item.StartedAt, &finished, &item.DurationMS,
+	)
+	if err != nil {
+		return UpgradeAudit{}, err
+	}
+	if finished.Valid {
+		item.FinishedAt = &finished.Time
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) GetUpgradeAudit(ctx context.Context, id int64) (UpgradeAudit, error) {
+	var item UpgradeAudit
+	var finished sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, repo_url, branch, requested_by, status, image, error_text, started_at, finished_at, duration_ms
+		FROM upgrade_audits
+		WHERE id = $1
+	`, id).Scan(
+		&item.ID, &item.UserID, &item.RepoURL, &item.Branch, &item.RequestedBy, &item.Status, &item.Image, &item.Error, &item.StartedAt, &finished, &item.DurationMS,
+	)
+	if err != nil {
+		return UpgradeAudit{}, err
+	}
+	if finished.Valid {
+		item.FinishedAt = &finished.Time
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListUpgradeAudits(ctx context.Context, userID string, limit int) ([]UpgradeAudit, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, repo_url, branch, requested_by, status, image, error_text, started_at, finished_at, duration_ms
+		FROM upgrade_audits
+		WHERE ($1 = '' OR user_id = $1)
+		ORDER BY started_at DESC, id DESC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]UpgradeAudit, 0)
+	for rows.Next() {
+		var it UpgradeAudit
+		var finished sql.NullTime
+		if err := rows.Scan(&it.ID, &it.UserID, &it.RepoURL, &it.Branch, &it.RequestedBy, &it.Status, &it.Image, &it.Error, &it.StartedAt, &finished, &it.DurationMS); err != nil {
+			return nil, err
+		}
+		if finished.Valid {
+			it.FinishedAt = &finished.Time
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) ListUpgradeSteps(ctx context.Context, auditID int64, limit int) ([]UpgradeStep, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, audit_id, step_name, status, command_text, output_text, created_at
+		FROM upgrade_steps
+		WHERE audit_id = $1
+		ORDER BY created_at ASC, id ASC
+		LIMIT $2
+	`, auditID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]UpgradeStep, 0)
+	for rows.Next() {
+		var it UpgradeStep
+		if err := rows.Scan(&it.ID, &it.AuditID, &it.Step, &it.Status, &it.Command, &it.Output, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) CreateRegisterTask(ctx context.Context, item RegisterTask) (RegisterTask, error) {
+	var started any
+	if !item.StartedAt.IsZero() {
+		started = item.StartedAt
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO register_tasks(provider, user_id, user_name, repo_full_name, image, status, error_text, started_at)
+		VALUES($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
+		RETURNING id, started_at
+	`, item.Provider, item.UserID, item.UserName, item.RepoFullName, item.Image, item.Status, item.Error, started).Scan(&item.ID, &item.StartedAt)
+	if err != nil {
+		return RegisterTask{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) AppendRegisterTaskStep(ctx context.Context, step RegisterTaskStep) (RegisterTaskStep, error) {
+	var created any
+	if !step.CreatedAt.IsZero() {
+		created = step.CreatedAt
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO register_task_steps(task_id, step_name, status, message_text, created_at)
+		VALUES($1, $2, $3, $4, COALESCE($5, NOW()))
+		RETURNING id, created_at
+	`, step.TaskID, step.Step, step.Status, step.Message, created).Scan(&step.ID, &step.CreatedAt)
+	if err != nil {
+		return RegisterTaskStep{}, err
+	}
+	return step, nil
+}
+
+func (s *PostgresStore) FinishRegisterTask(ctx context.Context, id int64, status, userID, userName, repoFullName, image, errorText string, finishedAt time.Time) (RegisterTask, error) {
+	var item RegisterTask
+	var finished sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE register_tasks
+		SET status = CASE WHEN $2 <> '' THEN $2 ELSE status END,
+		    user_id = CASE WHEN $3 <> '' THEN $3 ELSE user_id END,
+		    user_name = CASE WHEN $4 <> '' THEN $4 ELSE user_name END,
+		    repo_full_name = CASE WHEN $5 <> '' THEN $5 ELSE repo_full_name END,
+		    image = CASE WHEN $6 <> '' THEN $6 ELSE image END,
+		    error_text = $7,
+		    finished_at = $8,
+		    duration_ms = GREATEST(0, EXTRACT(EPOCH FROM ($8 - started_at)) * 1000)::BIGINT
+		WHERE id = $1
+		RETURNING id, provider, user_id, user_name, repo_full_name, image, status, error_text, started_at, finished_at, duration_ms
+	`, id, status, userID, userName, repoFullName, image, errorText, finishedAt).Scan(
+		&item.ID, &item.Provider, &item.UserID, &item.UserName, &item.RepoFullName, &item.Image, &item.Status, &item.Error, &item.StartedAt, &finished, &item.DurationMS,
+	)
+	if err != nil {
+		return RegisterTask{}, err
+	}
+	if finished.Valid {
+		item.FinishedAt = &finished.Time
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) GetRegisterTask(ctx context.Context, id int64) (RegisterTask, error) {
+	var item RegisterTask
+	var finished sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, provider, user_id, user_name, repo_full_name, image, status, error_text, started_at, finished_at, duration_ms
+		FROM register_tasks
+		WHERE id = $1
+	`, id).Scan(
+		&item.ID, &item.Provider, &item.UserID, &item.UserName, &item.RepoFullName, &item.Image, &item.Status, &item.Error, &item.StartedAt, &finished, &item.DurationMS,
+	)
+	if err != nil {
+		return RegisterTask{}, err
+	}
+	if finished.Valid {
+		item.FinishedAt = &finished.Time
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListRegisterTasks(ctx context.Context, limit int) ([]RegisterTask, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, provider, user_id, user_name, repo_full_name, image, status, error_text, started_at, finished_at, duration_ms
+		FROM register_tasks
+		ORDER BY started_at DESC, id DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]RegisterTask, 0)
+	for rows.Next() {
+		var it RegisterTask
+		var finished sql.NullTime
+		if err := rows.Scan(&it.ID, &it.Provider, &it.UserID, &it.UserName, &it.RepoFullName, &it.Image, &it.Status, &it.Error, &it.StartedAt, &finished, &it.DurationMS); err != nil {
+			return nil, err
+		}
+		if finished.Valid {
+			it.FinishedAt = &finished.Time
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) ListRegisterTaskSteps(ctx context.Context, taskID int64, limit int) ([]RegisterTaskStep, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, task_id, step_name, status, message_text, created_at
+		FROM register_task_steps
+		WHERE task_id = $1
+		ORDER BY created_at ASC, id ASC
+		LIMIT $2
+	`, taskID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]RegisterTaskStep, 0)
+	for rows.Next() {
+		var it RegisterTaskStep
+		if err := rows.Scan(&it.ID, &it.TaskID, &it.Step, &it.Status, &it.Message, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) AppendChatMessage(ctx context.Context, msg ChatMessage) (ChatMessage, error) {
+	var sent any
+	if !msg.SentAt.IsZero() {
+		sent = msg.SentAt
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO chat_messages(user_id, from_user, to_user, body, sent_at)
+		VALUES($1, $2, $3, $4, COALESCE($5, NOW()))
+		RETURNING id, sent_at
+	`, msg.UserID, msg.From, msg.To, msg.Body, sent).Scan(&msg.ID, &msg.SentAt)
+	if err != nil {
+		return ChatMessage{}, err
+	}
+	return msg, nil
+}
+
+func (s *PostgresStore) ListChatMessages(ctx context.Context, userID string, limit int) ([]ChatMessage, error) {
+	if limit <= 0 {
+		limit = 300
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, from_user, to_user, body, sent_at
+		FROM chat_messages
+		WHERE user_id = $1
+		ORDER BY sent_at ASC, id ASC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]ChatMessage, 0, limit)
+	for rows.Next() {
+		var it ChatMessage
+		if err := rows.Scan(&it.ID, &it.UserID, &it.From, &it.To, &it.Body, &it.SentAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListPromptTemplates(ctx context.Context) ([]PromptTemplate, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT key, content, updated_at
+		FROM prompt_templates
+		ORDER BY key ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]PromptTemplate, 0)
+	for rows.Next() {
+		var it PromptTemplate
+		if err := rows.Scan(&it.Key, &it.Content, &it.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) UpsertPromptTemplate(ctx context.Context, item PromptTemplate) (PromptTemplate, error) {
+	item.Key = strings.TrimSpace(item.Key)
+	if item.Key == "" {
+		return PromptTemplate{}, fmt.Errorf("template key is required")
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO prompt_templates(key, content, updated_at)
+		VALUES($1, $2, NOW())
+		ON CONFLICT (key) DO UPDATE SET
+			content = EXCLUDED.content,
+			updated_at = NOW()
+		RETURNING key, content, updated_at
+	`, item.Key, item.Content).Scan(&item.Key, &item.Content, &item.UpdatedAt)
+	if err != nil {
+		return PromptTemplate{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) CreateCollabSession(ctx context.Context, item CollabSession) (CollabSession, error) {
+	item.CollabID = strings.TrimSpace(item.CollabID)
+	if item.CollabID == "" {
+		return CollabSession{}, fmt.Errorf("collab_id is required")
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO collab_sessions(
+			collab_id, title, goal, complexity, phase, proposer_user_id,
+			orchestrator_user_id, min_members, max_members, status_summary, created_at, updated_at, closed_at
+		)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW(), $11)
+		RETURNING collab_id, title, goal, complexity, phase, proposer_user_id, orchestrator_user_id,
+			min_members, max_members, status_summary, created_at, updated_at, closed_at
+	`, item.CollabID, item.Title, item.Goal, item.Complexity, item.Phase, item.ProposerUserID, item.OrchestratorUserID, item.MinMembers, item.MaxMembers, item.LastStatusOrSummary, item.ClosedAt).Scan(
+		&item.CollabID, &item.Title, &item.Goal, &item.Complexity, &item.Phase, &item.ProposerUserID, &item.OrchestratorUserID,
+		&item.MinMembers, &item.MaxMembers, &item.LastStatusOrSummary, &item.CreatedAt, &item.UpdatedAt, &item.ClosedAt,
+	)
+	if err != nil {
+		return CollabSession{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) GetCollabSession(ctx context.Context, collabID string) (CollabSession, error) {
+	var item CollabSession
+	var closed sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT collab_id, title, goal, complexity, phase, proposer_user_id, orchestrator_user_id,
+			min_members, max_members, status_summary, created_at, updated_at, closed_at
+		FROM collab_sessions WHERE collab_id = $1
+	`, strings.TrimSpace(collabID)).Scan(
+		&item.CollabID, &item.Title, &item.Goal, &item.Complexity, &item.Phase, &item.ProposerUserID, &item.OrchestratorUserID,
+		&item.MinMembers, &item.MaxMembers, &item.LastStatusOrSummary, &item.CreatedAt, &item.UpdatedAt, &closed,
+	)
+	if err != nil {
+		return CollabSession{}, err
+	}
+	if closed.Valid {
+		item.ClosedAt = &closed.Time
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListCollabSessions(ctx context.Context, phase, proposerUserID string, limit int) ([]CollabSession, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT collab_id, title, goal, complexity, phase, proposer_user_id, orchestrator_user_id,
+			min_members, max_members, status_summary, created_at, updated_at, closed_at
+		FROM collab_sessions
+		WHERE ($1 = '' OR phase = $1)
+		  AND ($2 = '' OR proposer_user_id = $2)
+		ORDER BY updated_at DESC, collab_id DESC
+		LIMIT $3
+	`, strings.TrimSpace(phase), strings.TrimSpace(proposerUserID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]CollabSession, 0)
+	for rows.Next() {
+		var it CollabSession
+		var closed sql.NullTime
+		if err := rows.Scan(
+			&it.CollabID, &it.Title, &it.Goal, &it.Complexity, &it.Phase, &it.ProposerUserID, &it.OrchestratorUserID,
+			&it.MinMembers, &it.MaxMembers, &it.LastStatusOrSummary, &it.CreatedAt, &it.UpdatedAt, &closed,
+		); err != nil {
+			return nil, err
+		}
+		if closed.Valid {
+			it.ClosedAt = &closed.Time
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpdateCollabPhase(ctx context.Context, collabID, phase, orchestratorUserID, statusSummary string, closedAt *time.Time) (CollabSession, error) {
+	var item CollabSession
+	var closed sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE collab_sessions
+		SET phase = CASE WHEN $2 = '' THEN phase ELSE $2 END,
+			orchestrator_user_id = CASE WHEN $3 = '' THEN orchestrator_user_id ELSE $3 END,
+			status_summary = $4,
+			closed_at = $5,
+			updated_at = NOW()
+		WHERE collab_id = $1
+		RETURNING collab_id, title, goal, complexity, phase, proposer_user_id, orchestrator_user_id,
+			min_members, max_members, status_summary, created_at, updated_at, closed_at
+	`, strings.TrimSpace(collabID), strings.TrimSpace(phase), strings.TrimSpace(orchestratorUserID), strings.TrimSpace(statusSummary), closedAt).Scan(
+		&item.CollabID, &item.Title, &item.Goal, &item.Complexity, &item.Phase, &item.ProposerUserID, &item.OrchestratorUserID,
+		&item.MinMembers, &item.MaxMembers, &item.LastStatusOrSummary, &item.CreatedAt, &item.UpdatedAt, &closed,
+	)
+	if err != nil {
+		return CollabSession{}, err
+	}
+	if closed.Valid {
+		item.ClosedAt = &closed.Time
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) UpsertCollabParticipant(ctx context.Context, item CollabParticipant) (CollabParticipant, error) {
+	item.CollabID = strings.TrimSpace(item.CollabID)
+	item.UserID = strings.TrimSpace(item.UserID)
+	if item.CollabID == "" || item.UserID == "" {
+		return CollabParticipant{}, fmt.Errorf("collab_id and user_id are required")
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO collab_participants(collab_id, user_id, role, status, pitch, created_at, updated_at)
+		VALUES($1, $2, $3, $4, $5, NOW(), NOW())
+		ON CONFLICT (collab_id, user_id) DO UPDATE SET
+			role = EXCLUDED.role,
+			status = EXCLUDED.status,
+			pitch = EXCLUDED.pitch,
+			updated_at = NOW()
+		RETURNING id, collab_id, user_id, role, status, pitch, created_at, updated_at
+	`, item.CollabID, item.UserID, item.Role, item.Status, item.Pitch).Scan(
+		&item.ID, &item.CollabID, &item.UserID, &item.Role, &item.Status, &item.Pitch, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		return CollabParticipant{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListCollabParticipants(ctx context.Context, collabID, status string, limit int) ([]CollabParticipant, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, collab_id, user_id, role, status, pitch, created_at, updated_at
+		FROM collab_participants
+		WHERE ($1 = '' OR collab_id = $1)
+		  AND ($2 = '' OR status = $2)
+		ORDER BY updated_at DESC, id DESC
+		LIMIT $3
+	`, strings.TrimSpace(collabID), strings.TrimSpace(status), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]CollabParticipant, 0)
+	for rows.Next() {
+		var it CollabParticipant
+		if err := rows.Scan(&it.ID, &it.CollabID, &it.UserID, &it.Role, &it.Status, &it.Pitch, &it.CreatedAt, &it.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) CreateCollabArtifact(ctx context.Context, item CollabArtifact) (CollabArtifact, error) {
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO collab_artifacts(collab_id, user_id, role, kind, summary, content, status, review_note, created_at, updated_at)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		RETURNING id, collab_id, user_id, role, kind, summary, content, status, review_note, created_at, updated_at
+	`, item.CollabID, item.UserID, item.Role, item.Kind, item.Summary, item.Content, item.Status, item.ReviewNote).Scan(
+		&item.ID, &item.CollabID, &item.UserID, &item.Role, &item.Kind, &item.Summary, &item.Content, &item.Status, &item.ReviewNote, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		return CollabArtifact{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) UpdateCollabArtifactReview(ctx context.Context, artifactID int64, status, reviewNote string) (CollabArtifact, error) {
+	var item CollabArtifact
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE collab_artifacts
+		SET status = $2, review_note = $3, updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, collab_id, user_id, role, kind, summary, content, status, review_note, created_at, updated_at
+	`, artifactID, strings.TrimSpace(status), strings.TrimSpace(reviewNote)).Scan(
+		&item.ID, &item.CollabID, &item.UserID, &item.Role, &item.Kind, &item.Summary, &item.Content, &item.Status, &item.ReviewNote, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		return CollabArtifact{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListCollabArtifacts(ctx context.Context, collabID, userID string, limit int) ([]CollabArtifact, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, collab_id, user_id, role, kind, summary, content, status, review_note, created_at, updated_at
+		FROM collab_artifacts
+		WHERE ($1 = '' OR collab_id = $1)
+		  AND ($2 = '' OR user_id = $2)
+		ORDER BY updated_at DESC, id DESC
+		LIMIT $3
+	`, strings.TrimSpace(collabID), strings.TrimSpace(userID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]CollabArtifact, 0)
+	for rows.Next() {
+		var it CollabArtifact
+		if err := rows.Scan(&it.ID, &it.CollabID, &it.UserID, &it.Role, &it.Kind, &it.Summary, &it.Content, &it.Status, &it.ReviewNote, &it.CreatedAt, &it.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) AppendCollabEvent(ctx context.Context, item CollabEvent) (CollabEvent, error) {
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO collab_events(collab_id, actor_user_id, event_type, payload, created_at)
+		VALUES($1, $2, $3, $4, COALESCE($5, NOW()))
+		RETURNING id, created_at
+	`, strings.TrimSpace(item.CollabID), strings.TrimSpace(item.ActorID), strings.TrimSpace(item.EventType), item.Payload, nullIfZeroTime(item.CreatedAt)).Scan(&item.ID, &item.CreatedAt)
+	if err != nil {
+		return CollabEvent{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListCollabEvents(ctx context.Context, collabID string, limit int) ([]CollabEvent, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, collab_id, actor_user_id, event_type, payload, created_at
+		FROM collab_events
+		WHERE ($1 = '' OR collab_id = $1)
+		ORDER BY id DESC
+		LIMIT $2
+	`, strings.TrimSpace(collabID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]CollabEvent, 0)
+	for rows.Next() {
+		var it CollabEvent
+		if err := rows.Scan(&it.ID, &it.CollabID, &it.ActorID, &it.EventType, &it.Payload, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListKBEntries(ctx context.Context, section, keyword string, limit int) ([]KBEntry, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, section, title, content, version, updated_by, updated_at, is_deleted
+		FROM kb_entries
+		WHERE is_deleted = false
+		  AND ($1 = '' OR section = $1)
+		  AND ($2 = '' OR section ILIKE '%' || $2 || '%' OR title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%')
+		ORDER BY updated_at DESC, id DESC
+		LIMIT $3
+	`, strings.TrimSpace(section), strings.TrimSpace(keyword), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]KBEntry, 0)
+	for rows.Next() {
+		var it KBEntry
+		if err := rows.Scan(&it.ID, &it.Section, &it.Title, &it.Content, &it.Version, &it.UpdatedBy, &it.UpdatedAt, &it.Deleted); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListKBSections(ctx context.Context, keyword string, limit int) ([]KBSection, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT section, COUNT(*)::BIGINT AS entry_count, MAX(updated_at) AS last_updated_at
+		FROM kb_entries
+		WHERE is_deleted = false
+		  AND section <> ''
+		  AND ($1 = '' OR section ILIKE '%' || $1 || '%')
+		GROUP BY section
+		ORDER BY last_updated_at DESC, section ASC
+		LIMIT $2
+	`, strings.TrimSpace(keyword), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]KBSection, 0)
+	for rows.Next() {
+		var it KBSection
+		if err := rows.Scan(&it.Section, &it.EntryCount, &it.LastUpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetKBEntry(ctx context.Context, entryID int64) (KBEntry, error) {
+	var it KBEntry
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, section, title, content, version, updated_by, updated_at, is_deleted
+		FROM kb_entries
+		WHERE id = $1 AND is_deleted = false
+	`, entryID).Scan(&it.ID, &it.Section, &it.Title, &it.Content, &it.Version, &it.UpdatedBy, &it.UpdatedAt, &it.Deleted)
+	if err != nil {
+		return KBEntry{}, err
+	}
+	return it, nil
+}
+
+func (s *PostgresStore) ListKBEntryHistory(ctx context.Context, entryID int64, limit int) ([]KBEntryHistoryItem, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.target_entry_id,
+		       p.id, p.title, p.status, p.reason, p.created_at, p.closed_at, p.applied_at,
+		       c.op_type, c.diff_text, c.old_content, c.new_content
+		FROM kb_proposal_changes c
+		JOIN kb_proposals p ON p.id = c.proposal_id
+		WHERE c.target_entry_id = $1
+		ORDER BY p.created_at DESC, p.id DESC
+		LIMIT $2
+	`, entryID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]KBEntryHistoryItem, 0)
+	for rows.Next() {
+		var it KBEntryHistoryItem
+		var closedAt, appliedAt sql.NullTime
+		if err := rows.Scan(
+			&it.EntryID, &it.ProposalID, &it.ProposalTitle, &it.ProposalStatus, &it.ProposalReason, &it.ProposalCreatedAt, &closedAt, &appliedAt,
+			&it.OpType, &it.DiffText, &it.OldContent, &it.NewContent,
+		); err != nil {
+			return nil, err
+		}
+		if closedAt.Valid {
+			it.ProposalClosedAt = &closedAt.Time
+		}
+		if appliedAt.Valid {
+			it.ProposalAppliedAt = &appliedAt.Time
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) CreateKBProposal(ctx context.Context, proposal KBProposal, change KBProposalChange) (KBProposal, KBProposalChange, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return KBProposal{}, KBProposalChange{}, err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO kb_proposals(
+			proposer_user_id, title, reason, status, vote_threshold_pct, vote_window_seconds,
+			current_revision_id, voting_revision_id,
+			enrolled_count, vote_yes, vote_no, vote_abstain, participation_count, decision_reason,
+			created_at, updated_at, discussion_deadline_at, voting_deadline_at, closed_at, applied_at
+		) VALUES(
+			$1, $2, $3, $4, $5, $6,
+			0, 0,
+			0, 0, 0, 0, 0, '',
+			$7, $7, NULL, NULL, NULL, NULL
+		)
+		RETURNING id, created_at, updated_at
+	`, proposal.ProposerUserID, proposal.Title, proposal.Reason, proposal.Status, proposal.VoteThresholdPct, proposal.VoteWindowSeconds, now).Scan(
+		&proposal.ID, &proposal.CreatedAt, &proposal.UpdatedAt,
+	)
+	if err != nil {
+		return KBProposal{}, KBProposalChange{}, err
+	}
+
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO kb_proposal_changes(
+			proposal_id, op_type, target_entry_id, section, title, old_content, new_content, diff_text
+		) VALUES($1, $2, NULLIF($3,0), $4, $5, $6, $7, $8)
+		RETURNING id
+	`, proposal.ID, change.OpType, change.TargetEntryID, change.Section, change.Title, change.OldContent, change.NewContent, change.DiffText).Scan(&change.ID)
+	if err != nil {
+		return KBProposal{}, KBProposalChange{}, err
+	}
+	change.ProposalID = proposal.ID
+	var revID int64
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO kb_revisions(
+			proposal_id, revision_no, base_revision_id, created_by,
+			op_type, target_entry_id, section, title, old_content, new_content, diff_text, created_at
+		) VALUES(
+			$1, 1, 0, $2,
+			$3, NULLIF($4,0), $5, $6, $7, $8, $9, $10
+		)
+		RETURNING id
+	`, proposal.ID, proposal.ProposerUserID, change.OpType, change.TargetEntryID, change.Section, change.Title, change.OldContent, change.NewContent, change.DiffText, now).Scan(&revID)
+	if err != nil {
+		return KBProposal{}, KBProposalChange{}, err
+	}
+	proposal.CurrentRevisionID = revID
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE kb_proposals
+		SET current_revision_id = $2, updated_at = NOW()
+		WHERE id = $1
+	`, proposal.ID, revID); err != nil {
+		return KBProposal{}, KBProposalChange{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return KBProposal{}, KBProposalChange{}, err
+	}
+	return proposal, change, nil
+}
+
+func (s *PostgresStore) ListKBRevisions(ctx context.Context, proposalID int64, limit int) ([]KBRevision, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, proposal_id, revision_no, base_revision_id, created_by,
+		       op_type, target_entry_id, section, title, old_content, new_content, diff_text, created_at
+		FROM kb_revisions
+		WHERE proposal_id = $1
+		ORDER BY revision_no DESC, id DESC
+		LIMIT $2
+	`, proposalID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]KBRevision, 0)
+	for rows.Next() {
+		var it KBRevision
+		var target sql.NullInt64
+		if err := rows.Scan(
+			&it.ID, &it.ProposalID, &it.RevisionNo, &it.BaseRevisionID, &it.CreatedBy,
+			&it.OpType, &target, &it.Section, &it.Title, &it.OldContent, &it.NewContent, &it.DiffText, &it.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if target.Valid {
+			it.TargetEntryID = target.Int64
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) CreateKBRevision(ctx context.Context, proposalID, baseRevisionID int64, createdBy string, change KBProposalChange, discussionDeadline time.Time) (KBRevision, KBProposal, KBProposalChange, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return KBRevision{}, KBProposal{}, KBProposalChange{}, err
+	}
+	defer tx.Rollback()
+	var status string
+	var currentRev int64
+	err = tx.QueryRowContext(ctx, `SELECT status, current_revision_id FROM kb_proposals WHERE id = $1 FOR UPDATE`, proposalID).Scan(&status, &currentRev)
+	if err != nil {
+		return KBRevision{}, KBProposal{}, KBProposalChange{}, err
+	}
+	if status != "discussing" {
+		return KBRevision{}, KBProposal{}, KBProposalChange{}, fmt.Errorf("proposal is not in discussing phase")
+	}
+	if currentRev != baseRevisionID {
+		return KBRevision{}, KBProposal{}, KBProposalChange{}, fmt.Errorf("base revision is stale")
+	}
+	var nextRevisionNo int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision_no), 0) + 1 FROM kb_revisions WHERE proposal_id = $1`, proposalID).Scan(&nextRevisionNo); err != nil {
+		return KBRevision{}, KBProposal{}, KBProposalChange{}, err
+	}
+	now := time.Now().UTC()
+	var rev KBRevision
+	var target sql.NullInt64
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO kb_revisions(
+			proposal_id, revision_no, base_revision_id, created_by,
+			op_type, target_entry_id, section, title, old_content, new_content, diff_text, created_at
+		) VALUES(
+			$1, $2, $3, $4,
+			$5, NULLIF($6,0), $7, $8, $9, $10, $11, $12
+		)
+		RETURNING id, proposal_id, revision_no, base_revision_id, created_by,
+		          op_type, target_entry_id, section, title, old_content, new_content, diff_text, created_at
+	`, proposalID, nextRevisionNo, baseRevisionID, strings.TrimSpace(createdBy), change.OpType, change.TargetEntryID, change.Section, change.Title, change.OldContent, change.NewContent, change.DiffText, now).Scan(
+		&rev.ID, &rev.ProposalID, &rev.RevisionNo, &rev.BaseRevisionID, &rev.CreatedBy,
+		&rev.OpType, &target, &rev.Section, &rev.Title, &rev.OldContent, &rev.NewContent, &rev.DiffText, &rev.CreatedAt,
+	)
+	if err != nil {
+		return KBRevision{}, KBProposal{}, KBProposalChange{}, err
+	}
+	if target.Valid {
+		rev.TargetEntryID = target.Int64
+	}
+	err = tx.QueryRowContext(ctx, `
+		UPDATE kb_proposal_changes
+		SET op_type = $2,
+		    target_entry_id = NULLIF($3,0),
+		    section = $4,
+		    title = $5,
+		    old_content = $6,
+		    new_content = $7,
+		    diff_text = $8
+		WHERE proposal_id = $1
+		RETURNING id, proposal_id, op_type, target_entry_id, section, title, old_content, new_content, diff_text
+	`, proposalID, change.OpType, change.TargetEntryID, change.Section, change.Title, change.OldContent, change.NewContent, change.DiffText).Scan(
+		&change.ID, &change.ProposalID, &change.OpType, &target, &change.Section, &change.Title, &change.OldContent, &change.NewContent, &change.DiffText,
+	)
+	if err != nil {
+		return KBRevision{}, KBProposal{}, KBProposalChange{}, err
+	}
+	if target.Valid {
+		change.TargetEntryID = target.Int64
+	} else {
+		change.TargetEntryID = 0
+	}
+	var proposal KBProposal
+	var discussionDeadlineAt, votingDeadlineAt, closedAt, appliedAt sql.NullTime
+	dlArg := nullIfZeroTime(discussionDeadline)
+	err = tx.QueryRowContext(ctx, `
+		UPDATE kb_proposals
+		SET current_revision_id = $2,
+		    discussion_deadline_at = CASE WHEN $3::timestamptz IS NULL THEN discussion_deadline_at ELSE $3 END,
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, proposer_user_id, title, reason, status, current_revision_id, voting_revision_id, vote_threshold_pct, vote_window_seconds,
+		          enrolled_count, vote_yes, vote_no, vote_abstain, participation_count, decision_reason,
+		          created_at, updated_at, discussion_deadline_at, voting_deadline_at, closed_at, applied_at
+	`, proposalID, rev.ID, dlArg).Scan(
+		&proposal.ID, &proposal.ProposerUserID, &proposal.Title, &proposal.Reason, &proposal.Status, &proposal.CurrentRevisionID, &proposal.VotingRevisionID, &proposal.VoteThresholdPct, &proposal.VoteWindowSeconds,
+		&proposal.EnrolledCount, &proposal.VoteYes, &proposal.VoteNo, &proposal.VoteAbstain, &proposal.ParticipationCount, &proposal.DecisionReason,
+		&proposal.CreatedAt, &proposal.UpdatedAt, &discussionDeadlineAt, &votingDeadlineAt, &closedAt, &appliedAt,
+	)
+	if err != nil {
+		return KBRevision{}, KBProposal{}, KBProposalChange{}, err
+	}
+	if discussionDeadlineAt.Valid {
+		proposal.DiscussionDeadlineAt = &discussionDeadlineAt.Time
+	}
+	if votingDeadlineAt.Valid {
+		proposal.VotingDeadlineAt = &votingDeadlineAt.Time
+	}
+	if closedAt.Valid {
+		proposal.ClosedAt = &closedAt.Time
+	}
+	if appliedAt.Valid {
+		proposal.AppliedAt = &appliedAt.Time
+	}
+	if err := tx.Commit(); err != nil {
+		return KBRevision{}, KBProposal{}, KBProposalChange{}, err
+	}
+	return rev, proposal, change, nil
+}
+
+func (s *PostgresStore) AckKBProposal(ctx context.Context, proposalID, revisionID int64, userID string) (KBAck, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return KBAck{}, fmt.Errorf("user_id is required")
+	}
+	var it KBAck
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO kb_acks(proposal_id, revision_id, user_id, created_at)
+		VALUES($1, $2, $3, NOW())
+		ON CONFLICT (proposal_id, revision_id, user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+		RETURNING id, proposal_id, revision_id, user_id, created_at
+	`, proposalID, revisionID, userID).Scan(&it.ID, &it.ProposalID, &it.RevisionID, &it.UserID, &it.CreatedAt)
+	if err != nil {
+		return KBAck{}, err
+	}
+	return it, nil
+}
+
+func (s *PostgresStore) ListKBAcks(ctx context.Context, proposalID, revisionID int64) ([]KBAck, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, proposal_id, revision_id, user_id, created_at
+		FROM kb_acks
+		WHERE proposal_id = $1
+		  AND ($2 = 0 OR revision_id = $2)
+		ORDER BY created_at ASC, id ASC
+	`, proposalID, revisionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]KBAck, 0)
+	for rows.Next() {
+		var it KBAck
+		if err := rows.Scan(&it.ID, &it.ProposalID, &it.RevisionID, &it.UserID, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetKBProposal(ctx context.Context, proposalID int64) (KBProposal, error) {
+	var it KBProposal
+	var discussionDeadline, deadline, closedAt, appliedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, proposer_user_id, title, reason, status, current_revision_id, voting_revision_id, vote_threshold_pct, vote_window_seconds,
+		       enrolled_count, vote_yes, vote_no, vote_abstain, participation_count, decision_reason,
+		       created_at, updated_at, discussion_deadline_at, voting_deadline_at, closed_at, applied_at
+		FROM kb_proposals
+		WHERE id = $1
+	`, proposalID).Scan(
+		&it.ID, &it.ProposerUserID, &it.Title, &it.Reason, &it.Status, &it.CurrentRevisionID, &it.VotingRevisionID, &it.VoteThresholdPct, &it.VoteWindowSeconds,
+		&it.EnrolledCount, &it.VoteYes, &it.VoteNo, &it.VoteAbstain, &it.ParticipationCount, &it.DecisionReason,
+		&it.CreatedAt, &it.UpdatedAt, &discussionDeadline, &deadline, &closedAt, &appliedAt,
+	)
+	if err != nil {
+		return KBProposal{}, err
+	}
+	if discussionDeadline.Valid {
+		it.DiscussionDeadlineAt = &discussionDeadline.Time
+	}
+	if deadline.Valid {
+		it.VotingDeadlineAt = &deadline.Time
+	}
+	if closedAt.Valid {
+		it.ClosedAt = &closedAt.Time
+	}
+	if appliedAt.Valid {
+		it.AppliedAt = &appliedAt.Time
+	}
+	return it, nil
+}
+
+func (s *PostgresStore) ListKBProposals(ctx context.Context, status string, limit int) ([]KBProposal, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, proposer_user_id, title, reason, status, current_revision_id, voting_revision_id, vote_threshold_pct, vote_window_seconds,
+		       enrolled_count, vote_yes, vote_no, vote_abstain, participation_count, decision_reason,
+		       created_at, updated_at, discussion_deadline_at, voting_deadline_at, closed_at, applied_at
+		FROM kb_proposals
+		WHERE ($1 = '' OR status = $1)
+		ORDER BY updated_at DESC, id DESC
+		LIMIT $2
+	`, strings.TrimSpace(status), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]KBProposal, 0)
+	for rows.Next() {
+		var it KBProposal
+		var discussionDeadline, deadline, closedAt, appliedAt sql.NullTime
+		if err := rows.Scan(
+			&it.ID, &it.ProposerUserID, &it.Title, &it.Reason, &it.Status, &it.CurrentRevisionID, &it.VotingRevisionID, &it.VoteThresholdPct, &it.VoteWindowSeconds,
+			&it.EnrolledCount, &it.VoteYes, &it.VoteNo, &it.VoteAbstain, &it.ParticipationCount, &it.DecisionReason,
+			&it.CreatedAt, &it.UpdatedAt, &discussionDeadline, &deadline, &closedAt, &appliedAt,
+		); err != nil {
+			return nil, err
+		}
+		if discussionDeadline.Valid {
+			it.DiscussionDeadlineAt = &discussionDeadline.Time
+		}
+		if deadline.Valid {
+			it.VotingDeadlineAt = &deadline.Time
+		}
+		if closedAt.Valid {
+			it.ClosedAt = &closedAt.Time
+		}
+		if appliedAt.Valid {
+			it.AppliedAt = &appliedAt.Time
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetKBProposalChange(ctx context.Context, proposalID int64) (KBProposalChange, error) {
+	var it KBProposalChange
+	var target sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, proposal_id, op_type, target_entry_id, section, title, old_content, new_content, diff_text
+		FROM kb_proposal_changes
+		WHERE proposal_id = $1
+	`, proposalID).Scan(
+		&it.ID, &it.ProposalID, &it.OpType, &target, &it.Section, &it.Title, &it.OldContent, &it.NewContent, &it.DiffText,
+	)
+	if err != nil {
+		return KBProposalChange{}, err
+	}
+	if target.Valid {
+		it.TargetEntryID = target.Int64
+	}
+	return it, nil
+}
+
+func (s *PostgresStore) EnrollKBProposal(ctx context.Context, proposalID int64, userID string) (KBProposalEnrollment, error) {
+	var it KBProposalEnrollment
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO kb_proposal_enrollments(proposal_id, user_id, created_at)
+		VALUES($1, $2, NOW())
+		ON CONFLICT (proposal_id, user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+		RETURNING id, proposal_id, user_id, created_at
+	`, proposalID, strings.TrimSpace(userID)).Scan(&it.ID, &it.ProposalID, &it.UserID, &it.CreatedAt)
+	if err != nil {
+		return KBProposalEnrollment{}, err
+	}
+	return it, nil
+}
+
+func (s *PostgresStore) ListKBProposalEnrollments(ctx context.Context, proposalID int64) ([]KBProposalEnrollment, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, proposal_id, user_id, created_at
+		FROM kb_proposal_enrollments
+		WHERE proposal_id = $1
+		ORDER BY created_at ASC, id ASC
+	`, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]KBProposalEnrollment, 0)
+	for rows.Next() {
+		var it KBProposalEnrollment
+		if err := rows.Scan(&it.ID, &it.ProposalID, &it.UserID, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) CreateKBThreadMessage(ctx context.Context, item KBThreadMessage) (KBThreadMessage, error) {
+	var created any
+	if !item.CreatedAt.IsZero() {
+		created = item.CreatedAt
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO kb_threads(proposal_id, author_user_id, message_type, content, created_at)
+		VALUES($1, $2, $3, $4, COALESCE($5, NOW()))
+		RETURNING id, created_at
+	`, item.ProposalID, strings.TrimSpace(item.AuthorID), strings.TrimSpace(item.MessageType), item.Content, created).Scan(&item.ID, &item.CreatedAt)
+	if err != nil {
+		return KBThreadMessage{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListKBThreadMessages(ctx context.Context, proposalID int64, limit int) ([]KBThreadMessage, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, proposal_id, author_user_id, message_type, content, created_at
+		FROM kb_threads
+		WHERE proposal_id = $1
+		ORDER BY created_at ASC, id ASC
+		LIMIT $2
+	`, proposalID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]KBThreadMessage, 0)
+	for rows.Next() {
+		var it KBThreadMessage
+		if err := rows.Scan(&it.ID, &it.ProposalID, &it.AuthorID, &it.MessageType, &it.Content, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) StartKBProposalVoting(ctx context.Context, proposalID int64, deadline time.Time) (KBProposal, error) {
+	var it KBProposal
+	var discussionDeadlineAt, deadlineAt, closedAt, appliedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE kb_proposals
+		SET status = 'voting',
+		    voting_revision_id = current_revision_id,
+		    voting_deadline_at = $2,
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, proposer_user_id, title, reason, status, current_revision_id, voting_revision_id, vote_threshold_pct, vote_window_seconds,
+		          enrolled_count, vote_yes, vote_no, vote_abstain, participation_count, decision_reason,
+		          created_at, updated_at, discussion_deadline_at, voting_deadline_at, closed_at, applied_at
+	`, proposalID, deadline).Scan(
+		&it.ID, &it.ProposerUserID, &it.Title, &it.Reason, &it.Status, &it.CurrentRevisionID, &it.VotingRevisionID, &it.VoteThresholdPct, &it.VoteWindowSeconds,
+		&it.EnrolledCount, &it.VoteYes, &it.VoteNo, &it.VoteAbstain, &it.ParticipationCount, &it.DecisionReason,
+		&it.CreatedAt, &it.UpdatedAt, &discussionDeadlineAt, &deadlineAt, &closedAt, &appliedAt,
+	)
+	if err != nil {
+		return KBProposal{}, err
+	}
+	if discussionDeadlineAt.Valid {
+		it.DiscussionDeadlineAt = &discussionDeadlineAt.Time
+	}
+	if deadlineAt.Valid {
+		it.VotingDeadlineAt = &deadlineAt.Time
+	}
+	if closedAt.Valid {
+		it.ClosedAt = &closedAt.Time
+	}
+	if appliedAt.Valid {
+		it.AppliedAt = &appliedAt.Time
+	}
+	return it, nil
+}
+
+func (s *PostgresStore) CastKBVote(ctx context.Context, vote KBVote) (KBVote, error) {
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO kb_votes(proposal_id, user_id, vote, reason, created_at, updated_at)
+		VALUES($1, $2, $3, $4, NOW(), NOW())
+		ON CONFLICT (proposal_id, user_id) DO UPDATE SET
+			vote = EXCLUDED.vote,
+			reason = EXCLUDED.reason,
+			updated_at = NOW()
+		RETURNING id, created_at, updated_at
+	`, vote.ProposalID, strings.TrimSpace(vote.UserID), strings.TrimSpace(vote.Vote), strings.TrimSpace(vote.Reason)).Scan(
+		&vote.ID, &vote.CreatedAt, &vote.UpdatedAt,
+	)
+	if err != nil {
+		return KBVote{}, err
+	}
+	return vote, nil
+}
+
+func (s *PostgresStore) ListKBVotes(ctx context.Context, proposalID int64) ([]KBVote, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, proposal_id, user_id, vote, reason, created_at, updated_at
+		FROM kb_votes
+		WHERE proposal_id = $1
+		ORDER BY updated_at ASC, id ASC
+	`, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]KBVote, 0)
+	for rows.Next() {
+		var it KBVote
+		if err := rows.Scan(&it.ID, &it.ProposalID, &it.UserID, &it.Vote, &it.Reason, &it.CreatedAt, &it.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) CloseKBProposal(ctx context.Context, proposalID int64, status, decisionReason string, enrolledCount, voteYes, voteNo, voteAbstain, participationCount int, closedAt time.Time) (KBProposal, error) {
+	var it KBProposal
+	var discussionDeadlineAt, deadlineAt, closed, appliedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE kb_proposals
+		SET status = $2,
+		    decision_reason = $3,
+		    enrolled_count = $4,
+		    vote_yes = $5,
+		    vote_no = $6,
+		    vote_abstain = $7,
+		    participation_count = $8,
+		    closed_at = $9,
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, proposer_user_id, title, reason, status, current_revision_id, voting_revision_id, vote_threshold_pct, vote_window_seconds,
+		          enrolled_count, vote_yes, vote_no, vote_abstain, participation_count, decision_reason,
+		          created_at, updated_at, discussion_deadline_at, voting_deadline_at, closed_at, applied_at
+	`, proposalID, strings.TrimSpace(status), strings.TrimSpace(decisionReason), enrolledCount, voteYes, voteNo, voteAbstain, participationCount, closedAt).Scan(
+		&it.ID, &it.ProposerUserID, &it.Title, &it.Reason, &it.Status, &it.CurrentRevisionID, &it.VotingRevisionID, &it.VoteThresholdPct, &it.VoteWindowSeconds,
+		&it.EnrolledCount, &it.VoteYes, &it.VoteNo, &it.VoteAbstain, &it.ParticipationCount, &it.DecisionReason,
+		&it.CreatedAt, &it.UpdatedAt, &discussionDeadlineAt, &deadlineAt, &closed, &appliedAt,
+	)
+	if err != nil {
+		return KBProposal{}, err
+	}
+	if discussionDeadlineAt.Valid {
+		it.DiscussionDeadlineAt = &discussionDeadlineAt.Time
+	}
+	if deadlineAt.Valid {
+		it.VotingDeadlineAt = &deadlineAt.Time
+	}
+	if closed.Valid {
+		it.ClosedAt = &closed.Time
+	}
+	if appliedAt.Valid {
+		it.AppliedAt = &appliedAt.Time
+	}
+	return it, nil
+}
+
+func (s *PostgresStore) ApplyKBProposal(ctx context.Context, proposalID int64, appliedBy string, appliedAt time.Time) (KBEntry, KBProposal, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return KBEntry{}, KBProposal{}, err
+	}
+	defer tx.Rollback()
+
+	var change KBProposalChange
+	var target sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id, proposal_id, op_type, target_entry_id, section, title, old_content, new_content, diff_text
+		FROM kb_proposal_changes
+		WHERE proposal_id = $1
+	`, proposalID).Scan(
+		&change.ID, &change.ProposalID, &change.OpType, &target, &change.Section, &change.Title, &change.OldContent, &change.NewContent, &change.DiffText,
+	); err != nil {
+		return KBEntry{}, KBProposal{}, err
+	}
+	if target.Valid {
+		change.TargetEntryID = target.Int64
+	}
+
+	var entry KBEntry
+	switch strings.ToLower(strings.TrimSpace(change.OpType)) {
+	case "add":
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO kb_entries(section, title, content, version, updated_by, updated_at, is_deleted)
+			VALUES($1, $2, $3, 1, $4, $5, false)
+			RETURNING id, section, title, content, version, updated_by, updated_at, is_deleted
+		`, change.Section, change.Title, change.NewContent, strings.TrimSpace(appliedBy), appliedAt).Scan(
+			&entry.ID, &entry.Section, &entry.Title, &entry.Content, &entry.Version, &entry.UpdatedBy, &entry.UpdatedAt, &entry.Deleted,
+		); err != nil {
+			return KBEntry{}, KBProposal{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE kb_proposal_changes SET target_entry_id = $2 WHERE proposal_id = $1`, proposalID, entry.ID); err != nil {
+			return KBEntry{}, KBProposal{}, err
+		}
+	case "update":
+		if change.TargetEntryID <= 0 {
+			return KBEntry{}, KBProposal{}, fmt.Errorf("target_entry_id is required for update")
+		}
+		if err := tx.QueryRowContext(ctx, `
+			UPDATE kb_entries
+			SET section = $2,
+			    title = $3,
+			    content = $4,
+			    version = version + 1,
+			    updated_by = $5,
+			    updated_at = $6
+			WHERE id = $1 AND is_deleted = false
+			RETURNING id, section, title, content, version, updated_by, updated_at, is_deleted
+		`, change.TargetEntryID, change.Section, change.Title, change.NewContent, strings.TrimSpace(appliedBy), appliedAt).Scan(
+			&entry.ID, &entry.Section, &entry.Title, &entry.Content, &entry.Version, &entry.UpdatedBy, &entry.UpdatedAt, &entry.Deleted,
+		); err != nil {
+			return KBEntry{}, KBProposal{}, err
+		}
+	case "delete":
+		if change.TargetEntryID <= 0 {
+			return KBEntry{}, KBProposal{}, fmt.Errorf("target_entry_id is required for delete")
+		}
+		if err := tx.QueryRowContext(ctx, `
+			UPDATE kb_entries
+			SET is_deleted = true,
+			    version = version + 1,
+			    updated_by = $2,
+			    updated_at = $3
+			WHERE id = $1 AND is_deleted = false
+			RETURNING id, section, title, content, version, updated_by, updated_at, is_deleted
+		`, change.TargetEntryID, strings.TrimSpace(appliedBy), appliedAt).Scan(
+			&entry.ID, &entry.Section, &entry.Title, &entry.Content, &entry.Version, &entry.UpdatedBy, &entry.UpdatedAt, &entry.Deleted,
+		); err != nil {
+			return KBEntry{}, KBProposal{}, err
+		}
+	default:
+		return KBEntry{}, KBProposal{}, fmt.Errorf("unsupported op_type: %s", change.OpType)
+	}
+
+	var proposal KBProposal
+	var discussionDeadlineAt, deadlineAt, closedAt, appliedAtDB sql.NullTime
+	err = tx.QueryRowContext(ctx, `
+		UPDATE kb_proposals
+		SET status = 'applied',
+		    applied_at = $2,
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, proposer_user_id, title, reason, status, current_revision_id, voting_revision_id, vote_threshold_pct, vote_window_seconds,
+		          enrolled_count, vote_yes, vote_no, vote_abstain, participation_count, decision_reason,
+		          created_at, updated_at, discussion_deadline_at, voting_deadline_at, closed_at, applied_at
+	`, proposalID, appliedAt).Scan(
+		&proposal.ID, &proposal.ProposerUserID, &proposal.Title, &proposal.Reason, &proposal.Status, &proposal.CurrentRevisionID, &proposal.VotingRevisionID, &proposal.VoteThresholdPct, &proposal.VoteWindowSeconds,
+		&proposal.EnrolledCount, &proposal.VoteYes, &proposal.VoteNo, &proposal.VoteAbstain, &proposal.ParticipationCount, &proposal.DecisionReason,
+		&proposal.CreatedAt, &proposal.UpdatedAt, &discussionDeadlineAt, &deadlineAt, &closedAt, &appliedAtDB,
+	)
+	if err != nil {
+		return KBEntry{}, KBProposal{}, err
+	}
+	if discussionDeadlineAt.Valid {
+		proposal.DiscussionDeadlineAt = &discussionDeadlineAt.Time
+	}
+	if deadlineAt.Valid {
+		proposal.VotingDeadlineAt = &deadlineAt.Time
+	}
+	if closedAt.Valid {
+		proposal.ClosedAt = &closedAt.Time
+	}
+	if appliedAtDB.Valid {
+		proposal.AppliedAt = &appliedAtDB.Time
+	}
+
+	if err := tx.Commit(); err != nil {
+		return KBEntry{}, KBProposal{}, err
+	}
+	return entry, proposal, nil
+}
+
+func nullIfZeroTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
+}
+
+func (s *PostgresStore) AppendRequestLog(ctx context.Context, item RequestLog) (RequestLog, error) {
+	var reqTime any
+	if !item.Time.IsZero() {
+		reqTime = item.Time
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO request_logs(req_time, method, path, user_id, status_code, duration_ms)
+		VALUES(COALESCE($1, NOW()), $2, $3, $4, $5, $6)
+		RETURNING id, req_time
+	`, reqTime, item.Method, item.Path, item.UserID, item.StatusCode, item.DurationMS).Scan(&item.ID, &item.Time)
+	if err != nil {
+		return RequestLog{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) ListRequestLogs(ctx context.Context, filter RequestLogFilter) ([]RequestLog, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 300
+	}
+	if limit > 20000 {
+		limit = 20000
+	}
+	method := strings.ToUpper(strings.TrimSpace(filter.Method))
+	pathContains := strings.TrimSpace(filter.PathContains)
+	userID := strings.TrimSpace(filter.UserID)
+
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT id, req_time, method, path, user_id, status_code, duration_ms
+		FROM request_logs
+		WHERE 1=1
+	`)
+	args := make([]any, 0, 8)
+	argi := 1
+	add := func(sql string, v any) {
+		query.WriteString(" AND ")
+		query.WriteString(fmt.Sprintf(sql, argi))
+		args = append(args, v)
+		argi++
+	}
+	if filter.Since != nil {
+		add("req_time >= $%d", *filter.Since)
+	}
+	if method != "" {
+		add("method = $%d", method)
+	}
+	if pathContains != "" {
+		add("path LIKE $%d", "%"+pathContains+"%")
+	}
+	if userID != "" {
+		add("user_id = $%d", userID)
+	}
+	if filter.StatusCode > 0 {
+		add("status_code = $%d", filter.StatusCode)
+	}
+	query.WriteString(fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", argi))
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]RequestLog, 0, limit)
+	for rows.Next() {
+		var it RequestLog
+		if err := rows.Scan(&it.ID, &it.Time, &it.Method, &it.Path, &it.UserID, &it.StatusCode, &it.DurationMS); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) GetWorldSetting(ctx context.Context, key string) (WorldSetting, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return WorldSetting{}, fmt.Errorf("setting key is required")
+	}
+	var it WorldSetting
+	err := s.db.QueryRowContext(ctx, `
+		SELECT key, value, updated_at
+		FROM world_settings
+		WHERE key = $1
+	`, key).Scan(&it.Key, &it.Value, &it.UpdatedAt)
+	if err != nil {
+		return WorldSetting{}, err
+	}
+	return it, nil
+}
+
+func (s *PostgresStore) UpsertWorldSetting(ctx context.Context, item WorldSetting) (WorldSetting, error) {
+	item.Key = strings.TrimSpace(item.Key)
+	if item.Key == "" {
+		return WorldSetting{}, fmt.Errorf("setting key is required")
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO world_settings(key, value, updated_at)
+		VALUES($1, $2, NOW())
+		ON CONFLICT (key) DO UPDATE SET
+			value = EXCLUDED.value,
+			updated_at = NOW()
+		RETURNING key, value, updated_at
+	`, item.Key, item.Value).Scan(&item.Key, &item.Value, &item.UpdatedAt)
+	if err != nil {
+		return WorldSetting{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) CreateGanglion(ctx context.Context, item Ganglion) (Ganglion, error) {
+	item.Name = strings.TrimSpace(item.Name)
+	item.GanglionType = strings.TrimSpace(item.GanglionType)
+	item.Description = strings.TrimSpace(item.Description)
+	item.Implementation = strings.TrimSpace(item.Implementation)
+	item.Validation = strings.TrimSpace(item.Validation)
+	item.AuthorUserID = strings.TrimSpace(item.AuthorUserID)
+	if item.Name == "" || item.GanglionType == "" || item.Description == "" || item.AuthorUserID == "" {
+		return Ganglion{}, fmt.Errorf("name, type, description, author_user_id are required")
+	}
+	item.Temporality = normalizeGanglionTemporality(item.Temporality)
+	item.LifeState = normalizeGanglionLifeState(item.LifeState)
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO ganglia(
+			name, ganglion_type, description, implementation, validation,
+			author_user_id, supersedes_id, temporality, life_state,
+			score_avg_milli, score_count, integrations_count, created_at, updated_at
+		)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,0,0,0,NOW(),NOW())
+		RETURNING id, name, ganglion_type, description, implementation, validation,
+		          author_user_id, supersedes_id, temporality, life_state,
+		          score_avg_milli, score_count, integrations_count, created_at, updated_at
+	`, item.Name, item.GanglionType, item.Description, item.Implementation, item.Validation,
+		item.AuthorUserID, item.SupersedesID, item.Temporality, item.LifeState).Scan(
+		&item.ID, &item.Name, &item.GanglionType, &item.Description, &item.Implementation, &item.Validation,
+		&item.AuthorUserID, &item.SupersedesID, &item.Temporality, &item.LifeState,
+		&item.ScoreAvgMilli, &item.ScoreCount, &item.IntegrationsCount, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		return Ganglion{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) GetGanglion(ctx context.Context, ganglionID int64) (Ganglion, error) {
+	var it Ganglion
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, name, ganglion_type, description, implementation, validation,
+		       author_user_id, supersedes_id, temporality, life_state,
+		       score_avg_milli, score_count, integrations_count, created_at, updated_at
+		FROM ganglia
+		WHERE id = $1
+	`, ganglionID).Scan(
+		&it.ID, &it.Name, &it.GanglionType, &it.Description, &it.Implementation, &it.Validation,
+		&it.AuthorUserID, &it.SupersedesID, &it.Temporality, &it.LifeState,
+		&it.ScoreAvgMilli, &it.ScoreCount, &it.IntegrationsCount, &it.CreatedAt, &it.UpdatedAt,
+	)
+	if err != nil {
+		return Ganglion{}, err
+	}
+	return it, nil
+}
+
+func (s *PostgresStore) ListGanglia(ctx context.Context, ganglionType, lifeState, keyword string, limit int) ([]Ganglion, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	ganglionType = strings.TrimSpace(strings.ToLower(ganglionType))
+	lifeState = strings.TrimSpace(strings.ToLower(lifeState))
+	keyword = strings.TrimSpace(strings.ToLower(keyword))
+	var (
+		query strings.Builder
+		args  []any
+		argi  = 1
+	)
+	query.WriteString(`
+		SELECT id, name, ganglion_type, description, implementation, validation,
+		       author_user_id, supersedes_id, temporality, life_state,
+		       score_avg_milli, score_count, integrations_count, created_at, updated_at
+		FROM ganglia
+		WHERE 1=1
+	`)
+	if ganglionType != "" {
+		query.WriteString(fmt.Sprintf(" AND LOWER(ganglion_type) = $%d", argi))
+		args = append(args, ganglionType)
+		argi++
+	}
+	if lifeState != "" {
+		query.WriteString(fmt.Sprintf(" AND LOWER(life_state) = $%d", argi))
+		args = append(args, lifeState)
+		argi++
+	}
+	if keyword != "" {
+		query.WriteString(fmt.Sprintf(" AND (name ILIKE $%d OR description ILIKE $%d OR implementation ILIKE $%d OR validation ILIKE $%d)", argi, argi+1, argi+2, argi+3))
+		kw := "%" + keyword + "%"
+		args = append(args, kw, kw, kw, kw)
+		argi += 4
+	}
+	query.WriteString(fmt.Sprintf(" ORDER BY updated_at DESC, id DESC LIMIT $%d", argi))
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Ganglion, 0, limit)
+	for rows.Next() {
+		var it Ganglion
+		if err := rows.Scan(
+			&it.ID, &it.Name, &it.GanglionType, &it.Description, &it.Implementation, &it.Validation,
+			&it.AuthorUserID, &it.SupersedesID, &it.Temporality, &it.LifeState,
+			&it.ScoreAvgMilli, &it.ScoreCount, &it.IntegrationsCount, &it.CreatedAt, &it.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) IntegrateGanglion(ctx context.Context, ganglionID int64, userID string) (GanglionIntegration, Ganglion, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return GanglionIntegration{}, Ganglion{}, fmt.Errorf("user_id is required")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO ganglion_integrations(ganglion_id, user_id, created_at, updated_at)
+		VALUES($1, $2, NOW(), NOW())
+		ON CONFLICT (ganglion_id, user_id) DO UPDATE SET
+			updated_at = NOW()
+	`, ganglionID, userID)
+	if err != nil {
+		return GanglionIntegration{}, Ganglion{}, err
+	}
+	var out GanglionIntegration
+	err = s.db.QueryRowContext(ctx, `
+		SELECT id, ganglion_id, user_id, created_at, updated_at
+		FROM ganglion_integrations
+		WHERE ganglion_id = $1 AND user_id = $2
+	`, ganglionID, userID).Scan(&out.ID, &out.GanglionID, &out.UserID, &out.CreatedAt, &out.UpdatedAt)
+	if err != nil {
+		return GanglionIntegration{}, Ganglion{}, err
+	}
+	var g Ganglion
+	err = s.db.QueryRowContext(ctx, `
+		UPDATE ganglia g
+		SET integrations_count = sub.cnt,
+		    updated_at = NOW()
+		FROM (
+			SELECT ganglion_id, COUNT(*)::bigint AS cnt
+			FROM ganglion_integrations
+			WHERE ganglion_id = $1
+			GROUP BY ganglion_id
+		) sub
+		WHERE g.id = sub.ganglion_id
+		RETURNING g.id, g.name, g.ganglion_type, g.description, g.implementation, g.validation,
+		          g.author_user_id, g.supersedes_id, g.temporality, g.life_state,
+		          g.score_avg_milli, g.score_count, g.integrations_count, g.created_at, g.updated_at
+	`, ganglionID).Scan(
+		&g.ID, &g.Name, &g.GanglionType, &g.Description, &g.Implementation, &g.Validation,
+		&g.AuthorUserID, &g.SupersedesID, &g.Temporality, &g.LifeState,
+		&g.ScoreAvgMilli, &g.ScoreCount, &g.IntegrationsCount, &g.CreatedAt, &g.UpdatedAt,
+	)
+	if err != nil {
+		return GanglionIntegration{}, Ganglion{}, err
+	}
+	return out, g, nil
+}
+
+func (s *PostgresStore) ListGanglionIntegrations(ctx context.Context, userID string, ganglionID int64, limit int) ([]GanglionIntegration, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	userID = strings.TrimSpace(userID)
+	var (
+		query strings.Builder
+		args  []any
+		argi  = 1
+	)
+	query.WriteString(`
+		SELECT id, ganglion_id, user_id, created_at, updated_at
+		FROM ganglion_integrations
+		WHERE 1=1
+	`)
+	if userID != "" {
+		query.WriteString(fmt.Sprintf(" AND user_id = $%d", argi))
+		args = append(args, userID)
+		argi++
+	}
+	if ganglionID > 0 {
+		query.WriteString(fmt.Sprintf(" AND ganglion_id = $%d", argi))
+		args = append(args, ganglionID)
+		argi++
+	}
+	query.WriteString(fmt.Sprintf(" ORDER BY updated_at DESC, id DESC LIMIT $%d", argi))
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]GanglionIntegration, 0, limit)
+	for rows.Next() {
+		var it GanglionIntegration
+		if err := rows.Scan(&it.ID, &it.GanglionID, &it.UserID, &it.CreatedAt, &it.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) RateGanglion(ctx context.Context, item GanglionRating) (GanglionRating, Ganglion, error) {
+	item.UserID = strings.TrimSpace(item.UserID)
+	item.Feedback = strings.TrimSpace(item.Feedback)
+	if item.GanglionID <= 0 || item.UserID == "" {
+		return GanglionRating{}, Ganglion{}, fmt.Errorf("ganglion_id and user_id are required")
+	}
+	if item.Score < 1 || item.Score > 5 {
+		return GanglionRating{}, Ganglion{}, fmt.Errorf("score must be between 1 and 5")
+	}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO ganglion_ratings(ganglion_id, user_id, score, feedback, created_at, updated_at)
+		VALUES($1, $2, $3, $4, NOW(), NOW())
+		ON CONFLICT (ganglion_id, user_id) DO UPDATE SET
+			score = EXCLUDED.score,
+			feedback = EXCLUDED.feedback,
+			updated_at = NOW()
+		RETURNING id, ganglion_id, user_id, score, feedback, created_at, updated_at
+	`, item.GanglionID, item.UserID, item.Score, item.Feedback).Scan(
+		&item.ID, &item.GanglionID, &item.UserID, &item.Score, &item.Feedback, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if err != nil {
+		return GanglionRating{}, Ganglion{}, err
+	}
+	var g Ganglion
+	err = s.db.QueryRowContext(ctx, `
+		UPDATE ganglia g
+		SET score_avg_milli = sub.avg_milli,
+		    score_count = sub.cnt,
+		    updated_at = NOW()
+		FROM (
+			SELECT ganglion_id,
+			       COALESCE(AVG(score)::numeric, 0) * 1000 AS avg_milli,
+			       COUNT(*)::bigint AS cnt
+			FROM ganglion_ratings
+			WHERE ganglion_id = $1
+			GROUP BY ganglion_id
+		) sub
+		WHERE g.id = sub.ganglion_id
+		RETURNING g.id, g.name, g.ganglion_type, g.description, g.implementation, g.validation,
+		          g.author_user_id, g.supersedes_id, g.temporality, g.life_state,
+		          g.score_avg_milli, g.score_count, g.integrations_count, g.created_at, g.updated_at
+	`, item.GanglionID).Scan(
+		&g.ID, &g.Name, &g.GanglionType, &g.Description, &g.Implementation, &g.Validation,
+		&g.AuthorUserID, &g.SupersedesID, &g.Temporality, &g.LifeState,
+		&g.ScoreAvgMilli, &g.ScoreCount, &g.IntegrationsCount, &g.CreatedAt, &g.UpdatedAt,
+	)
+	if err != nil {
+		return GanglionRating{}, Ganglion{}, err
+	}
+	return item, g, nil
+}
+
+func (s *PostgresStore) ListGanglionRatings(ctx context.Context, ganglionID int64, limit int) ([]GanglionRating, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	var (
+		query strings.Builder
+		args  []any
+		argi  = 1
+	)
+	query.WriteString(`
+		SELECT id, ganglion_id, user_id, score, feedback, created_at, updated_at
+		FROM ganglion_ratings
+		WHERE 1=1
+	`)
+	if ganglionID > 0 {
+		query.WriteString(fmt.Sprintf(" AND ganglion_id = $%d", argi))
+		args = append(args, ganglionID)
+		argi++
+	}
+	query.WriteString(fmt.Sprintf(" ORDER BY updated_at DESC, id DESC LIMIT $%d", argi))
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]GanglionRating, 0, limit)
+	for rows.Next() {
+		var it GanglionRating
+		if err := rows.Scan(&it.ID, &it.GanglionID, &it.UserID, &it.Score, &it.Feedback, &it.CreatedAt, &it.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpdateGanglionLifeState(ctx context.Context, ganglionID int64, lifeState string) (Ganglion, error) {
+	lifeState = normalizeGanglionLifeState(lifeState)
+	var g Ganglion
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE ganglia
+		SET life_state = $2,
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, name, ganglion_type, description, implementation, validation,
+		          author_user_id, supersedes_id, temporality, life_state,
+		          score_avg_milli, score_count, integrations_count, created_at, updated_at
+	`, ganglionID, lifeState).Scan(
+		&g.ID, &g.Name, &g.GanglionType, &g.Description, &g.Implementation, &g.Validation,
+		&g.AuthorUserID, &g.SupersedesID, &g.Temporality, &g.LifeState,
+		&g.ScoreAvgMilli, &g.ScoreCount, &g.IntegrationsCount, &g.CreatedAt, &g.UpdatedAt,
+	)
+	if err != nil {
+		return Ganglion{}, err
+	}
+	return g, nil
+}

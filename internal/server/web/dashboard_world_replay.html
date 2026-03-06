@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard · World Replay</title>
+    <style>
+      :root { --bg:#0f1720; --panel:#172330; --ink:#e8f0f8; --muted:#9bb0c5; --line:#2a4158; --accent:#2eaadc; }
+      * { box-sizing: border-box; }
+      body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI"; background: var(--bg); color: var(--ink); }
+      .top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line); background:#111c27; position:sticky; top:0; z-index:2; }
+      .tabs { display:flex; align-items:center; flex-wrap:wrap; row-gap:6px; }
+      .tabs a { color: var(--muted); text-decoration:none; margin-right:14px; }
+      .tabs a.active { color: var(--ink); font-weight:700; }
+      .controls { display:flex; gap:8px; align-items:center; padding:10px 18px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+      input, button, select { padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#12202d; color:var(--ink); }
+      button { background:#1f394d; cursor:pointer; }
+      .content { display:grid; grid-template-columns: 380px 1fr; gap:14px; padding:12px 18px 18px; }
+      .panel { border:1px solid var(--line); border-radius:10px; background:#12202c; padding:10px; min-height: 220px; }
+      .title { font-weight:700; margin-bottom:8px; }
+      .item { border:1px solid var(--line); border-radius:8px; padding:9px; margin-bottom:8px; background:#101a24; cursor:pointer; }
+      .item.active { border-color: var(--accent); }
+      .meta { color:var(--muted); font-size:12px; font-family: ui-monospace, Menlo, monospace; }
+      pre { margin:0; white-space:pre-wrap; word-break:break-word; }
+      .right { display:grid; grid-template-columns:1fr; gap:14px; }
+      @media (max-width: 960px) { .content { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <div class="tabs">
+        <a href="/dashboard">首页</a>
+        <a href="/dashboard/mail">Mail</a>
+        <a href="/dashboard/chat">Chat</a>
+        <a href="/dashboard/collab">Collab</a>
+        <a href="/dashboard/kb">Knowledge Base</a>
+        <a href="/dashboard/governance">Governance</a>
+        <a href="/dashboard/ganglia">Ganglia</a>
+        <a href="/dashboard/bounty">Bounty</a>
+        <a href="/dashboard/bot-logs">User Logs</a>
+        <a href="/dashboard/system-logs">System Logs</a>
+        <a href="/dashboard/world-tick">World Tick</a>
+        <a class="active" href="/dashboard/world-replay">World Replay</a>
+        <a href="/dashboard/prompts">Prompt Templates</a>
+        <a href="/dashboard/openclaw-pods">OpenClaw Pods</a>
+      </div>
+      <button onclick="refreshAll()">刷新</button>
+    </div>
+    <div class="controls">
+      <label>history limit:
+        <input id="limit" value="200" style="width:100px" />
+      </label>
+      <label>tick_id:
+        <input id="tickIdInput" placeholder="auto from list" style="width:140px" />
+      </label>
+      <button onclick="applyTick()">加载 Tick</button>
+      <span id="state" class="meta"></span>
+    </div>
+    <div class="content">
+      <div class="panel">
+        <div class="title">Tick Timeline</div>
+        <div id="history"></div>
+      </div>
+      <div class="right">
+        <div class="panel">
+          <div class="title">Tick Snapshot</div>
+          <div id="tickSnapshot"></div>
+        </div>
+        <div class="panel">
+          <div class="title">Tick Steps</div>
+          <div id="tickSteps"></div>
+        </div>
+        <div class="panel">
+          <div class="title">Tick Cost Events</div>
+          <div id="tickCosts"></div>
+        </div>
+        <div class="panel">
+          <div class="title">Chain Verify Snapshot</div>
+          <div id="chainVerify"></div>
+        </div>
+      </div>
+    </div>
+    <script>
+      function esc(s){return String(s==null?"":s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      async function j(url){const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json();}
+      let currentTickID = 0;
+      let tickHistory = [];
+
+      function renderHistory(items){
+        const node = document.getElementById("history");
+        if(!items.length){ node.innerHTML = `<div class="item"><div class="meta">暂无历史</div></div>`; return; }
+        node.innerHTML = items.map(it => `
+          <div class="item ${Number(it.tick_id)===Number(currentTickID) ? "active" : ""}" onclick="selectTick(${Number(it.tick_id)})">
+            <div class="meta">tick=${esc(it.tick_id)} · ${esc(it.started_at)} · ${esc(it.duration_ms)}ms · ${esc(it.status)}</div>
+            <div class="meta" style="margin-top:6px;">trigger=${esc(it.trigger_type||"scheduled")} · replay_of=${esc(it.replay_of_tick_id||0)}</div>
+            <div class="meta" style="margin-top:6px;">prev=${esc((it.prev_hash||"").slice(0,16))} · hash=${esc((it.entry_hash||"").slice(0,16))}</div>
+          </div>
+        `).join("");
+      }
+
+      function renderTickSnapshot(it){
+        const node = document.getElementById("tickSnapshot");
+        if(!it){ node.innerHTML = `<div class="item"><div class="meta">未选择 tick</div></div>`; return; }
+        node.innerHTML = `<div class="item"><div class="meta">id=${esc(it.id)} · tick=${esc(it.tick_id)} · started_at=${esc(it.started_at)} · duration=${esc(it.duration_ms)}ms</div><div class="meta" style="margin-top:6px;">status=${esc(it.status)} · trigger=${esc(it.trigger_type||"scheduled")} · replay_of=${esc(it.replay_of_tick_id||0)}</div><div class="meta" style="margin-top:6px;">prev_hash=${esc(it.prev_hash||"")}</div><div class="meta" style="margin-top:6px;">entry_hash=${esc(it.entry_hash||"")}</div><pre style="margin-top:8px; color:#ffd0d0;">${esc(it.error || "")}</pre></div>`;
+      }
+
+      function renderTickSteps(items){
+        const node = document.getElementById("tickSteps");
+        if(!items.length){ node.innerHTML = `<div class="item"><div class="meta">此 tick 暂无步骤</div></div>`; return; }
+        node.innerHTML = items.map(it => `<div class="item"><div class="meta">step=${esc(it.step_name)} · status=${esc(it.status)} · duration=${esc(it.duration_ms)}ms · ${esc(it.started_at)}</div><pre style="margin-top:8px; color:#ffd0d0;">${esc(it.error||"")}</pre></div>`).join("");
+      }
+
+      function renderTickCosts(items){
+        const node = document.getElementById("tickCosts");
+        if(!items.length){ node.innerHTML = `<div class="item"><div class="meta">此 tick 暂无成本事件</div></div>`; return; }
+        node.innerHTML = items.map(it => `<div class="item"><div class="meta">#${esc(it.id)} · user=${esc(it.user_id)} · type=${esc(it.cost_type)} · amount=${esc(it.amount)} · units=${esc(it.units)} · ${esc(it.created_at)}</div><pre style="margin-top:8px;">${esc(it.meta_json || "")}</pre></div>`).join("");
+      }
+
+      function renderChainVerify(d){
+        const node = document.getElementById("chainVerify");
+        const ok = !!(d && d.ok);
+        const color = ok ? "#b2f5d0" : "#ffd0d0";
+        node.innerHTML = `<div class="item"><div class="meta" style="color:${color}">ok=${esc(ok)} · checked=${esc((d&&d.checked)||0)} · head_tick=${esc((d&&d.head_tick)||0)} · legacy_fill=${esc((d&&d.legacy_fill)||0)}</div><div class="meta" style="margin-top:6px;">head_hash=${esc((d&&d.head_hash)||"")}</div><pre style="margin-top:8px; color:#ffd0d0;">${esc((d&&d.mismatch_field) ? ("mismatch tick=" + d.mismatch_tick + " field=" + d.mismatch_field + " expected=" + d.expected + " actual=" + d.actual) : "")}</pre></div>`;
+      }
+
+      function getSelectedTick(){
+        if(currentTickID > 0) return currentTickID;
+        const raw = Number(document.getElementById("tickIdInput").value || 0);
+        return raw > 0 ? raw : 0;
+      }
+
+      function selectTick(tickID){
+        currentTickID = Number(tickID || 0);
+        document.getElementById("tickIdInput").value = currentTickID > 0 ? String(currentTickID) : "";
+        loadTickDetails();
+      }
+
+      async function loadTickDetails(){
+        const state = document.getElementById("state");
+        try{
+          const tickID = getSelectedTick();
+          if(tickID <= 0){
+            renderTickSnapshot(null);
+            renderTickSteps([]);
+            renderTickCosts([]);
+            state.textContent = "请选择 tick";
+            renderHistory(tickHistory);
+            return;
+          }
+          const [steps, costs] = await Promise.all([
+            j(`/v1/world/tick/steps?tick_id=${encodeURIComponent(String(tickID))}&limit=200`),
+            j(`/v1/world/cost-events?tick_id=${encodeURIComponent(String(tickID))}&limit=2000`)
+          ]);
+          const snap = tickHistory.find(it => Number(it.tick_id) === Number(tickID)) || null;
+          renderTickSnapshot(snap);
+          renderTickSteps((steps && steps.items) || []);
+          renderTickCosts((costs && costs.items) || []);
+          renderHistory(tickHistory);
+          state.textContent = `loaded tick=${tickID}`;
+        }catch(e){
+          state.textContent = "load tick failed: " + (e.message || e);
+        }
+      }
+
+      async function refreshAll(){
+        const state = document.getElementById("state");
+        try{
+          const limit = encodeURIComponent(document.getElementById("limit").value || "200");
+          const [history, chain] = await Promise.all([
+            j(`/v1/world/tick/history?limit=${limit}`),
+            j(`/v1/world/tick/chain/verify?limit=${limit}`)
+          ]);
+          tickHistory = (history && history.items) || [];
+          if(currentTickID <= 0 && tickHistory.length > 0){
+            currentTickID = Number(tickHistory[0].tick_id || 0);
+            document.getElementById("tickIdInput").value = currentTickID > 0 ? String(currentTickID) : "";
+          }
+          renderChainVerify(chain || {});
+          renderHistory(tickHistory);
+          await loadTickDetails();
+        }catch(e){
+          state.textContent = "refresh failed: " + (e.message || e);
+          document.getElementById("history").textContent = state.textContent;
+          document.getElementById("tickSnapshot").textContent = state.textContent;
+          document.getElementById("tickSteps").textContent = state.textContent;
+          document.getElementById("tickCosts").textContent = state.textContent;
+          document.getElementById("chainVerify").textContent = state.textContent;
+        }
+      }
+
+      function applyTick(){
+        const raw = Number(document.getElementById("tickIdInput").value || 0);
+        currentTickID = raw > 0 ? raw : 0;
+        loadTickDetails();
+      }
+
+      refreshAll();
+      setInterval(refreshAll, 3000);
+    </script>
+  </body>
+</html>

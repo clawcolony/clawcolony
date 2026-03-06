@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard · World Tick</title>
+    <style>
+      :root { --bg:#0f1720; --panel:#172330; --ink:#e8f0f8; --muted:#9bb0c5; --line:#2a4158; --accent:#2eaadc; }
+      * { box-sizing: border-box; }
+      body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI"; background: var(--bg); color: var(--ink); }
+      .top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line); background:#111c27; position:sticky; top:0; z-index:2; }
+      .tabs { display:flex; align-items:center; flex-wrap:wrap; row-gap:6px; }
+      .tabs a { color: var(--muted); text-decoration:none; margin-right:14px; }
+      .tabs a.active { color: var(--ink); font-weight:700; }
+      .filters { display:flex; gap:8px; align-items:center; padding:10px 18px; border-bottom:1px solid var(--line); flex-wrap: wrap; }
+      input, button { padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#12202d; color:var(--ink); }
+      button { background:#1f394d; cursor:pointer; }
+      .content { display:grid; grid-template-columns: 1fr 1fr; gap:14px; padding:12px 18px 18px; }
+      .panel { border:1px solid var(--line); border-radius:10px; background:#12202c; padding:10px; min-height: 220px; }
+      .title { font-weight:700; margin-bottom:8px; }
+      .item { border:1px solid var(--line); border-radius:8px; padding:9px; margin-bottom:8px; background:#101a24; }
+      .meta { color:var(--muted); font-size:12px; font-family: ui-monospace, Menlo, monospace; }
+      pre { margin:0; white-space:pre-wrap; word-break:break-word; }
+      @media (max-width: 960px) { .content { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <div class="tabs">
+        <a href="/dashboard">首页</a>
+        <a href="/dashboard/mail">Mail</a>
+        <a href="/dashboard/chat">Chat</a>
+        <a href="/dashboard/collab">Collab</a>
+        <a href="/dashboard/kb">Knowledge Base</a>
+        <a href="/dashboard/governance">Governance</a>
+        <a href="/dashboard/ganglia">Ganglia</a>
+        <a href="/dashboard/bounty">Bounty</a>
+        <a href="/dashboard/bot-logs">User Logs</a>
+        <a href="/dashboard/system-logs">System Logs</a>
+        <a class="active" href="/dashboard/world-tick">World Tick</a>
+        <a href="/dashboard/world-replay">World Replay</a>
+        <a href="/dashboard/prompts">Prompt Templates</a>
+        <a href="/dashboard/openclaw-pods">OpenClaw Pods</a>
+      </div>
+      <button onclick="refreshAll()">刷新</button>
+    </div>
+    <div class="filters">
+      <label>history limit:
+        <input id="limit" value="200" style="width:100px" />
+      </label>
+      <label>cost user_id:
+        <input id="costUserID" placeholder="(all)" style="width:180px" />
+      </label>
+      <label>alert threshold:
+        <input id="alertThreshold" value="100" style="width:120px" />
+      </label>
+      <label>alert top_users:
+        <input id="alertTopUsers" value="10" style="width:110px" />
+      </label>
+      <label>alert scan_limit:
+        <input id="alertScanLimit" value="500" style="width:120px" />
+      </label>
+      <label>alert cooldown(s):
+        <input id="alertCooldownSec" value="600" style="width:130px" />
+      </label>
+      <label>evolution window(min):
+        <input id="evoWindowMin" value="60" style="width:140px" />
+      </label>
+      <label>evolution warn:
+        <input id="evoWarnThreshold" value="65" style="width:120px" />
+      </label>
+      <label>evolution critical:
+        <input id="evoCriticalThreshold" value="45" style="width:130px" />
+      </label>
+      <label>replay source tick_id:
+        <input id="replaySourceTickID" value="0" style="width:130px" />
+      </label>
+      <button onclick="saveAlertSettings()">保存告警设置</button>
+      <button onclick="saveEvolutionSettings()">保存进化告警设置</button>
+      <button onclick="replayTick()">重放 Tick</button>
+      <button onclick="refreshAll()">应用</button>
+      <span id="settingsState" class="meta"></span>
+      <span id="replayState" class="meta"></span>
+    </div>
+    <div class="content">
+      <div class="panel">
+        <div class="title">Current Tick Status</div>
+        <div id="status"></div>
+      </div>
+      <div class="panel">
+        <div class="title">Current Tick Steps</div>
+        <div id="tickSteps"></div>
+      </div>
+      <div class="panel">
+        <div class="title">Recent Tick History</div>
+        <div id="history"></div>
+      </div>
+      <div class="panel">
+        <div class="title">Tick Chain Verify</div>
+        <div id="chainVerify"></div>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="title">Cost Summary</div>
+        <div id="costSummary"></div>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="title">Tool Audit (T0~T3)</div>
+        <div id="toolAudit"></div>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="title">High Cost Alerts (Observation Only)</div>
+        <div id="costAlerts"></div>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="title">Alert Notification Log</div>
+        <div id="alertNotifyLog"></div>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="title">Evolution Score & Alerts</div>
+        <div id="evolutionScore"></div>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="title">Evolution Alert Notification Log</div>
+        <div id="evolutionNotifyLog"></div>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="title">Life States</div>
+        <div id="lifeStates"></div>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="title">Recent Cost Events</div>
+        <div id="costEvents"></div>
+      </div>
+    </div>
+    <script>
+      function esc(s){return String(s==null?"":s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      async function j(url){const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json();}
+      function renderStatus(d){
+        const node = document.getElementById("status");
+        node.innerHTML = `<div class="item"><div class="meta">tick_id=${esc(d.tick_id)} · last_tick_at=${esc(d.last_tick_at)} · duration_ms=${esc(d.last_duration_ms)} · interval_sec=${esc(d.tick_interval_sec)}</div><div class="meta" style="margin-top:6px;">law=${esc(d.tian_dao_law_key)}@${esc(d.tian_dao_law_version)} · sha256=${esc(d.tian_dao_law_sha256 || "")}</div><div class="meta" style="margin-top:6px;">law_updated=${esc(d.tian_dao_law_updated || "")} · action_cost_consume=${esc(d.action_cost_consume)}</div><div class="meta" style="margin-top:6px;">frozen=${esc(d.frozen)} · freeze_tick=${esc(d.freeze_tick_id || 0)} · at_risk=${esc(d.freeze_at_risk_users || 0)}/${esc(d.freeze_total_users || 0)} · threshold=${esc(d.freeze_threshold_pct || 0)}%</div><pre style="margin-top:8px; color:#ffd0d0;">${esc(d.freeze_reason || d.last_error || "")}</pre></div>`;
+      }
+      function renderHistory(items){
+        const node = document.getElementById("history");
+        if(!items.length){ node.innerHTML = `<div class="item"><div class="meta">暂无历史</div></div>`; return; }
+        node.innerHTML = items.map(it => `
+          <div class="item">
+            <div class="meta">#${esc(it.id)} · tick=${esc(it.tick_id)} · ${esc(it.started_at)} · ${esc(it.duration_ms)}ms · status=${esc(it.status)} · trigger=${esc(it.trigger_type || "scheduled")} · replay_of=${esc(it.replay_of_tick_id || 0)}</div>
+            <div class="meta" style="margin-top:6px;">prev=${esc((it.prev_hash||"").slice(0,16))} · hash=${esc((it.entry_hash||"").slice(0,16))}</div>
+            <pre style="margin-top:8px; color:#ffd0d0;">${esc(it.error || "")}</pre>
+          </div>
+        `).join("");
+      }
+      function renderChainVerify(d){
+        const node = document.getElementById("chainVerify");
+        const ok = !!(d && d.ok);
+        const color = ok ? "#b2f5d0" : "#ffd0d0";
+        node.innerHTML = `<div class="item"><div class="meta" style="color:${color}">ok=${esc(ok)} · checked=${esc((d&&d.checked)||0)} · head_tick=${esc((d&&d.head_tick)||0)} · legacy_fill=${esc((d&&d.legacy_fill)||0)}</div><div class="meta" style="margin-top:6px;">head_hash=${esc((d&&d.head_hash)||"")}</div><pre style="margin-top:8px; color:#ffd0d0;">${esc((d&&d.mismatch_field) ? ("mismatch tick=" + d.mismatch_tick + " field=" + d.mismatch_field + " expected=" + d.expected + " actual=" + d.actual) : "")}</pre></div>`;
+      }
+      async function replayTick(){
+        const state = document.getElementById("replayState");
+        try{
+          const sourceTickID = Number(document.getElementById("replaySourceTickID").value || 0);
+          const r = await fetch("/v1/world/tick/replay", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({source_tick_id: sourceTickID}),
+          });
+          const d = await r.json();
+          if(!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+          state.textContent = `replay accepted: source=${d.source_tick_id} -> replay=${d.replay_tick_id}`;
+          await refreshAll();
+        }catch(e){
+          state.textContent = "replay failed: " + (e.message || e);
+        }
+      }
+      function renderTickSteps(items){
+        const node = document.getElementById("tickSteps");
+        if(!items.length){ node.innerHTML = `<div class="item"><div class="meta">暂无步骤审计</div></div>`; return; }
+        node.innerHTML = items.map(it => `
+          <div class="item">
+            <div class="meta">#${esc(it.id)} · tick=${esc(it.tick_id)} · step=${esc(it.step_name)} · status=${esc(it.status)} · duration_ms=${esc(it.duration_ms)} · ${esc(it.started_at)}</div>
+            <pre style="margin-top:8px; color:#ffd0d0;">${esc(it.error || "")}</pre>
+          </div>
+        `).join("");
+      }
+      function renderCostEvents(items){
+        const node = document.getElementById("costEvents");
+        if(!items.length){ node.innerHTML = `<div class="item"><div class="meta">暂无成本事件</div></div>`; return; }
+        node.innerHTML = items.map(it => `
+          <div class="item">
+            <div class="meta">#${esc(it.id)} · tick=${esc(it.tick_id)} · user=${esc(it.user_id)} · type=${esc(it.cost_type)} · amount=${esc(it.amount)} · units=${esc(it.units)} · ${esc(it.created_at)}</div>
+            <pre style="margin-top:8px;">${esc(it.meta_json || "")}</pre>
+          </div>
+        `).join("");
+      }
+      function renderCostSummary(d){
+        const node = document.getElementById("costSummary");
+        const totals = (d && d.totals) || {};
+        const byType = (d && d.by_type) || {};
+        const keys = Object.keys(byType).sort();
+        const rows = keys.length
+          ? keys.map(k => `<div class="item"><div class="meta">${esc(k)} · count=${esc(byType[k].count)} · amount=${esc(byType[k].amount)} · units=${esc(byType[k].units)}</div></div>`).join("")
+          : `<div class="item"><div class="meta">暂无聚合数据</div></div>`;
+        node.innerHTML = `
+          <div class="item"><div class="meta">TOTAL · count=${esc(totals.count || 0)} · amount=${esc(totals.amount || 0)} · units=${esc(totals.units || 0)}</div></div>
+          ${rows}
+        `;
+      }
+      function renderToolAudit(d){
+        const node = document.getElementById("toolAudit");
+        const by = (d && d.by_tier) || {};
+        const items = (d && d.items) || [];
+        const head = `<div class="item"><div class="meta">count=${esc((d&&d.count)||0)} · T0=${esc(by.T0||0)} · T1=${esc(by.T1||0)} · T2=${esc(by.T2||0)} · T3=${esc(by.T3||0)}</div></div>`;
+        if(!items.length){
+          node.innerHTML = head + `<div class="item"><div class="meta">暂无工具审计事件</div></div>`;
+          return;
+        }
+        node.innerHTML = head + items.map(it => `
+          <div class="item">
+            <div class="meta">#${esc(it.id)} · user=${esc(it.user_id)} · tick=${esc(it.tick_id)} · type=${esc(it.cost_type)} · tier=${esc(it.tier)} · amount=${esc(it.amount)} · units=${esc(it.units)} · ${esc(it.created_at)}</div>
+            <pre style="margin-top:8px;">${esc(it.meta_json || "")}</pre>
+          </div>
+        `).join("");
+      }
+      function renderCostAlerts(d){
+        const node = document.getElementById("costAlerts");
+        const threshold = (d && d.threshold_amount) || 0;
+        const items = (d && d.items) || [];
+        if(!items.length){
+          node.innerHTML = `<div class="item"><div class="meta">无告警（threshold_amount=${esc(threshold)}）</div></div>`;
+          return;
+        }
+        node.innerHTML = items.map(it => `
+          <div class="item">
+            <div class="meta">user=${esc(it.user_id)} · amount=${esc(it.amount)} · units=${esc(it.units)} · events=${esc(it.event_count)} · top=${esc(it.top_cost_type)}(${esc(it.top_cost_amount)})</div>
+          </div>
+        `).join("");
+      }
+      function renderAlertNotifyLog(items){
+        const node = document.getElementById("alertNotifyLog");
+        if(!items.length){
+          node.innerHTML = `<div class="item"><div class="meta">暂无通知发送记录</div></div>`;
+          return;
+        }
+        node.innerHTML = items.map(it => `
+          <div class="item">
+            <div class="meta">mailbox_id=${esc(it.mailbox_id)} · message_id=${esc(it.message_id)} · to=${esc(it.to_user_id)} · sent_at=${esc(it.sent_at)}</div>
+            <div class="meta" style="margin-top:6px;">${esc(it.subject)}</div>
+          </div>
+        `).join("");
+      }
+      function renderEvolution(snapshot, alerts){
+        const node = document.getElementById("evolutionScore");
+        const s = snapshot || {};
+        const k = s.kpis || {};
+        const row = (name, label) => {
+          const it = k[name] || {};
+          const missing = Array.isArray(it.missing_users) ? it.missing_users : [];
+          return `<div class="item"><div class="meta">${esc(label)} · score=${esc(it.score||0)} · active=${esc(it.active_users||0)}/${esc(it.total_users||0)} · events=${esc(it.events||0)}</div><div class="meta" style="margin-top:6px;">missing=${esc(missing.join(", ") || "-")}</div><div class="meta" style="margin-top:6px;">${esc(it.note || "")}</div></div>`;
+        };
+        const alertRows = (alerts || []).map(it =>
+          `<div class="item"><div class="meta">[${esc(it.severity)}] ${esc(it.category)} · score=${esc(it.score)} · threshold=${esc(it.threshold)}</div><div class="meta" style="margin-top:6px;">${esc(it.message || "")}</div></div>`
+        ).join("");
+        node.innerHTML = `
+          <div class="item"><div class="meta">as_of=${esc(s.as_of || "")} · tick=${esc(s.generated_at_tick_id||0)} · window=${esc(s.window_minutes||0)}m · users=${esc(s.total_users||0)} · overall=${esc(s.overall_score||0)} · level=${esc(s.level||"")}</div><div class="meta" style="margin-top:6px;">outbox=${esc(s.meaningful_outbox_count||0)} · peer_outbox=${esc(s.peer_outbox_count||0)} · governance_events=${esc(s.governance_event_count||0)} · knowledge_updates=${esc(s.knowledge_update_count||0)}</div></div>
+          ${row("survival","survival")}
+          ${row("autonomy","autonomy")}
+          ${row("collaboration","collaboration")}
+          ${row("governance","governance")}
+          ${row("knowledge","knowledge")}
+          ${alertRows || `<div class="item"><div class="meta">无进化告警</div></div>`}
+        `;
+      }
+      function renderEvolutionNotifyLog(items){
+        const node = document.getElementById("evolutionNotifyLog");
+        if(!items.length){
+          node.innerHTML = `<div class="item"><div class="meta">暂无通知发送记录</div></div>`;
+          return;
+        }
+        node.innerHTML = items.map(it => `
+          <div class="item">
+            <div class="meta">mailbox_id=${esc(it.mailbox_id)} · message_id=${esc(it.message_id)} · sent_at=${esc(it.sent_at)}</div>
+            <div class="meta" style="margin-top:6px;">${esc(it.subject)}</div>
+          </div>
+        `).join("");
+      }
+      function renderLifeStates(items){
+        const node = document.getElementById("lifeStates");
+        if(!items.length){
+          node.innerHTML = `<div class="item"><div class="meta">暂无生命周期状态记录</div></div>`;
+          return;
+        }
+        node.innerHTML = items.map(it => `
+          <div class="item">
+            <div class="meta">user=${esc(it.user_id)} · state=${esc(it.state)} · dying_since=${esc(it.dying_since_tick||0)} · dead_at=${esc(it.dead_at_tick||0)} · updated_at=${esc(it.updated_at||"")}</div>
+            <div class="meta" style="margin-top:6px;">reason=${esc(it.reason || "")}</div>
+          </div>
+        `).join("");
+      }
+      async function loadAlertSettings(){
+        const state = document.getElementById("settingsState");
+        try{
+          const d = await j("/v1/world/cost-alert-settings");
+          const it = d.item || {};
+          document.getElementById("alertThreshold").value = String(it.threshold_amount || 100);
+          document.getElementById("alertTopUsers").value = String(it.top_users || 10);
+          document.getElementById("alertScanLimit").value = String(it.scan_limit || 500);
+          document.getElementById("alertCooldownSec").value = String(it.notify_cooldown_seconds || 600);
+          state.textContent = `settings source=${d.source || "default"} updated_at=${d.updated_at || ""}`;
+        }catch(e){
+          state.textContent = "settings load failed: " + (e.message || e);
+        }
+      }
+      async function loadEvolutionSettings(){
+        const state = document.getElementById("settingsState");
+        try{
+          const d = await j("/v1/world/evolution-alert-settings");
+          const it = d.item || {};
+          document.getElementById("evoWindowMin").value = String(it.window_minutes || 60);
+          document.getElementById("evoWarnThreshold").value = String(it.warn_threshold || 65);
+          document.getElementById("evoCriticalThreshold").value = String(it.critical_threshold || 45);
+          const prev = state.textContent || "";
+          state.textContent = (prev ? (prev + " | ") : "") + `evolution source=${d.source || "default"} updated_at=${d.updated_at || ""}`;
+        }catch(e){
+          state.textContent = "evolution settings load failed: " + (e.message || e);
+        }
+      }
+      async function saveAlertSettings(){
+        const state = document.getElementById("settingsState");
+        try{
+          const body = {
+            threshold_amount: Number(document.getElementById("alertThreshold").value || 0),
+            top_users: Number(document.getElementById("alertTopUsers").value || 0),
+            scan_limit: Number(document.getElementById("alertScanLimit").value || 0),
+            notify_cooldown_seconds: Number(document.getElementById("alertCooldownSec").value || 0),
+          };
+          const r = await fetch("/v1/world/cost-alert-settings/upsert", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify(body),
+          });
+          const d = await r.json();
+          if(!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+          state.textContent = `settings source=${d.source || "db"} updated_at=${d.updated_at || ""}`;
+          await refreshAll();
+        }catch(e){
+          state.textContent = "settings save failed: " + (e.message || e);
+        }
+      }
+      async function saveEvolutionSettings(){
+        const state = document.getElementById("settingsState");
+        try{
+          const body = {
+            window_minutes: Number(document.getElementById("evoWindowMin").value || 0),
+            mail_scan_limit: Number(document.getElementById("alertScanLimit").value || 0),
+            kb_scan_limit: Number(document.getElementById("limit").value || 0),
+            warn_threshold: Number(document.getElementById("evoWarnThreshold").value || 0),
+            critical_threshold: Number(document.getElementById("evoCriticalThreshold").value || 0),
+            notify_cooldown_seconds: Number(document.getElementById("alertCooldownSec").value || 0),
+          };
+          const r = await fetch("/v1/world/evolution-alert-settings/upsert", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify(body),
+          });
+          const d = await r.json();
+          if(!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+          state.textContent = `evolution settings source=${d.source || "db"} updated_at=${d.updated_at || ""}`;
+          await refreshAll();
+        }catch(e){
+          state.textContent = "evolution settings save failed: " + (e.message || e);
+        }
+      }
+      async function refreshAll(){
+        try {
+          const limit = encodeURIComponent(document.getElementById("limit").value || "200");
+          const costUserID = encodeURIComponent(document.getElementById("costUserID").value || "");
+          const alertThreshold = encodeURIComponent(document.getElementById("alertThreshold").value || "100");
+          const alertTopUsers = encodeURIComponent(document.getElementById("alertTopUsers").value || "10");
+          const alertScanLimit = encodeURIComponent(document.getElementById("alertScanLimit").value || "500");
+          const evoWindow = encodeURIComponent(document.getElementById("evoWindowMin").value || "60");
+          const [status, history] = await Promise.all([
+            j("/v1/world/tick/status"),
+            j(`/v1/world/tick/history?limit=${limit}`)
+          ]);
+          document.getElementById("replaySourceTickID").value = String(status.tick_id || 0);
+          const stepTickID = encodeURIComponent(String(status.tick_id || 0));
+          const [steps, chainVerify, lifeStates, cost, summary, toolAudit, alerts, notifyLog, evolution, evolutionAlerts, evolutionNotifyLog] = await Promise.all([
+            j(`/v1/world/tick/steps?tick_id=${stepTickID}&limit=50`),
+            j(`/v1/world/tick/chain/verify?limit=${limit}`),
+            j(`/v1/world/life-state?limit=${limit}&user_id=${costUserID}`),
+            j(`/v1/world/cost-events?limit=${limit}&user_id=${costUserID}`),
+            j(`/v1/world/cost-summary?limit=${limit}&user_id=${costUserID}`),
+            j(`/v1/world/tool-audit?limit=${limit}&user_id=${costUserID}`),
+            j(`/v1/world/cost-alerts?limit=${alertScanLimit}&user_id=${costUserID}&threshold_amount=${alertThreshold}&top_users=${alertTopUsers}`),
+            j(`/v1/world/cost-alert-notifications?limit=${limit}&user_id=${costUserID}`),
+            j(`/v1/world/evolution-score?window_minutes=${evoWindow}&mail_scan_limit=${alertScanLimit}&kb_scan_limit=${limit}`),
+            j(`/v1/world/evolution-alerts?window_minutes=${evoWindow}`),
+            j(`/v1/world/evolution-alert-notifications?limit=${limit}`)
+          ]);
+          renderStatus(status || {});
+          renderTickSteps((steps && steps.items) || []);
+          renderHistory((history && history.items) || []);
+          renderChainVerify(chainVerify || {});
+          renderLifeStates((lifeStates && lifeStates.items) || []);
+          renderCostSummary(summary || {});
+          renderToolAudit(toolAudit || {});
+          renderCostAlerts(alerts || {});
+          renderAlertNotifyLog((notifyLog && notifyLog.items) || []);
+          renderEvolution((evolution && evolution.item) || {}, (evolutionAlerts && evolutionAlerts.alerts) || []);
+          renderEvolutionNotifyLog((evolutionNotifyLog && evolutionNotifyLog.items) || []);
+          renderCostEvents((cost && cost.items) || []);
+        } catch (e) {
+          document.getElementById("status").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("tickSteps").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("history").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("chainVerify").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("lifeStates").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("costSummary").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("toolAudit").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("costAlerts").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("alertNotifyLog").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("evolutionScore").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("evolutionNotifyLog").textContent = "读取失败: " + (e.message || e);
+          document.getElementById("costEvents").textContent = "读取失败: " + (e.message || e);
+        }
+      }
+      Promise.all([loadAlertSettings(), loadEvolutionSettings()]).then(refreshAll);
+      setInterval(refreshAll, 2000);
+    </script>
+  </body>
+</html>

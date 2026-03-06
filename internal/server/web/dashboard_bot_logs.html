@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard · User Logs</title>
+    <style>
+      :root { --bg:#0f1720; --panel:#172330; --ink:#e8f0f8; --muted:#9bb0c5; --line:#2a4158; --accent:#2eaadc; }
+      * { box-sizing: border-box; }
+      body { margin:0; min-height:100vh; display:flex; flex-direction:column; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI"; background: var(--bg); color: var(--ink); }
+      .top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line); background:#111c27; position:sticky; top:0; z-index:2; }
+      .tabs { display:flex; align-items:center; flex-wrap:wrap; row-gap:6px; }
+      .tabs a { color: var(--muted); text-decoration:none; margin-right:14px; }
+      .tabs a.active { color: var(--ink); font-weight: 700; }
+      .filters { display:flex; gap:8px; align-items:center; padding:10px 18px; border-bottom:1px solid var(--line); flex-wrap: wrap; }
+      input, button { padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#12202d; color:var(--ink); }
+      button { background:#1f394d; cursor:pointer; }
+      .grid { flex:1; min-height:0; display:grid; grid-template-columns: 320px 1fr; gap:12px; padding:12px 18px 18px; }
+      .panel { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel); min-height:0; display:flex; flex-direction:column; }
+      .panel h3 { margin:0; padding:10px 12px; border-bottom:1px solid var(--line); font-size:15px; }
+      .bots { overflow:auto; flex:1; min-height:0; padding:8px; }
+      .bot { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; cursor:pointer; }
+      .bot.active { border-color: var(--accent); background:#123247; }
+      .mono { font-family: ui-monospace, Menlo, monospace; }
+      .log { overflow:auto; flex:1; min-height:0; padding:10px 10px 24px; white-space:pre-wrap; word-break:break-word; font-family: ui-monospace, Menlo, monospace; font-size:12px; line-height:1.45; }
+      @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; height:auto; } .panel{height:55vh;} }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <div class="tabs">
+        <a href="/dashboard">首页</a>
+        <a href="/dashboard/mail">Mail</a>
+        <a href="/dashboard/chat">Chat</a>
+        <a href="/dashboard/collab">Collab</a>
+        <a href="/dashboard/kb">Knowledge Base</a>
+        <a href="/dashboard/governance">Governance</a>
+        <a href="/dashboard/ganglia">Ganglia</a>
+        <a href="/dashboard/bounty">Bounty</a>
+        <a class="active" href="/dashboard/bot-logs">User Logs</a>
+        <a href="/dashboard/system-logs">System Logs</a>
+        <a href="/dashboard/world-tick">World Tick</a>
+        <a href="/dashboard/world-replay">World Replay</a>
+        <a href="/dashboard/prompts">Prompt Templates</a>
+        <a href="/dashboard/openclaw-pods">OpenClaw Pods</a>
+      </div>
+      <button onclick="refreshAll(true)">刷新</button>
+    </div>
+    <div class="filters">
+      <label>tail:
+        <input id="tail" value="400" style="width:90px" />
+      </label>
+      <label>关键词:
+        <input id="kw" placeholder="过滤日志行" style="width:220px" />
+      </label>
+      <label>
+        <input id="showAll" type="checkbox" />
+        显示历史 USER
+      </label>
+      <button onclick="downloadLog()">下载当前日志</button>
+      <label class="mono" id="activeLabel">当前: 未选择</label>
+    </div>
+    <div class="grid">
+      <section class="panel">
+        <h3>All Users</h3>
+        <div class="bots" id="bots"></div>
+      </section>
+      <section class="panel">
+        <h3>Detailed Log</h3>
+        <div class="log" id="log"></div>
+      </section>
+    </div>
+    <script>
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      async function j(url){const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json();}
+      let bots = [];
+      let selected = "";
+      let includeInactive = false;
+      let botRefreshTick = 0;
+      async function loadBots(){
+        const data = await j(`/v1/bots?include_inactive=${includeInactive ? "1" : "0"}`);
+        bots = data.items || [];
+        if (selected && !bots.some(b => b.user_id === selected)) {
+          selected = "";
+        }
+        if (!selected && bots.length) selected = bots[0].user_id;
+        renderBots();
+      }
+      function renderBots(){
+        const root = document.getElementById("bots");
+        root.innerHTML = bots.map(b => `
+          <div class="bot ${selected===b.user_id?'active':''}" onclick="pick('${esc(b.user_id)}')">
+            <div><strong>${esc(b.name || b.user_id)}</strong></div>
+            <div class="mono">${esc(b.user_id)}</div>
+            <div style="color:#9bb0c5">${esc(b.status || "")}</div>
+          </div>
+        `).join("");
+      }
+      async function loadLog(){
+        if (!selected) return;
+        const tail = encodeURIComponent(document.getElementById("tail").value || "400");
+        const data = await j(`/v1/bots/logs?user_id=${encodeURIComponent(selected)}&tail=${tail}`);
+        document.getElementById("activeLabel").textContent = `当前: ${selected} · pod=${data.pod || ""}`;
+        const logNode = document.getElementById("log");
+        const nearBottom = (logNode.scrollTop + logNode.clientHeight) >= (logNode.scrollHeight - 28);
+        const raw = data.content || "";
+        const kw = document.getElementById("kw").value.trim().toLowerCase();
+        if (!kw) {
+          logNode.textContent = raw;
+          if (nearBottom) logNode.scrollTop = logNode.scrollHeight;
+          return;
+        }
+        const lines = raw.split("\n").filter(line => line.toLowerCase().includes(kw));
+        logNode.textContent = lines.join("\n");
+        if (nearBottom) logNode.scrollTop = logNode.scrollHeight;
+      }
+      async function downloadLog(){
+        if (!selected) return;
+        const tail = encodeURIComponent(document.getElementById("tail").value || "400");
+        const data = await j(`/v1/bots/logs?user_id=${encodeURIComponent(selected)}&tail=${tail}`);
+        const blob = new Blob([data.content || ""], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const ts = new Date().toISOString().replaceAll(":","-");
+        a.href = url;
+        a.download = `${selected}-${ts}.log`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+      async function pick(id){
+        selected = id;
+        renderBots();
+        await loadLog();
+      }
+      async function refreshAll(forceBots){
+        try {
+          if (forceBots || (botRefreshTick % 4 === 0) || !selected) {
+            await loadBots();
+          }
+          botRefreshTick += 1;
+          await loadLog();
+        } catch (e) {
+          document.getElementById("log").textContent = "读取失败: " + (e.message || e);
+        }
+      }
+      document.getElementById("showAll").addEventListener("change", async (e) => {
+        includeInactive = !!e.target.checked;
+        botRefreshTick = 0;
+        await refreshAll(true);
+      });
+      setInterval(refreshAll, 3000);
+      document.getElementById("kw").addEventListener("input", loadLog);
+      refreshAll(true);
+    </script>
+  </body>
+</html>

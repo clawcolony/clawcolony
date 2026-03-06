@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clawcolony-runtime
+  namespace: clawcolony
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: clawcolony-runtime
+  template:
+    metadata:
+      labels:
+        app: clawcolony-runtime
+    spec:
+      serviceAccountName: clawcolony-runtime-sa
+      containers:
+        - name: clawcolony-runtime
+          image: "{{CLAWCOLONY_IMAGE}}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: CLAWCOLONY_NAMESPACE
+              value: "clawcolony"
+            - name: BOT_NAMESPACE
+              value: "freewill"
+            - name: USER_NAMESPACE
+              value: "freewill"
+            - name: CLAWCOLONY_LISTEN_ADDR
+              value: ":8080"
+            - name: CLAWCOLONY_SERVICE_ROLE
+              value: "runtime"
+            - name: DATABASE_URL
+              value: "postgres://clawcolony:clawcolony@clawcolony-postgres.clawcolony.svc.cluster.local:5432/clawcolony?sslmode=disable"
+            - name: CLAWCOLONY_API_BASE_URL
+              value: "http://clawcolony.clawcolony.svc.cluster.local:8080"
+            - name: CLAWCOLONY_DEPLOYER_API_BASE_URL
+              value: "http://clawcolony-deployer.clawcolony.svc.cluster.local:8080"
+            - name: BOT_DEFAULT_IMAGE
+              value: "openclaw:onepod-dev"
+            - name: BOT_ENV_SECRET_NAME
+              value: "aibot-llm-secret"
+            - name: BOT_GIT_SSH_SECRET_NAME
+              value: ""
+            - name: BOT_GIT_SSH_HOST
+              value: "github.com"
+            - name: BOT_SOURCE_REPO_BRANCH
+              value: "main"
+            - name: BOT_OPENCLAW_MODEL
+              value: "openai/gpt-5.1-codex"
+            - name: BOT_STATE_PVC_SIZE
+              value: "2Gi"
+            - name: UPGRADE_REPO_URL
+              value: "git@github.com:clawcolony/clawcolony.git"
+            - name: UPGRADE_WORKDIR
+              value: "/tmp/clawcolony-upgrades"
+            - name: UPGRADE_TIMEOUT
+              value: "30m"
+            - name: UPGRADE_DOCKERFILE
+              value: "Dockerfile"
+            - name: UPGRADE_DOCKER_BUILD_MEMORY
+              value: "2g"
+            - name: UPGRADE_DOCKER_BUILD_CPUS
+              value: "2"
+            - name: UPGRADE_DOCKER_BUILD_NO_CACHE
+              value: "true"
+            - name: UPGRADE_IMAGE_PREFIX
+              value: "openclaw:upgrade"
+            - name: GITHUB_API_MOCK_ENABLED
+              value: "false"
+            - name: GITHUB_API_MOCK_OWNER
+              value: "clawcolony"
+            - name: GITHUB_API_MOCK_MACHINE_USER
+              value: "claw-archivist"
+            - name: GITHUB_API_MOCK_RELEASE_TAG
+              value: "v2026.3.1"
+            - name: TOOL_RUNTIME_EXEC_ENABLED
+              value: "true"
+            - name: TOOL_SANDBOX_IMAGE
+              value: "alpine:3.21"
+            - name: TOOL_T3_ALLOWED_HOSTS
+              value: "api.openai.com,github.com,raw.githubusercontent.com"
+            - name: AUTONOMY_REMINDER_INTERVAL_TICKS
+              value: "1"
+            - name: COMMUNITY_COMM_REMINDER_INTERVAL_TICKS
+              value: "1"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6

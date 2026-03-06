@@ -1,0 +1,310 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"clawcolony/internal/store"
+)
+
+type ganglionForgeRequest struct {
+	UserID         string `json:"user_id"`
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	Description    string `json:"description"`
+	Implementation string `json:"implementation"`
+	Validation     string `json:"validation"`
+	Temporality    string `json:"temporality"`
+	SupersedesID   int64  `json:"supersedes_id"`
+}
+
+type ganglionIntegrateRequest struct {
+	UserID     string `json:"user_id"`
+	GanglionID int64  `json:"ganglion_id"`
+}
+
+type ganglionRateRequest struct {
+	UserID     string `json:"user_id"`
+	GanglionID int64  `json:"ganglion_id"`
+	Score      int    `json:"score"`
+	Feedback   string `json:"feedback"`
+}
+
+func classifyGanglionLifeState(it store.Ganglion) string {
+	state := strings.TrimSpace(strings.ToLower(it.LifeState))
+	if state == "archived" {
+		return "archived"
+	}
+	if it.ScoreCount >= 3 && it.ScoreAvgMilli <= 2200 {
+		return "legacy"
+	}
+	if it.ScoreCount >= 5 && it.ScoreAvgMilli >= 4500 && it.IntegrationsCount >= 5 {
+		return "canonical"
+	}
+	if it.ScoreCount >= 3 && it.ScoreAvgMilli >= 4000 && it.IntegrationsCount >= 3 {
+		return "active"
+	}
+	if it.ScoreCount >= 1 && it.ScoreAvgMilli >= 3500 && it.IntegrationsCount >= 1 {
+		return "validated"
+	}
+	if state == "legacy" && it.ScoreAvgMilli >= 3500 {
+		return "validated"
+	}
+	return "nascent"
+}
+
+func (s *Server) syncGanglionLifeState(ctx context.Context, it store.Ganglion) (store.Ganglion, bool, error) {
+	next := classifyGanglionLifeState(it)
+	if strings.EqualFold(strings.TrimSpace(it.LifeState), next) {
+		return it, false, nil
+	}
+	updated, err := s.store.UpdateGanglionLifeState(ctx, it.ID, next)
+	if err != nil {
+		return store.Ganglion{}, false, err
+	}
+	return updated, true, nil
+}
+
+func (s *Server) runGangliaMetabolism(ctx context.Context) (int, error) {
+	items, err := s.store.ListGanglia(ctx, "", "", "", 2000)
+	if err != nil {
+		return 0, err
+	}
+	changed := 0
+	for _, it := range items {
+		_, ok, err := s.syncGanglionLifeState(ctx, it)
+		if err != nil {
+			return changed, err
+		}
+		if ok {
+			changed++
+		}
+	}
+	return changed, nil
+}
+
+func (s *Server) handleGangliaForge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req ganglionForgeRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	item, err := s.store.CreateGanglion(r.Context(), store.Ganglion{
+		Name:           req.Name,
+		GanglionType:   req.Type,
+		Description:    req.Description,
+		Implementation: req.Implementation,
+		Validation:     req.Validation,
+		AuthorUserID:   req.UserID,
+		SupersedesID:   req.SupersedesID,
+		Temporality:    req.Temporality,
+		LifeState:      "nascent",
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
+}
+
+func (s *Server) handleGangliaBrowse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ganglionType := strings.TrimSpace(r.URL.Query().Get("type"))
+	lifeState := strings.TrimSpace(r.URL.Query().Get("life_state"))
+	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+	limit := parseLimit(r.URL.Query().Get("limit"), 100)
+	items, err := s.store.ListGanglia(r.Context(), ganglionType, lifeState, keyword, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleGangliaGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ganglionID := parseInt64(r.URL.Query().Get("ganglion_id"))
+	if ganglionID <= 0 {
+		writeError(w, http.StatusBadRequest, "ganglion_id is required")
+		return
+	}
+	item, err := s.store.GetGanglion(r.Context(), ganglionID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	ratings, _ := s.store.ListGanglionRatings(r.Context(), ganglionID, 200)
+	integrations, _ := s.store.ListGanglionIntegrations(r.Context(), "", ganglionID, 200)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"item":         item,
+		"ratings":      ratings,
+		"integrations": integrations,
+	})
+}
+
+func (s *Server) handleGangliaIntegrate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req ganglionIntegrateRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" || req.GanglionID <= 0 {
+		writeError(w, http.StatusBadRequest, "user_id and ganglion_id are required")
+		return
+	}
+	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	integration, item, err := s.store.IntegrateGanglion(r.Context(), req.GanglionID, req.UserID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	item, _, err = s.syncGanglionLifeState(r.Context(), item)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"integration": integration,
+		"item":        item,
+	})
+}
+
+func (s *Server) handleGangliaRate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req ganglionRateRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" || req.GanglionID <= 0 {
+		writeError(w, http.StatusBadRequest, "user_id and ganglion_id are required")
+		return
+	}
+	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	rating, item, err := s.store.RateGanglion(r.Context(), store.GanglionRating{
+		GanglionID: req.GanglionID,
+		UserID:     req.UserID,
+		Score:      req.Score,
+		Feedback:   req.Feedback,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	item, _, err = s.syncGanglionLifeState(r.Context(), item)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"rating": rating,
+		"item":   item,
+	})
+}
+
+func (s *Server) handleGangliaIntegrations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	ganglionID := parseInt64(r.URL.Query().Get("ganglion_id"))
+	limit := parseLimit(r.URL.Query().Get("limit"), 100)
+	items, err := s.store.ListGanglionIntegrations(r.Context(), userID, ganglionID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleGangliaRatings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ganglionID := parseInt64(r.URL.Query().Get("ganglion_id"))
+	limit := parseLimit(r.URL.Query().Get("limit"), 100)
+	items, err := s.store.ListGanglionRatings(r.Context(), ganglionID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleGangliaProtocol(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":          "ganglia.v1",
+		"life_states": []string{"nascent", "validated", "active", "canonical", "legacy", "archived"},
+		"rules": []string{
+			"forge -> default nascent",
+			"integrate/rate 会触发生命状态评估",
+			"score_count>=5 && score_avg>=4.5 && integrations>=5 -> canonical",
+			"score_count>=3 && score_avg>=4.0 && integrations>=3 -> active",
+			"score_count>=1 && score_avg>=3.5 && integrations>=1 -> validated",
+			"score_count>=3 && score_avg<=2.2 -> legacy",
+		},
+		"apis": []string{
+			"POST /v1/ganglia/forge",
+			"GET /v1/ganglia/browse?type=<type>&life_state=<state>&keyword=<kw>&limit=<n>",
+			"GET /v1/ganglia/get?ganglion_id=<id>",
+			"POST /v1/ganglia/integrate",
+			"POST /v1/ganglia/rate",
+			"GET /v1/ganglia/integrations?user_id=<id>&ganglion_id=<id>&limit=<n>",
+			"GET /v1/ganglia/ratings?ganglion_id=<id>&limit=<n>",
+		},
+	})
+}
+
+func (s *Server) mustGangliaMeta(item store.Ganglion) map[string]any {
+	return map[string]any{
+		"id":                 item.ID,
+		"name":               item.Name,
+		"type":               item.GanglionType,
+		"life_state":         item.LifeState,
+		"score_avg":          fmt.Sprintf("%.3f", float64(item.ScoreAvgMilli)/1000.0),
+		"score_count":        item.ScoreCount,
+		"integrations_count": item.IntegrationsCount,
+	}
+}

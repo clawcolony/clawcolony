@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard · Prompt Templates</title>
+    <style>
+      :root { --bg:#0f1720; --panel:#172330; --ink:#e8f0f8; --muted:#9bb0c5; --line:#2a4158; --accent:#2eaadc; --ok:#2fce89; --warn:#f1ad3d; --bad:#df4a4a; }
+      * { box-sizing: border-box; }
+      body { margin:0; min-height:100vh; display:flex; flex-direction:column; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI"; background: var(--bg); color: var(--ink); }
+      .top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line); background:#111c27; position:sticky; top:0; z-index:2; }
+      .tabs { display:flex; align-items:center; flex-wrap:wrap; row-gap:6px; }
+      .tabs a { color: var(--muted); text-decoration:none; margin-right:14px; }
+      .tabs a.active { color: var(--ink); font-weight:700; }
+      .layout { flex:1; min-height:0; display:grid; grid-template-columns: 360px 1fr; gap:12px; padding:12px 18px 18px; }
+      .panel { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel); min-height:0; display:flex; flex-direction:column; }
+      .panel h3 { margin:0; padding:10px 12px; border-bottom:1px solid var(--line); font-size:15px; }
+      .list { overflow:auto; padding:8px; }
+      .item { border:1px solid var(--line); border-radius:8px; padding:8px; margin-bottom:8px; cursor:pointer; }
+      .item.active { border-color:var(--accent); background:#123247; }
+      .meta { color:var(--muted); font-size:12px; margin-top:4px; font-family: ui-monospace, Menlo, monospace; }
+      .form { display:flex; flex-direction:column; height:100%; min-height:0; }
+      .form-head { padding:10px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:13px; font-family: ui-monospace, Menlo, monospace; }
+      .form-body { padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px; min-height:0; }
+      textarea, input, button, select { padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#12202d; color:var(--ink); }
+      textarea { min-height:360px; resize:vertical; font-family: ui-monospace, Menlo, monospace; font-size:12px; line-height:1.45; }
+      .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+      button { cursor:pointer; background:#1f394d; }
+      button.ok { background:#1a4f38; }
+      .hint { color:var(--muted); font-size:12px; line-height:1.45; }
+      .status { padding:8px 10px; border-radius:8px; border:1px solid var(--line); white-space:pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size:12px; }
+      .ok { color:var(--ok); }
+      .warn { color:var(--warn); }
+      .bad { color:var(--bad); }
+      @media (max-width: 1100px) {
+        .layout { grid-template-columns:1fr; height:auto; }
+        .panel { min-height: 320px; }
+        .list { max-height: 36vh; }
+        textarea { min-height: 240px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="top">
+      <div class="tabs">
+        <a href="/dashboard">首页</a>
+        <a href="/dashboard/mail">Mail</a>
+        <a href="/dashboard/chat">Chat</a>
+        <a href="/dashboard/collab">Collab</a>
+        <a href="/dashboard/kb">Knowledge Base</a>
+        <a href="/dashboard/governance">Governance</a>
+        <a href="/dashboard/ganglia">Ganglia</a>
+        <a href="/dashboard/bounty">Bounty</a>
+        <a href="/dashboard/bot-logs">User Logs</a>
+        <a href="/dashboard/system-logs">System Logs</a>
+        <a href="/dashboard/world-tick">World Tick</a>
+        <a href="/dashboard/world-replay">World Replay</a>
+        <a class="active" href="/dashboard/prompts">Prompt Templates</a>
+        <a href="/dashboard/openclaw-pods">OpenClaw Pods</a>
+      </div>
+      <div class="row">
+        <label class="hint"><input id="promptsAutoRefresh" type="checkbox" checked /> 自动刷新</label>
+        <button onclick="refreshTemplates()">刷新</button>
+      </div>
+    </div>
+    <div class="layout">
+      <section class="panel">
+        <h3>模板键列表</h3>
+        <div class="list" id="list"></div>
+      </section>
+      <section class="panel">
+        <h3>模板编辑与部署</h3>
+        <div class="form">
+          <div class="form-head" id="head">未选择模板</div>
+          <div class="form-body">
+            <div class="row">
+              <label>目标 USER（渲染预览）</label>
+              <select id="targetUser" style="width:300px">
+                <option value="">example-user</option>
+              </select>
+              <button onclick="refreshTemplates()">加载</button>
+            </div>
+            <textarea id="content" placeholder="模板内容"></textarea>
+            <div class="hint" id="placeholders"></div>
+            <div class="row">
+              <button class="ok" onclick="saveTemplate()">保存模板</button>
+              <label>应用到 USER</label>
+              <select id="applyUser" style="width:300px">
+                <option value="">全部活跃 USER</option>
+              </select>
+              <label>镜像(可选)</label>
+              <input id="applyImage" placeholder="留空=自动读取当前镜像" style="width:320px" />
+              <button onclick="applyTemplates()">保存后下发</button>
+            </div>
+            <div class="hint">
+              说明：下发会重新触发目标 USER Deployment，模板将写入其 workspace 并生效（AGENTS/IDENTITY/USER/skills等）。
+            </div>
+            <pre class="status" id="status">ready</pre>
+            <div class="hint" style="margin-top:8px;border-top:1px solid var(--line);padding-top:10px">
+              异步分支升级：提交后立即返回 `upgrade_task_id`，后台构建/部署。可按 task id 自动查询进度。
+            </div>
+            <div class="row">
+              <label>升级 USER</label>
+              <select id="upgradeUser" style="width:300px">
+                <option value="">请选择 USER</option>
+              </select>
+              <label>branch</label>
+              <input id="upgradeBranch" placeholder="main 或 feature/<user_id>-<topic>" style="width:360px" />
+            </div>
+            <div class="row">
+              <label>升级鉴权 token(可选)</label>
+              <input id="upgradeToken" placeholder="X-Clawcolony-Upgrade-Token（留空则不带）" style="width:420px" />
+              <button class="ok" onclick="startUpgrade()">发起升级</button>
+              <button onclick="pollUpgradeTask()">手动刷新任务状态</button>
+            </div>
+            <pre class="status" id="upgradeStatus">upgrade: idle</pre>
+          </div>
+        </div>
+      </section>
+    </div>
+    <script>
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      async function j(url, opt){const r=await fetch(url, opt); if(!r.ok) throw new Error(await r.text()); return r.json();}
+
+      let items = [];
+      let selected = "";
+      let bots = [];
+      let upgradeTaskId = 0;
+      let upgradePollTimer = null;
+      let autoRefreshTick = 0;
+      let editorDirty = false;
+
+      function currentItem(){
+        return items.find(x => x.key === selected) || null;
+      }
+
+      function renderList(){
+        const root = document.getElementById("list");
+        root.innerHTML = items.map(it => `
+          <div class="item ${selected===it.key?'active':''}" onclick="pick('${esc(it.key)}')">
+            <div><strong>${esc(it.key)}</strong></div>
+            <div class="meta">source=${esc(it.source)} ${it.updated_at ? "updated_at="+esc(it.updated_at) : ""}</div>
+          </div>
+        `).join("");
+      }
+
+      function renderEditor(meta){
+        const it = currentItem();
+        const head = document.getElementById("head");
+        const content = document.getElementById("content");
+        if (!it) {
+          head.textContent = "未选择模板";
+          content.value = "";
+          editorDirty = false;
+          return;
+        }
+        head.textContent = `${it.key}  (source=${it.source}${it.updated_at ? `, updated_at=${it.updated_at}` : ""})`;
+        content.value = it.content || "";
+        document.getElementById("placeholders").textContent = "可用占位符: " + (meta.placeholders || []).join(", ");
+        editorDirty = false;
+      }
+
+      async function refreshTemplates(){
+        const user = document.getElementById("targetUser").value.trim();
+        const q = user ? `?user_id=${encodeURIComponent(user)}` : "";
+        const data = await j(`/v1/prompts/templates${q}`);
+        items = data.items || [];
+        if (!selected && items.length) selected = items[0].key;
+        if (selected && !items.some(x => x.key === selected)) selected = items[0]?.key || "";
+        renderList();
+        renderEditor(data);
+      }
+
+      async function loadUsers(){
+        const data = await j("/v1/bots?include_inactive=0");
+        bots = data.items || [];
+
+        const targetSel = document.getElementById("targetUser");
+        const targetPrev = targetSel.value;
+        targetSel.innerHTML = `<option value="">example-user</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
+        targetSel.value = targetPrev;
+
+        const applySel = document.getElementById("applyUser");
+        const applyPrev = applySel.value;
+        applySel.innerHTML = `<option value="">全部活跃 USER</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
+        applySel.value = bots.some(b => b.user_id === applyPrev) ? applyPrev : "";
+
+        const upgradeSel = document.getElementById("upgradeUser");
+        const upgradePrev = upgradeSel.value;
+        upgradeSel.innerHTML = `<option value="">请选择 USER</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
+        upgradeSel.value = bots.some(b => b.user_id === upgradePrev) ? upgradePrev : "";
+        if (upgradeSel.value && !bots.some(b => b.user_id === upgradeSel.value)) {
+          upgradeSel.value = "";
+        }
+      }
+
+      function pick(key){
+        selected = key;
+        renderList();
+        renderEditor({placeholders: []});
+      }
+
+      function setStatus(text, cls){
+        const box = document.getElementById("status");
+        box.className = `status ${cls||""}`;
+        box.textContent = text;
+      }
+
+      function setUpgradeStatus(text, cls){
+        const box = document.getElementById("upgradeStatus");
+        box.className = `status ${cls||""}`;
+        box.textContent = text;
+      }
+
+      function currentUpgradeHeaders(){
+        const token = document.getElementById("upgradeToken").value.trim();
+        if (!token) return {"Content-Type":"application/json"};
+        return {
+          "Content-Type":"application/json",
+          "X-Clawcolony-Upgrade-Token": token
+        };
+      }
+
+      function autoFillBranch(){
+        const userId = document.getElementById("upgradeUser").value.trim();
+        const branchInput = document.getElementById("upgradeBranch");
+        if (!userId) return;
+        const v = branchInput.value.trim();
+        if (!v) {
+          branchInput.value = `feature/${userId}-`;
+        }
+      }
+
+      function stopUpgradePolling(){
+        if (upgradePollTimer) {
+          clearInterval(upgradePollTimer);
+          upgradePollTimer = null;
+        }
+      }
+
+      function renderUpgradeAudit(data){
+        const audit = data.audit || {};
+        const last = data.last_step || null;
+        const lines = [];
+        lines.push(`upgrade_task_id=${data.upgrade_task_id || "-"}`);
+        lines.push(`status=${audit.status || "-"}`);
+        lines.push(`user_id=${audit.user_id || "-"}`);
+        lines.push(`branch=${audit.branch || "-"}`);
+        lines.push(`image=${audit.image || "-"}`);
+        if (audit.error) lines.push(`error=${audit.error}`);
+        lines.push(`started_at=${audit.started_at || "-"}`);
+        lines.push(`finished_at=${audit.finished_at || "-"}`);
+        lines.push(`step_count=${data.step_count || 0}`);
+        if (last) {
+          lines.push(`last_step=${last.step || "-"} ${last.status || "-"}`);
+          if (last.output) lines.push(`last_output=${String(last.output).slice(0, 300)}`);
+        }
+        const cls = audit.status === "succeeded" ? "ok" : (audit.status === "failed" ? "bad" : "warn");
+        setUpgradeStatus(lines.join("\n"), cls);
+        if (audit.status === "succeeded" || audit.status === "failed") {
+          stopUpgradePolling();
+        }
+      }
+
+      async function pollUpgradeTask(){
+        if (!upgradeTaskId) {
+          setUpgradeStatus("upgrade_task_id 未设置。请先发起升级。", "warn");
+          return;
+        }
+        try {
+          const data = await j(`/v1/dashboard-admin/bots/upgrade/task?upgrade_task_id=${encodeURIComponent(String(upgradeTaskId))}`);
+          renderUpgradeAudit(data);
+        } catch (e) {
+          setUpgradeStatus("读取升级任务失败: " + String(e.message || e), "bad");
+        }
+      }
+
+      async function startUpgrade(){
+        const userId = document.getElementById("upgradeUser").value.trim();
+        const branch = document.getElementById("upgradeBranch").value.trim();
+        if (!userId) {
+          setUpgradeStatus("请先选择升级 USER。", "warn");
+          return;
+        }
+        if (!branch) {
+          setUpgradeStatus("请填写 branch。", "warn");
+          return;
+        }
+        setUpgradeStatus("正在提交升级任务...", "warn");
+        try {
+          const res = await fetch("/v1/dashboard-admin/bots/upgrade", {
+            method: "POST",
+            headers: currentUpgradeHeaders(),
+            body: JSON.stringify({user_id: userId, branch})
+          });
+          if (!res.ok) {
+            throw new Error(await res.text());
+          }
+          const data = await res.json();
+          upgradeTaskId = Number(data.upgrade_task_id || 0);
+          if (!upgradeTaskId) {
+            throw new Error("response missing upgrade_task_id");
+          }
+          renderUpgradeAudit(data);
+          stopUpgradePolling();
+          upgradePollTimer = setInterval(() => { void pollUpgradeTask(); }, 3000);
+        } catch (e) {
+          setUpgradeStatus("发起升级失败: " + String(e.message || e), "bad");
+        }
+      }
+
+      async function saveTemplate(){
+        const it = currentItem();
+        if (!it) {
+          setStatus("请先选择模板键。", "warn");
+          return;
+        }
+        const content = document.getElementById("content").value;
+        const previewUser = document.getElementById("targetUser").value.trim();
+        const data = await j("/v1/prompts/templates/upsert", {
+          method: "PUT",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({key: it.key, content, preview_user_id: previewUser})
+        });
+        setStatus(`保存成功: ${data.item.key}`, "ok");
+        editorDirty = false;
+        await refreshTemplates();
+      }
+
+      async function applyTemplates(){
+        const applyUser = document.getElementById("applyUser").value.trim();
+        const applyImage = document.getElementById("applyImage").value.trim();
+        await saveTemplate();
+        const data = await j("/v1/dashboard-admin/prompts/templates/apply", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({
+            user_id: applyUser,
+            image: applyImage
+          })
+        });
+        const lines = [];
+        lines.push(`apply result: ok=${data.ok_count}/${data.all_count}`);
+        for (const it of (data.items || [])) {
+          lines.push(`${it.user_id} ${it.status} image=${it.image || "-"} ${it.error || ""}`.trim());
+        }
+        setStatus(lines.join("\n"), data.ok_count > 0 ? "ok" : "bad");
+      }
+
+      document.getElementById("upgradeUser").addEventListener("change", autoFillBranch);
+      document.getElementById("content").addEventListener("input", () => { editorDirty = true; });
+      loadUsers().then(() => {
+        autoFillBranch();
+        return refreshTemplates();
+      }).catch(err => setStatus("加载失败: " + String(err.message || err), "bad"));
+      setInterval(() => {
+        const auto = document.getElementById("promptsAutoRefresh");
+        if (auto && !auto.checked) return;
+        autoRefreshTick += 1;
+        if (autoRefreshTick % 2 === 0) {
+          loadUsers().catch(()=>{});
+        }
+        if (!editorDirty && autoRefreshTick % 6 === 0) {
+          refreshTemplates().catch(()=>{});
+        }
+      }, 5000);
+      window.addEventListener("beforeunload", stopUpgradePolling);
+    </script>
+  </body>
+</html>

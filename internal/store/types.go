@@ -1,0 +1,518 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+var ErrInsufficientBalance = errors.New("insufficient token balance")
+
+type Bot struct {
+	BotID        string    `json:"user_id"`
+	Name         string    `json:"name"`
+	Provider     string    `json:"provider"`
+	Status       string    `json:"status"`
+	Initialized  bool      `json:"initialized"`
+	GatewayToken string    `json:"-"`
+	UpgradeToken string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type BotUpsertInput struct {
+	BotID       string
+	Name        string
+	Provider    string
+	Status      string
+	Initialized bool
+}
+
+type MailSendResult struct {
+	MessageID int64     `json:"message_id"`
+	From      string    `json:"from"`
+	To        []string  `json:"to"`
+	Subject   string    `json:"subject"`
+	SentAt    time.Time `json:"sent_at"`
+}
+
+type MailItem struct {
+	MailboxID    int64      `json:"mailbox_id"`
+	MessageID    int64      `json:"message_id"`
+	OwnerAddress string     `json:"owner_address"`
+	Folder       string     `json:"folder"`
+	FromAddress  string     `json:"from_address"`
+	ToAddress    string     `json:"to_address"`
+	Subject      string     `json:"subject"`
+	Body         string     `json:"body"`
+	IsRead       bool       `json:"is_read"`
+	ReadAt       *time.Time `json:"read_at,omitempty"`
+	SentAt       time.Time  `json:"sent_at"`
+}
+
+type MailContact struct {
+	OwnerAddress   string     `json:"owner_address"`
+	ContactAddress string     `json:"contact_address"`
+	DisplayName    string     `json:"display_name"`
+	Tags           []string   `json:"tags"`
+	Role           string     `json:"role,omitempty"`
+	Skills         []string   `json:"skills,omitempty"`
+	CurrentProject string     `json:"current_project,omitempty"`
+	Availability   string     `json:"availability,omitempty"`
+	PeerStatus     string     `json:"peer_status,omitempty"`
+	IsActive       bool       `json:"is_active,omitempty"`
+	LastSeenAt     *time.Time `json:"last_seen_at,omitempty"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type TokenAccount struct {
+	BotID     string    `json:"user_id"`
+	Balance   int64     `json:"balance"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type TokenLedger struct {
+	ID           int64     `json:"id"`
+	BotID        string    `json:"user_id"`
+	OpType       string    `json:"op_type"`
+	Amount       int64     `json:"amount"`
+	BalanceAfter int64     `json:"balance_after"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type UpgradeAudit struct {
+	ID          int64      `json:"id"`
+	UserID      string     `json:"user_id"`
+	RepoURL     string     `json:"repo_url"`
+	Branch      string     `json:"branch"`
+	RequestedBy string     `json:"requested_by"`
+	Status      string     `json:"status"`
+	Image       string     `json:"image"`
+	Error       string     `json:"error,omitempty"`
+	StartedAt   time.Time  `json:"started_at"`
+	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	DurationMS  int64      `json:"duration_ms,omitempty"`
+}
+
+type UpgradeStep struct {
+	ID        int64     `json:"id"`
+	AuditID   int64     `json:"audit_id"`
+	Step      string    `json:"step"`
+	Status    string    `json:"status"`
+	Command   string    `json:"command,omitempty"`
+	Output    string    `json:"output,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type RegisterTask struct {
+	ID           int64      `json:"id"`
+	Provider     string     `json:"provider"`
+	UserID       string     `json:"user_id"`
+	UserName     string     `json:"user_name"`
+	RepoFullName string     `json:"repo_full_name"`
+	Image        string     `json:"image"`
+	Status       string     `json:"status"`
+	Error        string     `json:"error,omitempty"`
+	StartedAt    time.Time  `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	DurationMS   int64      `json:"duration_ms,omitempty"`
+}
+
+type RegisterTaskStep struct {
+	ID        int64     `json:"id"`
+	TaskID    int64     `json:"task_id"`
+	Step      string    `json:"step"`
+	Status    string    `json:"status"`
+	Message   string    `json:"message,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type ChatMessage struct {
+	ID     int64     `json:"id"`
+	UserID string    `json:"user_id"`
+	From   string    `json:"from"`
+	To     string    `json:"to"`
+	Body   string    `json:"body"`
+	SentAt time.Time `json:"sent_at"`
+}
+
+type PromptTemplate struct {
+	Key       string    `json:"key"`
+	Content   string    `json:"content"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type CollabSession struct {
+	CollabID            string     `json:"collab_id"`
+	Title               string     `json:"title"`
+	Goal                string     `json:"goal"`
+	Complexity          string     `json:"complexity"`
+	Phase               string     `json:"phase"`
+	ProposerUserID      string     `json:"proposer_user_id"`
+	OrchestratorUserID  string     `json:"orchestrator_user_id"`
+	MinMembers          int        `json:"min_members"`
+	MaxMembers          int        `json:"max_members"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	ClosedAt            *time.Time `json:"closed_at,omitempty"`
+	LastStatusOrSummary string     `json:"last_status_or_summary,omitempty"`
+}
+
+type CollabParticipant struct {
+	ID        int64     `json:"id"`
+	CollabID  string    `json:"collab_id"`
+	UserID    string    `json:"user_id"`
+	Role      string    `json:"role"`
+	Status    string    `json:"status"`
+	Pitch     string    `json:"pitch,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type CollabArtifact struct {
+	ID         int64     `json:"id"`
+	CollabID   string    `json:"collab_id"`
+	UserID     string    `json:"user_id"`
+	Role       string    `json:"role"`
+	Kind       string    `json:"kind"`
+	Summary    string    `json:"summary"`
+	Content    string    `json:"content"`
+	Status     string    `json:"status"`
+	ReviewNote string    `json:"review_note,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type CollabEvent struct {
+	ID        int64     `json:"id"`
+	CollabID  string    `json:"collab_id"`
+	ActorID   string    `json:"actor_user_id"`
+	EventType string    `json:"event_type"`
+	Payload   string    `json:"payload"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type KBEntry struct {
+	ID        int64     `json:"id"`
+	Section   string    `json:"section"`
+	Title     string    `json:"title"`
+	Content   string    `json:"content"`
+	Version   int64     `json:"version"`
+	UpdatedBy string    `json:"updated_by"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Deleted   bool      `json:"deleted"`
+}
+
+type KBSection struct {
+	Section       string    `json:"section"`
+	EntryCount    int64     `json:"entry_count"`
+	LastUpdatedAt time.Time `json:"last_updated_at"`
+}
+
+type KBProposal struct {
+	ID                   int64      `json:"id"`
+	ProposerUserID       string     `json:"proposer_user_id"`
+	Title                string     `json:"title"`
+	Reason               string     `json:"reason"`
+	Status               string     `json:"status"`
+	CurrentRevisionID    int64      `json:"current_revision_id"`
+	VotingRevisionID     int64      `json:"voting_revision_id"`
+	VoteThresholdPct     int        `json:"vote_threshold_pct"`
+	VoteWindowSeconds    int        `json:"vote_window_seconds"`
+	EnrolledCount        int        `json:"enrolled_count"`
+	VoteYes              int        `json:"vote_yes"`
+	VoteNo               int        `json:"vote_no"`
+	VoteAbstain          int        `json:"vote_abstain"`
+	ParticipationCount   int        `json:"participation_count"`
+	DecisionReason       string     `json:"decision_reason"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	DiscussionDeadlineAt *time.Time `json:"discussion_deadline_at,omitempty"`
+	VotingDeadlineAt     *time.Time `json:"voting_deadline_at,omitempty"`
+	ClosedAt             *time.Time `json:"closed_at,omitempty"`
+	AppliedAt            *time.Time `json:"applied_at,omitempty"`
+}
+
+type KBRevision struct {
+	ID             int64     `json:"id"`
+	ProposalID     int64     `json:"proposal_id"`
+	RevisionNo     int64     `json:"revision_no"`
+	BaseRevisionID int64     `json:"base_revision_id,omitempty"`
+	CreatedBy      string    `json:"created_by"`
+	OpType         string    `json:"op_type"`
+	TargetEntryID  int64     `json:"target_entry_id,omitempty"`
+	Section        string    `json:"section,omitempty"`
+	Title          string    `json:"title,omitempty"`
+	OldContent     string    `json:"old_content,omitempty"`
+	NewContent     string    `json:"new_content,omitempty"`
+	DiffText       string    `json:"diff_text"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type KBAck struct {
+	ID         int64     `json:"id"`
+	ProposalID int64     `json:"proposal_id"`
+	RevisionID int64     `json:"revision_id"`
+	UserID     string    `json:"user_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type KBProposalChange struct {
+	ID            int64  `json:"id"`
+	ProposalID    int64  `json:"proposal_id"`
+	OpType        string `json:"op_type"`
+	TargetEntryID int64  `json:"target_entry_id,omitempty"`
+	Section       string `json:"section,omitempty"`
+	Title         string `json:"title,omitempty"`
+	OldContent    string `json:"old_content,omitempty"`
+	NewContent    string `json:"new_content,omitempty"`
+	DiffText      string `json:"diff_text"`
+}
+
+type KBProposalEnrollment struct {
+	ID         int64     `json:"id"`
+	ProposalID int64     `json:"proposal_id"`
+	UserID     string    `json:"user_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type KBVote struct {
+	ID         int64     `json:"id"`
+	ProposalID int64     `json:"proposal_id"`
+	UserID     string    `json:"user_id"`
+	Vote       string    `json:"vote"`
+	Reason     string    `json:"reason"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type KBThreadMessage struct {
+	ID          int64     `json:"id"`
+	ProposalID  int64     `json:"proposal_id"`
+	AuthorID    string    `json:"author_user_id"`
+	MessageType string    `json:"message_type"`
+	Content     string    `json:"content"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type KBEntryHistoryItem struct {
+	EntryID           int64      `json:"entry_id"`
+	ProposalID        int64      `json:"proposal_id"`
+	ProposalTitle     string     `json:"proposal_title"`
+	ProposalStatus    string     `json:"proposal_status"`
+	ProposalReason    string     `json:"proposal_reason"`
+	ProposalCreatedAt time.Time  `json:"proposal_created_at"`
+	ProposalClosedAt  *time.Time `json:"proposal_closed_at,omitempty"`
+	ProposalAppliedAt *time.Time `json:"proposal_applied_at,omitempty"`
+	OpType            string     `json:"op_type"`
+	DiffText          string     `json:"diff_text"`
+	OldContent        string     `json:"old_content"`
+	NewContent        string     `json:"new_content"`
+}
+
+type Ganglion struct {
+	ID                int64     `json:"id"`
+	Name              string    `json:"name"`
+	GanglionType      string    `json:"type"`
+	Description       string    `json:"description"`
+	Implementation    string    `json:"implementation"`
+	Validation        string    `json:"validation"`
+	AuthorUserID      string    `json:"author_user_id"`
+	SupersedesID      int64     `json:"supersedes_id,omitempty"`
+	Temporality       string    `json:"temporality"`
+	LifeState         string    `json:"life_state"`
+	ScoreAvgMilli     int64     `json:"score_avg_milli"`
+	ScoreCount        int64     `json:"score_count"`
+	IntegrationsCount int64     `json:"integrations_count"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type GanglionIntegration struct {
+	ID         int64     `json:"id"`
+	GanglionID int64     `json:"ganglion_id"`
+	UserID     string    `json:"user_id"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type GanglionRating struct {
+	ID         int64     `json:"id"`
+	GanglionID int64     `json:"ganglion_id"`
+	UserID     string    `json:"user_id"`
+	Score      int       `json:"score"`
+	Feedback   string    `json:"feedback"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type RequestLog struct {
+	ID         int64     `json:"id"`
+	Time       time.Time `json:"time"`
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	UserID     string    `json:"user_id"`
+	StatusCode int       `json:"status_code"`
+	DurationMS int64     `json:"duration_ms"`
+}
+
+type RequestLogFilter struct {
+	Limit        int
+	Method       string
+	PathContains string
+	UserID       string
+	StatusCode   int
+	Since        *time.Time
+}
+
+type WorldSetting struct {
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type BotCredentials struct {
+	UserID       string `json:"user_id"`
+	GatewayToken string `json:"-"`
+	UpgradeToken string `json:"-"`
+}
+
+type WorldTickRecord struct {
+	ID             int64     `json:"id"`
+	TickID         int64     `json:"tick_id"`
+	StartedAt      time.Time `json:"started_at"`
+	DurationMS     int64     `json:"duration_ms"`
+	TriggerType    string    `json:"trigger_type"`
+	ReplayOfTickID int64     `json:"replay_of_tick_id,omitempty"`
+	PrevHash       string    `json:"prev_hash,omitempty"`
+	EntryHash      string    `json:"entry_hash,omitempty"`
+	Status         string    `json:"status"`
+	ErrorText      string    `json:"error,omitempty"`
+}
+
+type WorldTickStepRecord struct {
+	ID         int64     `json:"id"`
+	TickID     int64     `json:"tick_id"`
+	StepName   string    `json:"step_name"`
+	StartedAt  time.Time `json:"started_at"`
+	DurationMS int64     `json:"duration_ms"`
+	Status     string    `json:"status"`
+	ErrorText  string    `json:"error,omitempty"`
+}
+
+type CostEvent struct {
+	ID        int64     `json:"id"`
+	UserID    string    `json:"user_id"`
+	TickID    int64     `json:"tick_id"`
+	CostType  string    `json:"cost_type"`
+	Amount    int64     `json:"amount"`
+	Units     int64     `json:"units"`
+	MetaJSON  string    `json:"meta_json,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type TianDaoLaw struct {
+	LawKey         string    `json:"law_key"`
+	Version        int64     `json:"version"`
+	ManifestJSON   string    `json:"manifest_json"`
+	ManifestSHA256 string    `json:"manifest_sha256"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type UserLifeState struct {
+	UserID         string    `json:"user_id"`
+	State          string    `json:"state"`
+	DyingSinceTick int64     `json:"dying_since_tick"`
+	DeadAtTick     int64     `json:"dead_at_tick"`
+	Reason         string    `json:"reason,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type Store interface {
+	ListBots(ctx context.Context) ([]Bot, error)
+	GetBot(ctx context.Context, botID string) (Bot, error)
+	UpsertBot(ctx context.Context, input BotUpsertInput) (Bot, error)
+	GetBotCredentials(ctx context.Context, userID string) (BotCredentials, error)
+	UpsertBotCredentials(ctx context.Context, creds BotCredentials) (BotCredentials, error)
+	EnsureTianDaoLaw(ctx context.Context, item TianDaoLaw) (TianDaoLaw, error)
+	GetTianDaoLaw(ctx context.Context, lawKey string) (TianDaoLaw, error)
+	AppendWorldTick(ctx context.Context, item WorldTickRecord) (WorldTickRecord, error)
+	ListWorldTicks(ctx context.Context, limit int) ([]WorldTickRecord, error)
+	AppendWorldTickStep(ctx context.Context, item WorldTickStepRecord) (WorldTickStepRecord, error)
+	ListWorldTickSteps(ctx context.Context, tickID int64, limit int) ([]WorldTickStepRecord, error)
+	UpsertUserLifeState(ctx context.Context, item UserLifeState) (UserLifeState, error)
+	GetUserLifeState(ctx context.Context, userID string) (UserLifeState, error)
+	ListUserLifeStates(ctx context.Context, userID, state string, limit int) ([]UserLifeState, error)
+	AppendCostEvent(ctx context.Context, item CostEvent) (CostEvent, error)
+	ListCostEvents(ctx context.Context, userID string, limit int) ([]CostEvent, error)
+	SendMail(ctx context.Context, from string, to []string, subject, body string) (MailSendResult, error)
+	ListMailbox(ctx context.Context, ownerAddress, folder, scope, keyword string, fromTime, toTime *time.Time, limit int) ([]MailItem, error)
+	MarkMailboxRead(ctx context.Context, ownerAddress string, mailboxIDs []int64) error
+	UpsertMailContact(ctx context.Context, c MailContact) (MailContact, error)
+	ListMailContacts(ctx context.Context, ownerAddress, keyword string, limit int) ([]MailContact, error)
+	ListTokenAccounts(ctx context.Context) ([]TokenAccount, error)
+	Recharge(ctx context.Context, botID string, amount int64) (TokenLedger, error)
+	Consume(ctx context.Context, botID string, amount int64) (TokenLedger, error)
+	ListTokenLedger(ctx context.Context, botID string, limit int) ([]TokenLedger, error)
+	CreateUpgradeAudit(ctx context.Context, item UpgradeAudit) (UpgradeAudit, error)
+	AppendUpgradeStep(ctx context.Context, step UpgradeStep) (UpgradeStep, error)
+	FinishUpgradeAudit(ctx context.Context, id int64, status, image, errorText string, finishedAt time.Time) (UpgradeAudit, error)
+	GetUpgradeAudit(ctx context.Context, id int64) (UpgradeAudit, error)
+	ListUpgradeAudits(ctx context.Context, userID string, limit int) ([]UpgradeAudit, error)
+	ListUpgradeSteps(ctx context.Context, auditID int64, limit int) ([]UpgradeStep, error)
+	CreateRegisterTask(ctx context.Context, item RegisterTask) (RegisterTask, error)
+	AppendRegisterTaskStep(ctx context.Context, step RegisterTaskStep) (RegisterTaskStep, error)
+	FinishRegisterTask(ctx context.Context, id int64, status, userID, userName, repoFullName, image, errorText string, finishedAt time.Time) (RegisterTask, error)
+	GetRegisterTask(ctx context.Context, id int64) (RegisterTask, error)
+	ListRegisterTasks(ctx context.Context, limit int) ([]RegisterTask, error)
+	ListRegisterTaskSteps(ctx context.Context, taskID int64, limit int) ([]RegisterTaskStep, error)
+	AppendChatMessage(ctx context.Context, msg ChatMessage) (ChatMessage, error)
+	ListChatMessages(ctx context.Context, userID string, limit int) ([]ChatMessage, error)
+	ListPromptTemplates(ctx context.Context) ([]PromptTemplate, error)
+	UpsertPromptTemplate(ctx context.Context, item PromptTemplate) (PromptTemplate, error)
+	CreateCollabSession(ctx context.Context, item CollabSession) (CollabSession, error)
+	GetCollabSession(ctx context.Context, collabID string) (CollabSession, error)
+	ListCollabSessions(ctx context.Context, phase, proposerUserID string, limit int) ([]CollabSession, error)
+	UpdateCollabPhase(ctx context.Context, collabID, phase, orchestratorUserID, statusSummary string, closedAt *time.Time) (CollabSession, error)
+	UpsertCollabParticipant(ctx context.Context, item CollabParticipant) (CollabParticipant, error)
+	ListCollabParticipants(ctx context.Context, collabID, status string, limit int) ([]CollabParticipant, error)
+	CreateCollabArtifact(ctx context.Context, item CollabArtifact) (CollabArtifact, error)
+	UpdateCollabArtifactReview(ctx context.Context, artifactID int64, status, reviewNote string) (CollabArtifact, error)
+	ListCollabArtifacts(ctx context.Context, collabID, userID string, limit int) ([]CollabArtifact, error)
+	AppendCollabEvent(ctx context.Context, item CollabEvent) (CollabEvent, error)
+	ListCollabEvents(ctx context.Context, collabID string, limit int) ([]CollabEvent, error)
+	ListKBSections(ctx context.Context, keyword string, limit int) ([]KBSection, error)
+	ListKBEntries(ctx context.Context, section, keyword string, limit int) ([]KBEntry, error)
+	GetKBEntry(ctx context.Context, entryID int64) (KBEntry, error)
+	ListKBEntryHistory(ctx context.Context, entryID int64, limit int) ([]KBEntryHistoryItem, error)
+	ListKBRevisions(ctx context.Context, proposalID int64, limit int) ([]KBRevision, error)
+	CreateKBRevision(ctx context.Context, proposalID, baseRevisionID int64, createdBy string, change KBProposalChange, discussionDeadline time.Time) (KBRevision, KBProposal, KBProposalChange, error)
+	AckKBProposal(ctx context.Context, proposalID, revisionID int64, userID string) (KBAck, error)
+	ListKBAcks(ctx context.Context, proposalID, revisionID int64) ([]KBAck, error)
+	CreateKBProposal(ctx context.Context, proposal KBProposal, change KBProposalChange) (KBProposal, KBProposalChange, error)
+	GetKBProposal(ctx context.Context, proposalID int64) (KBProposal, error)
+	ListKBProposals(ctx context.Context, status string, limit int) ([]KBProposal, error)
+	GetKBProposalChange(ctx context.Context, proposalID int64) (KBProposalChange, error)
+	EnrollKBProposal(ctx context.Context, proposalID int64, userID string) (KBProposalEnrollment, error)
+	ListKBProposalEnrollments(ctx context.Context, proposalID int64) ([]KBProposalEnrollment, error)
+	CreateKBThreadMessage(ctx context.Context, item KBThreadMessage) (KBThreadMessage, error)
+	ListKBThreadMessages(ctx context.Context, proposalID int64, limit int) ([]KBThreadMessage, error)
+	StartKBProposalVoting(ctx context.Context, proposalID int64, deadline time.Time) (KBProposal, error)
+	CastKBVote(ctx context.Context, vote KBVote) (KBVote, error)
+	ListKBVotes(ctx context.Context, proposalID int64) ([]KBVote, error)
+	CloseKBProposal(ctx context.Context, proposalID int64, status, decisionReason string, enrolledCount, voteYes, voteNo, voteAbstain, participationCount int, closedAt time.Time) (KBProposal, error)
+	ApplyKBProposal(ctx context.Context, proposalID int64, appliedBy string, appliedAt time.Time) (KBEntry, KBProposal, error)
+	AppendRequestLog(ctx context.Context, item RequestLog) (RequestLog, error)
+	ListRequestLogs(ctx context.Context, filter RequestLogFilter) ([]RequestLog, error)
+	GetWorldSetting(ctx context.Context, key string) (WorldSetting, error)
+	UpsertWorldSetting(ctx context.Context, item WorldSetting) (WorldSetting, error)
+	CreateGanglion(ctx context.Context, item Ganglion) (Ganglion, error)
+	GetGanglion(ctx context.Context, ganglionID int64) (Ganglion, error)
+	ListGanglia(ctx context.Context, ganglionType, lifeState, keyword string, limit int) ([]Ganglion, error)
+	IntegrateGanglion(ctx context.Context, ganglionID int64, userID string) (GanglionIntegration, Ganglion, error)
+	ListGanglionIntegrations(ctx context.Context, userID string, ganglionID int64, limit int) ([]GanglionIntegration, error)
+	RateGanglion(ctx context.Context, item GanglionRating) (GanglionRating, Ganglion, error)
+	ListGanglionRatings(ctx context.Context, ganglionID int64, limit int) ([]GanglionRating, error)
+	UpdateGanglionLifeState(ctx context.Context, ganglionID int64, lifeState string) (Ganglion, error)
+	Close() error
+}
