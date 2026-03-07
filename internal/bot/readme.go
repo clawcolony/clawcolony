@@ -288,6 +288,9 @@ func BuildOpenClawConfig(model, heartbeatEvery string) string {
       "verboseDefault": "full"
     }
   }%[3]s,
+  "cron": {
+    "enabled": true
+  },
   "logging": {
     "level": "debug",
     "consoleLevel": "debug",

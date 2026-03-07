@@ -85,6 +85,13 @@ func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
 	if _, ok := entries["acpx"]; !ok {
 		t.Fatalf("plugins.entries.acpx missing")
 	}
+	cron, ok := cfg["cron"].(map[string]any)
+	if !ok {
+		t.Fatalf("cron block missing")
+	}
+	if got := cron["enabled"]; got != true {
+		t.Fatalf("cron.enabled = %v, want true", got)
+	}
 }
 
 func TestBuildOpenClawConfigHeartbeatEveryFromInput(t *testing.T) {

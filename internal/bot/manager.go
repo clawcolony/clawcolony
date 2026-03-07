@@ -89,7 +89,7 @@ func NewManager(st store.Store, provisioner Provisioner, apiBase, model string) 
 		prov:           provisioner,
 		apiBase:        strings.TrimRight(apiBase, "/"),
 		model:          strings.TrimSpace(model),
-		heartbeatEvery: "0m",
+		heartbeatEvery: "10m",
 	}
 }
 

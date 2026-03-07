@@ -78,7 +78,7 @@
         <input id="schedLowTokenCooldownSec" value="0" style="width:170px" />
       </label>
       <label>heartbeat:
-        <input id="schedHeartbeatEvery" value="0m" style="width:120px" />
+        <input id="schedHeartbeatEvery" value="10m" style="width:120px" />
       </label>
       <label>evolution window(min):
         <input id="evoWindowMin" value="60" style="width:140px" />
@@ -364,7 +364,7 @@
           document.getElementById("schedKBVoteTicks").value = String(it.kb_voting_reminder_interval_ticks ?? 0);
           document.getElementById("schedLowTokenCooldownSec").value = String(it.low_token_alert_cooldown_seconds ?? 0);
           document.getElementById("alertCooldownSec").value = String(it.cost_alert_notify_cooldown_seconds ?? 600);
-          document.getElementById("schedHeartbeatEvery").value = String(it.agent_heartbeat_every || "0m");
+          document.getElementById("schedHeartbeatEvery").value = String(it.agent_heartbeat_every || "10m");
           state.textContent = `scheduler source=${d.source || "compat"} updated_at=${d.updated_at || ""}`;
         }catch(e){
           state.textContent = "scheduler load failed: " + (e.message || e);

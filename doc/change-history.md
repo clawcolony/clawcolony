@@ -842,3 +842,11 @@
     - 以及 runtime scheduler / world cost alert 相关接口回归
   - 对应记录：
     - `doc/updates/2026-03-07-runtime-scheduler-unification-step73.md`
+
+- 2026-03-07 OpenClaw Cron Skip 诊断与默认配置修正（Step 74）：
+  - 默认 heartbeat 从 `0m` 调整为 `10m`（runtime scheduler fallback + manager 初始值 + dashboard 默认值）。
+  - 生成的 `openclaw.json` 显式写入 `cron.enabled=true`。
+  - 新增配置测试，覆盖 `cron` 块存在与启用状态。
+  - 目标：降低主会话 cron 因无心跳推进导致的 skipped 风险。
+  - 对应记录：
+    - `doc/updates/2026-03-07-openclaw-cron-heartbeat-default-step74.md`

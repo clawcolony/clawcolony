@@ -2993,7 +2993,7 @@ func TestRuntimeSchedulerSettingsEndpoints(t *testing.T) {
 		!bytes.Contains(body, []byte(`"kb_voting_reminder_interval_ticks":0`)) ||
 		!bytes.Contains(body, []byte(`"cost_alert_notify_cooldown_seconds":600`)) ||
 		!bytes.Contains(body, []byte(`"low_token_alert_cooldown_seconds":0`)) ||
-		!bytes.Contains(body, []byte(`"agent_heartbeat_every":"0m"`)) {
+		!bytes.Contains(body, []byte(`"agent_heartbeat_every":"10m"`)) {
 		t.Fatalf("unexpected runtime scheduler defaults: %s", w.Body.String())
 	}
 

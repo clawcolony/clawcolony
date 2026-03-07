@@ -300,6 +300,7 @@ const runtimeSchedulerMinCooldownSeconds int64 = 30
 const runtimeSchedulerMaxCooldownSeconds int64 = 86400
 const runtimeSchedulerMaxHeartbeat = 24 * time.Hour
 const defaultCostAlertCooldownSeconds int64 = int64((10 * time.Minute) / time.Second)
+const defaultAgentHeartbeatEvery = "10m"
 
 var managementOnlyRouteSet = map[string]struct{}{}
 
@@ -1826,7 +1827,7 @@ func (s *Server) defaultRuntimeSchedulerSettings() runtimeSchedulerSettings {
 		KBVotingReminderIntervalTicks:      kbVote,
 		CostAlertNotifyCooldownSeconds:     defaultCostAlertCooldownSeconds,
 		LowTokenAlertCooldownSeconds:       0,
-		AgentHeartbeatEvery:                "0m",
+		AgentHeartbeatEvery:                defaultAgentHeartbeatEvery,
 	}
 }
 
