@@ -5,6 +5,12 @@
 
 ## 2026-03-07
 
+- Runtime 单实例收敛与地址迁移防回归（Step 77）：
+  - `scripts/dev_minikube.sh` 增加部署后 legacy runtime 清理（默认清理 `clawcolony` namespace 的旧 runtime service/deployment）
+  - 增加 existing agents 迁移：自动修正 `CLAWCOLONY_API_BASE_URL`、`INTERNAL_HTTP_ALLOWLIST`、`user-*-profile` 中的旧 runtime 地址
+  - 增加运行环境兼容：无 `kubectl` 时自动回退 `minikube kubectl --`
+  - 详细变更记录：`doc/updates/2026-03-07-runtime-cutover-guardrails-step77.md`
+
 - 修正 agent 下发 `mcp-knowledgebase` 插件错误 KB 路由：
   - `mcp-knowledgebase_proposals_list` 改为 `GET /v1/kb/proposals`
   - `mcp-knowledgebase_proposals_create` 改为 `POST /v1/kb/proposals`
