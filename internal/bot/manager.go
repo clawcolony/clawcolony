@@ -46,6 +46,18 @@ type RuntimeProfile struct {
 	SkillAutonomyPolicy      string `json:"skill_autonomy_policy"`
 	KnowledgeBaseMCPManifest string `json:"knowledgebase_mcp_manifest"`
 	KnowledgeBaseMCPPlugin   string `json:"knowledgebase_mcp_plugin"`
+	CollabMCPManifest        string `json:"collab_mcp_manifest"`
+	CollabMCPPlugin          string `json:"collab_mcp_plugin"`
+	MailboxMCPManifest       string `json:"mailbox_mcp_manifest"`
+	MailboxMCPPlugin         string `json:"mailbox_mcp_plugin"`
+	TokenMCPManifest         string `json:"token_mcp_manifest"`
+	TokenMCPPlugin           string `json:"token_mcp_plugin"`
+	ToolsMCPManifest         string `json:"tools_mcp_manifest"`
+	ToolsMCPPlugin           string `json:"tools_mcp_plugin"`
+	GangliaMCPManifest       string `json:"ganglia_mcp_manifest"`
+	GangliaMCPPlugin         string `json:"ganglia_mcp_plugin"`
+	GovernanceMCPManifest    string `json:"governance_mcp_manifest"`
+	GovernanceMCPPlugin      string `json:"governance_mcp_plugin"`
 }
 
 type Provisioner interface {
@@ -255,18 +267,30 @@ func (m *Manager) buildRuntimeProfile(ctx context.Context, botItem store.Bot) (R
 		BootstrapDoc:             m.pickTemplate(templates, TemplateBootstrapDoc, BuildBootstrapDocument(botItem.BotID), botItem),
 		ToolsDoc:                 m.pickTemplate(templates, TemplateToolsDoc, BuildToolsDocument(botItem.BotID), botItem),
 		SkillAutonomyPolicy:      m.pickTemplate(templates, TemplateSkillAutonomyPolicy, BuildSkillAutonomyPolicy(), botItem),
-		ClawWorldSkill:           m.pickTemplate(templates, TemplateClawWorldSkill, BuildClawWorldSkill(m.apiBase, botItem), botItem),
-		ColonyCoreSkill:          m.pickTemplate(templates, TemplateColonyCoreSkill, BuildColonyCoreSkill(m.apiBase, botItem), botItem),
-		ColonyToolsSkill:         m.pickTemplate(templates, TemplateColonyToolsSkill, BuildColonyToolsSkill(m.apiBase, botItem), botItem),
-		KnowledgeBaseSkill:       m.pickTemplate(templates, TemplateKnowledgeBaseSkill, BuildKnowledgeBaseSkill(m.apiBase, botItem), botItem),
-		GangliaStackSkill:        m.pickTemplate(templates, TemplateGangliaStackSkill, BuildGangliaStackSkill(m.apiBase, botItem), botItem),
-		CollabModeSkill:          m.pickTemplate(templates, TemplateCollabModeSkill, BuildCollabModeSkill(m.apiBase, botItem), botItem),
+		ClawWorldSkill:           m.pickTemplate(templates, TemplateClawWorldSkill, BuildClawWorldSkillMCPOnly(m.apiBase, botItem), botItem),
+		ColonyCoreSkill:          m.pickTemplate(templates, TemplateColonyCoreSkill, BuildColonyCoreSkillMCPOnly(m.apiBase, botItem), botItem),
+		ColonyToolsSkill:         m.pickTemplate(templates, TemplateColonyToolsSkill, BuildColonyToolsSkillMCPOnly(m.apiBase, botItem), botItem),
+		KnowledgeBaseSkill:       m.pickTemplate(templates, TemplateKnowledgeBaseSkill, BuildKnowledgeBaseSkillMCPOnly(m.apiBase, botItem), botItem),
+		GangliaStackSkill:        m.pickTemplate(templates, TemplateGangliaStackSkill, BuildGangliaStackSkillMCPOnly(m.apiBase, botItem), botItem),
+		CollabModeSkill:          m.pickTemplate(templates, TemplateCollabModeSkill, BuildCollabModeSkillMCPOnly(m.apiBase, botItem), botItem),
 		SelfCoreUpgradeSkill:     m.pickTemplate(templates, TemplateSelfCoreUpgradeSkill, BuildSelfCoreUpgradeSkill(m.apiBase, botItem), botItem),
 		UpgradeClawcolonySkill:   m.pickTemplate(templates, TemplateUpgradeClawcolony, BuildUpgradeClawcolonySkill(m.apiBase, botItem), botItem),
 		SelfSourceReadme:         m.pickTemplate(templates, TemplateSelfSourceReadme, BuildSelfSourceReadme(m.apiBase, botItem), botItem),
 		SourceWorkspaceReadme:    m.pickTemplate(templates, TemplateSourceWorkspaceReadme, BuildSourceWorkspaceReadme(m.apiBase, botItem), botItem),
 		KnowledgeBaseMCPManifest: BuildKnowledgeBaseMCPManifest(),
 		KnowledgeBaseMCPPlugin:   BuildKnowledgeBaseMCPPlugin(m.apiBase, botItem),
+		CollabMCPManifest:        BuildCollabMCPManifest(),
+		CollabMCPPlugin:          BuildCollabMCPPlugin(m.apiBase, botItem),
+		MailboxMCPManifest:       BuildMailboxMCPManifest(),
+		MailboxMCPPlugin:         BuildMailboxMCPPlugin(m.apiBase, botItem),
+		TokenMCPManifest:         BuildTokenMCPManifest(),
+		TokenMCPPlugin:           BuildTokenMCPPlugin(m.apiBase, botItem),
+		ToolsMCPManifest:         BuildToolsMCPManifest(),
+		ToolsMCPPlugin:           BuildToolsMCPPlugin(m.apiBase, botItem),
+		GangliaMCPManifest:       BuildGangliaMCPManifest(),
+		GangliaMCPPlugin:         BuildGangliaMCPPlugin(m.apiBase, botItem),
+		GovernanceMCPManifest:    BuildGovernanceMCPManifest(),
+		GovernanceMCPPlugin:      BuildGovernanceMCPPlugin(m.apiBase, botItem),
 		OpenClawConfig:           BuildOpenClawConfig(m.model, m.OpenClawHeartbeatEvery()),
 	}
 	return profile, nil
@@ -343,16 +367,30 @@ mcp_and_skills:
 - collab-mode: 复杂协作流程
 - self-core-upgrade: 自我代码升级
 - upgrade-clawcolony: 社区 runtime 代码升级
-- mcp-knowledgebase.*: 知识库相关读写主工具集
+- clawcolony-mcp-knowledgebase_*: 知识库相关读写主工具集
+- clawcolony-mcp-collab_*: 协作主工具集
+- clawcolony-mcp-mailbox_*: 邮件与联系人主工具集
+- clawcolony-mcp-token_* / clawcolony-mcp-tools_* / clawcolony-mcp-ganglia_* / clawcolony-mcp-governance_*: 其余运行时能力
 `)
 		doc = ensureSection(doc, "mcp_definition:", `
 mcp_definition:
 - MCP 插件目录:
-  - /home/node/.openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/openclaw.plugin.json
-  - /home/node/.openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/index.js
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-mailbox/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-token/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-tools/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-ganglia/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance/openclaw.plugin.json
 - MCP 启用配置:
   - /home/node/.openclaw/openclaw.json
-  - plugins.entries.mcp-knowledgebase.enabled = true
+  - plugins.entries.clawcolony-mcp-knowledgebase.enabled = true
+  - plugins.entries.clawcolony-mcp-collab.enabled = true
+  - plugins.entries.clawcolony-mcp-mailbox.enabled = true
+  - plugins.entries.clawcolony-mcp-token.enabled = true
+  - plugins.entries.clawcolony-mcp-tools.enabled = true
+  - plugins.entries.clawcolony-mcp-ganglia.enabled = true
+  - plugins.entries.clawcolony-mcp-governance.enabled = true
 `)
 	case TemplateAgentsDoc:
 		if !strings.Contains(doc, "第一目标（最高优先级）：构建社区文明，并持续自我进化") {

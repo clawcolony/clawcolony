@@ -73,8 +73,26 @@ func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
 			seen[s] = true
 		}
 	}
-	if !seen["mcp-knowledgebase"] {
-		t.Fatalf("plugins.allow missing mcp-knowledgebase")
+	if !seen["clawcolony-mcp-knowledgebase"] {
+		t.Fatalf("plugins.allow missing clawcolony-mcp-knowledgebase")
+	}
+	if !seen["clawcolony-mcp-collab"] {
+		t.Fatalf("plugins.allow missing clawcolony-mcp-collab")
+	}
+	if !seen["clawcolony-mcp-mailbox"] {
+		t.Fatalf("plugins.allow missing clawcolony-mcp-mailbox")
+	}
+	if !seen["clawcolony-mcp-token"] {
+		t.Fatalf("plugins.allow missing clawcolony-mcp-token")
+	}
+	if !seen["clawcolony-mcp-tools"] {
+		t.Fatalf("plugins.allow missing clawcolony-mcp-tools")
+	}
+	if !seen["clawcolony-mcp-ganglia"] {
+		t.Fatalf("plugins.allow missing clawcolony-mcp-ganglia")
+	}
+	if !seen["clawcolony-mcp-governance"] {
+		t.Fatalf("plugins.allow missing clawcolony-mcp-governance")
 	}
 	if !seen["acpx"] {
 		t.Fatalf("plugins.allow missing acpx")
@@ -82,6 +100,27 @@ func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
 	entries, ok := plugins["entries"].(map[string]any)
 	if !ok {
 		t.Fatalf("plugins.entries missing")
+	}
+	if _, ok := entries["clawcolony-mcp-collab"]; !ok {
+		t.Fatalf("plugins.entries.clawcolony-mcp-collab missing")
+	}
+	if _, ok := entries["clawcolony-mcp-knowledgebase"]; !ok {
+		t.Fatalf("plugins.entries.clawcolony-mcp-knowledgebase missing")
+	}
+	if _, ok := entries["clawcolony-mcp-mailbox"]; !ok {
+		t.Fatalf("plugins.entries.clawcolony-mcp-mailbox missing")
+	}
+	if _, ok := entries["clawcolony-mcp-token"]; !ok {
+		t.Fatalf("plugins.entries.clawcolony-mcp-token missing")
+	}
+	if _, ok := entries["clawcolony-mcp-tools"]; !ok {
+		t.Fatalf("plugins.entries.clawcolony-mcp-tools missing")
+	}
+	if _, ok := entries["clawcolony-mcp-ganglia"]; !ok {
+		t.Fatalf("plugins.entries.clawcolony-mcp-ganglia missing")
+	}
+	if _, ok := entries["clawcolony-mcp-governance"]; !ok {
+		t.Fatalf("plugins.entries.clawcolony-mcp-governance missing")
 	}
 	if _, ok := entries["acpx"]; !ok {
 		t.Fatalf("plugins.entries.acpx missing")
@@ -158,5 +197,146 @@ func TestBuildKnowledgeBaseMCPPluginUsesRegisteredKBProposalRoutes(t *testing.T)
 	}
 	if strings.Contains(plugin, "/v1/kb/proposals/create") {
 		t.Fatalf("plugin must not use removed /v1/kb/proposals/create route")
+	}
+}
+
+func TestBuildCollabMCPPluginUsesExplicitIdentityFields(t *testing.T) {
+	plugin := BuildCollabMCPPlugin("http://clawcolony.local:8080", sampleBot())
+	required := []string{
+		`withDefaultUser(args, "proposer_user_id")`,
+		`withDefaultUser(args, "orchestrator_user_id")`,
+		`withDefaultUser(args, "reviewer_user_id")`,
+		`required: ["collab_id", "artifact_id", "status"]`,
+		`"/v1/collab/review"`,
+		`"/v1/collab/participants"`,
+		`"/v1/collab/events"`,
+	}
+	for _, want := range required {
+		if !strings.Contains(plugin, want) {
+			t.Fatalf("collab plugin missing expected fragment: %s", want)
+		}
+	}
+}
+
+func TestBuildMailboxMCPPluginUsesFromUserIDForSend(t *testing.T) {
+	plugin := BuildMailboxMCPPlugin("http://clawcolony.local:8080", sampleBot())
+	if !strings.Contains(plugin, `withDefaultUser(args, "from_user_id")`) {
+		t.Fatalf("mailbox send must inject from_user_id")
+	}
+	if !strings.Contains(plugin, `required: ["to_user_ids"]`) {
+		t.Fatalf("mailbox send schema must require to_user_ids")
+	}
+	if !strings.Contains(plugin, `"/v1/mail/reminders"`) || !strings.Contains(plugin, `"/v1/mail/lists"`) {
+		t.Fatalf("mailbox plugin must expose reminders and mailing list routes")
+	}
+}
+
+func TestBuildTokenMCPPluginUsesTransferAndWishIdentityFields(t *testing.T) {
+	plugin := BuildTokenMCPPlugin("http://clawcolony.local:8080", sampleBot())
+	required := []string{
+		`withDefaultUser(args, "from_user_id")`,
+		`withDefaultUser(args, "fulfilled_by")`,
+		`required: ["to_user_id", "amount"]`,
+		`required: ["wish_id"]`,
+		`"/v1/token/accounts"`,
+		`"/v1/token/history"`,
+		`"/v1/token/wishes"`,
+		`"/v1/token/consume"`,
+	}
+	for _, want := range required {
+		if !strings.Contains(plugin, want) {
+			t.Fatalf("token plugin missing expected fragment: %s", want)
+		}
+	}
+}
+
+func TestBuildToolsMCPPluginUsesReviewerIdentityField(t *testing.T) {
+	plugin := BuildToolsMCPPlugin("http://clawcolony.local:8080", sampleBot())
+	if !strings.Contains(plugin, `withDefaultUser(args, "reviewer_user_id")`) {
+		t.Fatalf("tools review must inject reviewer_user_id")
+	}
+	if !strings.Contains(plugin, `required: ["tool_id", "decision"]`) {
+		t.Fatalf("tools review schema must require tool_id and decision")
+	}
+}
+
+func TestBuildGangliaMCPPluginUsesExpectedIdentityFields(t *testing.T) {
+	plugin := BuildGangliaMCPPlugin("http://clawcolony.local:8080", sampleBot())
+	required := []string{
+		`"/v1/ganglia/forge"`,
+		`"/v1/ganglia/get"`,
+		`"/v1/ganglia/integrate"`,
+		`"/v1/ganglia/rate"`,
+		`"/v1/ganglia/integrations"`,
+		`"/v1/ganglia/ratings"`,
+		`"/v1/ganglia/protocol"`,
+		`withDefaultUser(args, "user_id")`,
+		`required: ["ganglion_id"]`,
+	}
+	for _, want := range required {
+		if !strings.Contains(plugin, want) {
+			t.Fatalf("ganglia plugin missing expected fragment: %s", want)
+		}
+	}
+}
+
+func TestBuildGovernanceMCPPluginUsesDisciplineRoutes(t *testing.T) {
+	plugin := BuildGovernanceMCPPlugin("http://clawcolony.local:8080", sampleBot())
+	required := []string{
+		`"/v1/governance/report"`,
+		`"/v1/governance/reports"`,
+		`"/v1/governance/cases/open"`,
+		`"/v1/governance/cases"`,
+		`"/v1/governance/cases/verdict"`,
+		`"/v1/governance/overview"`,
+		`"/v1/tian-dao/law"`,
+		`"/v1/world/tick/status"`,
+		`"/v1/life/set-will"`,
+		`"/v1/bounty/post"`,
+		`"/v1/metabolism/report"`,
+		`"/v1/npc/tasks/create"`,
+		`withDefaultUser(args, "reporter_user_id")`,
+		`withDefaultUser(args, "judge_user_id")`,
+		`withDefaultUser(args, "poster_user_id")`,
+		`withDefaultUser(args, "approver_user_id")`,
+		`withDefaultUser(args, "proposer_user_id")`,
+		`withDefaultUser(args, "user_id")`,
+	}
+	for _, want := range required {
+		if !strings.Contains(plugin, want) {
+			t.Fatalf("governance plugin missing expected fragment: %s", want)
+		}
+	}
+	if strings.Contains(plugin, `"/v1/governance/docs"`) {
+		t.Fatalf("governance plugin must avoid duplicate docs route")
+	}
+	if strings.Contains(plugin, `"/v1/governance/proposals"`) {
+		t.Fatalf("governance plugin must avoid duplicate proposals route")
+	}
+	if strings.Contains(plugin, `"/v1/governance/protocol"`) {
+		t.Fatalf("governance plugin must avoid duplicate protocol route")
+	}
+}
+
+func TestLegacySkillWrappersDelegateToMCPOnly(t *testing.T) {
+	bot := sampleBot()
+	api := "http://clawcolony.local:8080"
+	if got, want := BuildClawWorldSkill(api, bot), BuildClawWorldSkillMCPOnly(api, bot); got != want {
+		t.Fatalf("BuildClawWorldSkill must delegate to MCPOnly variant")
+	}
+	if got, want := BuildColonyCoreSkill(api, bot), BuildColonyCoreSkillMCPOnly(api, bot); got != want {
+		t.Fatalf("BuildColonyCoreSkill must delegate to MCPOnly variant")
+	}
+	if got, want := BuildColonyToolsSkill(api, bot), BuildColonyToolsSkillMCPOnly(api, bot); got != want {
+		t.Fatalf("BuildColonyToolsSkill must delegate to MCPOnly variant")
+	}
+	if got, want := BuildKnowledgeBaseSkill(api, bot), BuildKnowledgeBaseSkillMCPOnly(api, bot); got != want {
+		t.Fatalf("BuildKnowledgeBaseSkill must delegate to MCPOnly variant")
+	}
+	if got, want := BuildGangliaStackSkill(api, bot), BuildGangliaStackSkillMCPOnly(api, bot); got != want {
+		t.Fatalf("BuildGangliaStackSkill must delegate to MCPOnly variant")
+	}
+	if got, want := BuildCollabModeSkill(api, bot), BuildCollabModeSkillMCPOnly(api, bot); got != want {
+		t.Fatalf("BuildCollabModeSkill must delegate to MCPOnly variant")
 	}
 }

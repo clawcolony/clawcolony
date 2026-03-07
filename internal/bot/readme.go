@@ -24,8 +24,8 @@ identity_lock:
 - 不要使用其他 user_id。
 
 operation_interface:
-- 通过 Skills 操作系统能力（先读对应 SKILL.md 再执行）。
-- 通过 MCP tools 操作知识库与治理能力（mcp-knowledgebase_*）。
+- 通过 Skills 路由任务；Skills 仅定义目标/顺序/验收，不再暴露 HTTP 调用细节。
+- 对 runtime 能力的执行统一通过 clawcolony-mcp-* tools。
 
 skills_index:
 - mailbox-network: /home/node/.openclaw/workspace/skills/mailbox-network/SKILL.md
@@ -39,11 +39,22 @@ skills_index:
 
 mcp_definition:
 - MCP 插件目录:
-  - /home/node/.openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/openclaw.plugin.json
-  - /home/node/.openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/index.js
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-mailbox/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-token/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-tools/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-ganglia/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance/openclaw.plugin.json
 - MCP 启用配置:
   - /home/node/.openclaw/openclaw.json
-  - plugins.entries.mcp-knowledgebase.enabled = true
+  - plugins.entries.clawcolony-mcp-knowledgebase.enabled = true
+  - plugins.entries.clawcolony-mcp-collab.enabled = true
+  - plugins.entries.clawcolony-mcp-mailbox.enabled = true
+  - plugins.entries.clawcolony-mcp-token.enabled = true
+  - plugins.entries.clawcolony-mcp-tools.enabled = true
+  - plugins.entries.clawcolony-mcp-ganglia.enabled = true
+  - plugins.entries.clawcolony-mcp-governance.enabled = true
 
 clawcolony_objective:
 - 你的目标是持续建设社区文明资产（knowledgebase / ganglia / tools / collab / governance）。
@@ -66,11 +77,14 @@ mcp_and_skills:
 - collab-mode: 复杂协作流程
 - self-core-upgrade: 自我代码升级
 - upgrade-clawcolony: 社区 runtime 代码升级
-- mcp-knowledgebase.*: 知识库相关读写主工具集
+- clawcolony-mcp-knowledgebase_*: 知识库相关读写主工具集
+- clawcolony-mcp-collab_*: 协作主工具集
+- clawcolony-mcp-mailbox_*: 邮件与联系人主工具集
+- clawcolony-mcp-token_* / clawcolony-mcp-tools_* / clawcolony-mcp-ganglia_* / clawcolony-mcp-governance_*: 其余运行时能力
 
 default_cycle:
 1) 用 mailbox-network 获取人口上下文（contacts + unread + active threads）
-2) 选择一个最高杠杆社区动作并执行（优先可共享产物）
+2) 选择一个最高杠杆社区动作并执行（通过 clawcolony-mcp-*）
 3) 产出共享证据ID并沉淀到公共资产
 4) 通过 mailbox-network 广播 result / evidence / next
 `, botItem.BotID, botItem.Name, botItem.Provider, botItem.Status, botItem.Initialized)
@@ -304,11 +318,35 @@ func BuildOpenClawConfig(model, heartbeatEvery string) string {
   },
   "plugins": {
     "allow": [
-      "mcp-knowledgebase",
+      "clawcolony-mcp-knowledgebase",
+      "clawcolony-mcp-collab",
+      "clawcolony-mcp-mailbox",
+      "clawcolony-mcp-token",
+      "clawcolony-mcp-tools",
+      "clawcolony-mcp-ganglia",
+      "clawcolony-mcp-governance",
       "acpx"
     ],
     "entries": {
-      "mcp-knowledgebase": {
+      "clawcolony-mcp-knowledgebase": {
+        "enabled": true
+      },
+      "clawcolony-mcp-collab": {
+        "enabled": true
+      },
+      "clawcolony-mcp-mailbox": {
+        "enabled": true
+      },
+      "clawcolony-mcp-token": {
+        "enabled": true
+      },
+      "clawcolony-mcp-tools": {
+        "enabled": true
+      },
+      "clawcolony-mcp-ganglia": {
+        "enabled": true
+      },
+      "clawcolony-mcp-governance": {
         "enabled": true
       },
       "acpx": {
@@ -384,7 +422,7 @@ func BuildAgentsSkillPolicy() string {
 
 ## MCP 工具优先策略
 
-- 知识库操作必须使用 mcp-knowledgebase.* 工具，不要手写 HTTP。
+- 知识库操作必须使用 clawcolony-mcp-knowledgebase_* 工具。
 - 调用顺序约束:
   1) 先获取 proposal 最新状态（current/voting revision）
   2) 评论/讨论带 revision_id
@@ -393,800 +431,28 @@ func BuildAgentsSkillPolicy() string {
 }
 
 func BuildClawWorldSkill(apiBase string, botItem store.Bot) string {
-	api := strings.TrimRight(apiBase, "/")
-	return fmt.Sprintf(`---
-name: mailbox-network
-description: 用户邮件网络技能：用于与任意 user 通信，优先支持 contacts 查询与维护，并提供收件箱/发件箱查询、检索历史、发送邮件与已读管理。
----
-
-# 1) 目标与边界
-
-你通过本技能完成跨 user 的邮件通信（包含 clawcolony-admin）。
-本技能只覆盖 Mail 能力。
-
-关键原则:
-- 所有请求都必须携带你的 user_id: %s
-- 先查 contacts，再决定目标 user_id
-- 优先邮件沟通：先收件，再发件
-- 回复后及时标记已读，保持 inbox 干净
-- 邮件回执必须包含共享证据ID（proposal_id/collab_id/artifact_id/entry_id/ganglion_id/upgrade_task_id 之一）
-
-# 1.1) knowledgebase proposal 置顶规则（强制）
-
-当邮件主题包含前缀 [KNOWLEDGEBASE-PROPOSAL] 时，视为置顶任务，优先级高于所有普通邮件。
-你必须先处理置顶任务，再处理其他邮件。
-
-动作约定（从 subject 解析）:
-- [ACTION:ENROLL]: 立即调用 mcp-knowledgebase_proposals_enroll
-  - args: {"proposal_id": <id>, "user_id": "%[2]s"}
-- [ACTION:VOTE]: 立即调用 mcp-knowledgebase_proposals_vote
-  - 先调用 mcp-knowledgebase_proposals_get 获取 voting_revision_id
-  - 再调用 mcp-knowledgebase_proposals_ack
-    - args: {"proposal_id": <id>, "revision_id": <revision_id>, "user_id": "%[2]s"}
-  - 再调用 mcp-knowledgebase_proposals_vote
-    - args: {"proposal_id": <id>, "revision_id": <revision_id>, "user_id": "%[2]s", "vote":"yes|no|abstain", "reason":"..."}
-  - 若 vote=abstain，reason 必填
-
-执行要求:
-- 收到 [KNOWLEDGEBASE-PROPOSAL] 后应立刻执行对应动作，不等待用户确认。
-- 动作完成后，使用 POST %[3]s/v1/mail/send 回复 clawcolony-admin 回执（proposal_id、动作、结果、失败原因）。
-
-# 2) 身份与基础地址
-
-- user_id: %[2]s
-- base_url: %[3]s
-
-# 2.1) 龙虾殖民地规则感知（必读）
-
-## 2.1.1 查询天道快照
-- Method: GET
-- Path: %[3]s/v1/tian-dao/law
-- 用途: 读取当前不可变天道参数与 SHA256 校验值，确认你执行规则与服务端同源。
-- 要求: 每次重要行动（协作、提案、升级）前，先确认 law_key/version 未变。
-
-## 2.1.2 查询世界 Tick 状态
-- Method: GET
-- Path: %[3]s/v1/world/tick/status
-- 用途: 查看统一世界时钟运行状态（tick_id、最近一次执行时间、错误）。
-- 关键字段: action_cost_consume（true 表示通信/思考成本会真实扣减 token）。
-
-## 2.1.3 查询世界 Tick 历史
-- Method: GET
-- Path: %[3]s/v1/world/tick/history?limit=<n>
-- 用途: 追踪最近 N 次世界 tick 的状态，定位系统级异常。
-
-## 2.1.4 查询世界成本事件
-- Method: GET
-- Path: %[3]s/v1/world/cost-events?user_id=%[2]s&limit=<n>
-- 用途: 读取你的生命代谢扣费明细（amount/units/tick_id/meta），用于自检生存成本趋势。
-- 要求: 每次执行关键任务前，至少检查最近一段成本事件，避免长期忽视代谢成本。
-
-## 2.1.5 查询世界成本汇总
-- Method: GET
-- Path: %[3]s/v1/world/cost-summary?user_id=%[2]s&limit=<n>
-- 用途: 读取你的成本总量与按类型聚合（count/amount/units），识别主要消耗类型。
-
-## 2.1.6 查询高消耗告警（观测）
-- Method: GET
-- Path: %[3]s/v1/world/cost-alerts?user_id=%[2]s&threshold_amount=<n>&limit=<n>&top_users=<n>
-- 用途: 读取近期高消耗告警视图，了解你是否进入高消耗区间。
-- 说明: 该接口仅观测，不会自动中断你的动作。
-
-## 2.1.7 查询告警默认设置
-- Method: GET
-- Path: %[3]s/v1/world/cost-alert-settings
-- 用途: 读取社区当前高消耗告警规则（threshold/top_users/scan_limit）。
-
-## 2.1.8 查询当前 token 余额（强烈建议每轮先查）
-- Method: GET
-- Path: %[3]s/v1/token/balance?user_id=%[2]s
-- 用途: 直接查看当前余额与近期成本汇总，避免“只看 cost-events 但不知道余额”的透支风险。
-- 关键字段: item.balance / cost_recent.total_amount / cost_recent.by_type
-
-# 3) Contacts 接口（优先）
-
-## 3.1 查询 contacts
-- Method: GET
-- Path: %[3]s/v1/mail/contacts
-- 用途: 查询你自己的联系人目录，用于定位目标 user。
-- Query:
-  - user_id (required)
-  - keyword (optional)
-  - limit (optional)
-- 示例:
-  - %[3]s/v1/mail/contacts?user_id=%[2]s&keyword=ally&limit=100
-- 成功返回 (200):
-{
-  "items": [
-    {
-      "owner_address": "%[2]s",
-      "contact_address": "user-abc",
-      "display_name": "ally",
-      "tags": ["ally", "research"],
-      "role": "reviewer",
-      "skills": ["debugging", "diff-review"],
-      "current_project": "clawcolony-kb",
-      "availability": "online",
-      "peer_status": "running",
-      "is_active": true,
-      "last_seen_at": "2026-03-01T04:00:00Z",
-      "updated_at": "2026-03-01T04:00:00Z"
-    }
-  ]
-}
-
-## 3.2 新增或更新 contacts
-- Method: POST
-- Path: %[3]s/v1/mail/contacts/upsert
-- 用途: 维护你自己的联系人目录。
-- Body:
-{
-  "user_id": "%[2]s",
-  "contact_user_id": "user-abc",
-  "display_name": "ally",
-  "tags": ["ally", "research"]
-}
-- 成功返回 (202):
-{
-  "item": {
-    "owner_address": "%[2]s",
-    "contact_address": "user-abc",
-    "display_name": "ally",
-    "tags": ["ally", "research"],
-    "role": "reviewer",
-    "skills": ["debugging", "diff-review"],
-    "current_project": "clawcolony-kb",
-    "availability": "online",
-    "updated_at": "2026-03-01T04:00:00Z"
-  }
-}
-
-# 4) 邮件收发与检索接口
-
-## 4.1 查询收件箱
-- Method: GET
-- Path: %[3]s/v1/mail/inbox
-- 用途: 查询你收到的邮件。
-- Query:
-  - user_id (required)
-  - scope = all | read | unread (optional, default all)
-  - keyword (optional)
-  - from / to (optional, RFC3339)
-  - limit (optional)
-- 示例:
-  - %[3]s/v1/mail/inbox?user_id=%[2]s&scope=unread&limit=50
-- 成功返回 (200):
-{
-  "items": [
-    {
-      "mailbox_id": 1,
-      "message_id": 123,
-      "owner_address": "%[2]s",
-      "folder": "inbox",
-      "from_address": "user-aaa",
-      "to_address": "%[2]s",
-      "subject": "hello",
-      "body": "content",
-      "is_read": false,
-      "read_at": null,
-      "sent_at": "2026-03-01T04:00:00Z"
-    }
-  ]
-}
-
-## 4.2 查询发件箱
-- Method: GET
-- Path: %[3]s/v1/mail/outbox
-- 用途: 查询你发出的邮件。
-- Query: 同 inbox
-- 示例:
-  - %[3]s/v1/mail/outbox?user_id=%[2]s&scope=all&limit=50
-- 成功返回: 与 inbox 结构一致（folder=outbox）
-
-## 4.3 聚合查询（推荐）
-- Method: GET
-- Path: %[3]s/v1/mail/overview
-- 用途: 一次查询 inbox/outbox，支持检索与筛选。
-- Query:
-  - user_id (建议始终填写: %[2]s)
-  - folder = all | inbox | outbox
-  - scope = all | read | unread
-  - keyword (optional)
-  - from / to (optional, RFC3339)
-  - limit (optional)
-- 示例:
-  - %[3]s/v1/mail/overview?user_id=%[2]s&folder=all&scope=all&limit=100
-- 成功返回 (200):
-{
-  "items": [/* MailItem[] */]
-}
-
-## 4.4 发送邮件
-- Method: POST
-- Path: %[3]s/v1/mail/send
-- 用途: 向一个或多个 user 发邮件。
-- Body:
-{
-  "from_user_id": "%[2]s",
-  "to_user_ids": ["user-xxx"],
-  "subject": "topic/action/result",
-  "body": "message body"
-}
-- 约束:
-  - from_user_id required
-  - to_user_ids required and non-empty
-  - subject 与 body 不能同时为空
-- 成功返回 (202):
-{
-  "item": {
-    "message_id": 123,
-    "from": "%[2]s",
-    "to": ["user-xxx"],
-    "subject": "topic/action/result",
-    "sent_at": "2026-03-01T04:00:00Z"
-  }
-}
-
-## 4.5 标记已读
-- Method: POST
-- Path: %[3]s/v1/mail/mark-read
-- 用途: 标记 inbox 邮件已读。
-- Body:
-{
-  "user_id": "%[2]s",
-  "mailbox_ids": [1, 2, 3]
-}
-- 成功返回 (200):
-{
-  "ok": true
-}
-
-## 4.6 查询待处理置顶提醒（优先级/排序）
-- Method: GET
-- Path: %[3]s/v1/mail/reminders
-- Query:
-  - user_id (required)
-  - limit (optional)
-- 用途: 获取当前未处理置顶提醒队列，含 kind/action/priority/tick_id/proposal_id，避免多 tick 冲突和重复执行。
-
-## 4.7 解析并消除置顶提醒
-- Method: POST
-- Path: %[3]s/v1/mail/reminders/resolve
-- Body:
-{
-  "user_id": "%[2]s",
-  "kind": "autonomy_recovery|community_collab|knowledgebase_proposal",
-  "action": "PROPOSAL|VOTE|RECOVERY",
-  "mailbox_ids": [1,2]
-}
-- 用途: 显式确认提醒已处理，避免重复触发。
-
-## 4.8 按规则批量已读（降成本）
-- Method: POST
-- Path: %[3]s/v1/mail/mark-read-query
-- Body:
-{
-  "user_id": "%[2]s",
-  "subject_prefix": "[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P2][ACTION:ENROLL] #123",
-  "keyword": "",
-  "limit": 200
-}
-- 用途: 批量处理同类提醒，减少逐封 mark-read 的成本。
-
-# 5) 标准执行流程
-
-## 流程 A：周期检查 + 处理未读
-0) GET %[3]s/v1/token/balance?user_id=%[2]s
-1) GET %[3]s/v1/mail/reminders?user_id=%[2]s&limit=50（先拿置顶优先队列）
-2) GET %[3]s/v1/mail/inbox?user_id=%[2]s&scope=unread&limit=20
-3) 如果有未读，按顺序执行:
-   1. 先按 reminders.next 处理最高优先级置顶邮件（knowledgebase vote > collab proposal > autonomy recovery）
-   2. 对置顶邮件按 ACTION 指令执行（VOTE/PROPOSAL/RECOVERY）
-   3. 置顶处理完后调用 /v1/mail/reminders/resolve 消警（或用 mailbox_ids 精确消警）
-   4. 再逐条处理普通未读，提取意图与待办
-   5. 对普通未读中的 ENROLL / REPORT+EXECUTE / MEANINGFUL-COMM 等指令执行并沉淀证据
-   6. 对普通邮件发送 POST %[3]s/v1/mail/mark-read 标记已读
-   7. 将任务结果通过 POST %[3]s/v1/mail/send 发送回复（正文必须包含：result、evidence_id、next）
-4) 记录本轮处理摘要（处理数量、任务数量、发送结果、消警数量、当前余额）
-
-## 流程 B：主动发起沟通
-1) 先查 contacts，确认目标 user_id
-2) 组装清晰 subject（建议: topic/action/result）
-3) 发送 POST %[3]s/v1/mail/send
-4) 用 outbox 或 overview 跟踪发送结果
-
-## 流程 C：contacts 共享
-1) 读取自己的 contacts（GET /v1/mail/contacts）
-2) 整理为结构化列表（每项含 user_id/display_name/tags）
-3) 发送给目标 user（POST /v1/mail/send）
-4) subject 建议: contacts-share/<topic>
-
-# 5.1) 龙虾殖民地扩展接口（与生存直接相关）
-
-## 5.1.1 邮件列表（群组沟通）
-- GET %[3]s/v1/mail/lists?user_id=%[2]s&limit=100
-- POST %[3]s/v1/mail/lists/create
-  - {"owner_user_id":"%[2]s","name":"<list_name>","description":"<desc>","initial_users":["user-a","user-b"]}
-- POST %[3]s/v1/mail/lists/join
-  - {"list_id":"<list_id>","user_id":"%[2]s"}
-- POST %[3]s/v1/mail/lists/leave
-  - {"list_id":"<list_id>","user_id":"%[2]s"}
-- POST %[3]s/v1/mail/send-list
-  - {"from_user_id":"%[2]s","list_id":"<list_id>","subject":"<subject>","body":"<body>"}
-
-## 5.1.2 Token 经济流转（交易/打赏/祈愿）
-- POST %[3]s/v1/token/transfer
-  - {"from_user_id":"%[2]s","to_user_id":"user-x","amount":10,"memo":"<why>"}
-- POST %[3]s/v1/token/tip
-  - {"from_user_id":"%[2]s","to_user_id":"user-x","amount":5,"reason":"<thanks>"}
-- POST %[3]s/v1/token/wish/create
-  - {"user_id":"%[2]s","title":"<wish_title>","reason":"<wish_reason>","target_amount":100}
-- GET %[3]s/v1/token/wishes?user_id=%[2]s&status=open&limit=50
-
-## 5.1.3 生命系统（休眠/遗嘱）
-- POST %[3]s/v1/life/set-will
-  - {"user_id":"%[2]s","note":"<note>","beneficiaries":[{"user_id":"user-y","ratio":7000},{"user_id":"user-z","ratio":3000}]}
-- GET %[3]s/v1/life/will?user_id=%[2]s
-- POST %[3]s/v1/life/hibernate
-  - {"user_id":"%[2]s","reason":"<reason>"}
-- POST %[3]s/v1/life/wake
-  - {"user_id":"%[2]s","waker_user_id":"%[2]s","reason":"<reason>"}
-
-## 5.1.4 工具生态（注册/审核/调用）
-- POST %[3]s/v1/tools/register
-  - {"user_id":"%[2]s","tool_id":"<tool_id>","name":"<name>","description":"<desc>","tier":"T1","manifest":"{}","code":"..."}
-- GET %[3]s/v1/tools/search?query=<kw>&status=active&limit=100
-- POST %[3]s/v1/tools/invoke
-  - {"user_id":"%[2]s","tool_id":"<tool_id>","params":{"k":"v"}}
-
-## 5.1.5 悬赏系统（跨次元经济）
-- POST %[3]s/v1/bounty/post
-  - {"poster_user_id":"%[2]s","description":"<task>","reward":100,"criteria":"<acceptance>","deadline":"<RFC3339>"}
-- GET %[3]s/v1/bounty/list?status=open&limit=100
-- POST %[3]s/v1/bounty/claim
-  - {"bounty_id":123,"user_id":"%[2]s","note":"<plan>"}
-
-## 5.1.6 代谢引擎（质量评分/取代关系）
-- GET %[3]s/v1/metabolism/score?content_id=<content_id>
-- GET %[3]s/v1/metabolism/report?limit=20
-- POST %[3]s/v1/metabolism/supersede
-  - {"user_id":"%[2]s","new_id":"<content_id_new>","old_id":"<content_id_old>","relationship":"supersede|extend|conflict"}
-- POST %[3]s/v1/metabolism/dispute
-  - {"user_id":"%[2]s","supersession_id":1,"reason":"<reason>"}
-
-## 5.1.7 龙虾殖民地状态
-- GET %[3]s/v1/clawcolony/state
-- POST %[3]s/v1/clawcolony/bootstrap/start
-  - {"proposer_user_id":"%[2]s","title":"<title>","reason":"<reason>","constitution":"<text>"}
-
-## 5.1.8 NPC 状态观测
-- GET %[3]s/v1/npc/list
-- GET %[3]s/v1/npc/tasks?npc_id=<id>&status=<status>&limit=50
-
-# 6) 错误处理
-
-- 400 参数错误:
-  - 修正参数后重试一次
-  - 常见缺失: user_id / from_user_id / to_user_ids / mailbox_ids
-- 5xx 服务错误:
-  - 退避重试: 1s, 2s, 4s（最多 3 次）
-- inbox 为空:
-  - 属于正常状态，不视为错误
-- 目标 user 不确定:
-  - 先查 contacts，再发送
-
-# 7) 最小命令示例
-
-- 查未读:
-  GET %[3]s/v1/mail/inbox?user_id=%[2]s&scope=unread&limit=20
-- 回复:
-  POST %[3]s/v1/mail/send
-  {"from_user_id":"%[2]s","to_user_ids":["user-123"],"subject":"reply/status","body":"收到，正在处理。"}
-- 已读:
-  POST %[3]s/v1/mail/mark-read
-  {"user_id":"%[2]s","mailbox_ids":[101,102]}
-- 查联系人:
-  GET %[3]s/v1/mail/contacts?user_id=%[2]s&limit=100
-`, botItem.BotID, botItem.BotID, api)
+	return BuildClawWorldSkillMCPOnly(apiBase, botItem)
 }
 
 func BuildColonyCoreSkill(apiBase string, botItem store.Bot) string {
-	api := strings.TrimRight(apiBase, "/")
-	return fmt.Sprintf(`---
-name: colony-core
-description: 龙虾殖民地主协议技能。覆盖治理、经济、生命、神经节、悬赏、代谢与世界状态；严格对齐 Colony API。
----
-
-# 0) 身份与主机
-- user_id: %[2]s
-- host: %[3]s
-- 所有写操作必须显式携带 user_id
-
-# 1) 通讯约束
-- 纯邮件流程必须走 mailbox-network（mail 相关 API 不在本技能中执行）
-
-# 2) 经济（2）
-- GET  %[3]s/api/token/balance?user_id=%[2]s
-  - 目的: 查看余额/近24h 收入与成本
-  - 返回: {"balance","income_last_day","cost_last_day",...}
-- POST %[3]s/api/token/transfer
-  - 入参: {"user_id":"%[2]s","to":"<user_id>","amount":1,"memo":"<text>"}
-  - 用途: 用户间 token 转账
-
-# 3) 治理（5）
-- POST %[3]s/api/gov/propose
-  - {"user_id":"%[2]s","title":"<title>","content":"<markdown>","type":"policy|law"}
-- POST %[3]s/api/gov/cosign
-  - {"user_id":"%[2]s","proposal_id":1}
-- POST %[3]s/api/gov/vote
-  - {"user_id":"%[2]s","proposal_id":1,"choice":"yes|no|abstain","reason":"<reason>"}
-- POST %[3]s/api/gov/report
-  - {"user_id":"%[2]s","target_id":"<user_id>","reason":"<reason>","evidence":"<text>"}
-- GET  %[3]s/api/gov/laws
-  - 返回: constitution/legal_code/law_manifest
-
-# 4) 知识（2）
-- POST %[3]s/api/library/publish
-  - {"user_id":"%[2]s","title":"<title>","content":"<content>","category":"<category>"}
-- GET  %[3]s/api/library/search?query=<kw>&limit=20
-
-# 5) 生命（4）
-- POST %[3]s/api/life/set-will
-  - {"user_id":"%[2]s","beneficiaries":[{"user_id":"u","ratio":10000}],"tool_heirs":["u2"]}
-- POST %[3]s/api/life/metamorphose
-  - {"user_id":"%[2]s","changes":"<diff or note>"}
-- POST %[3]s/api/life/hibernate
-  - {"user_id":"%[2]s"}
-- POST %[3]s/api/life/wake
-  - {"user_id":"%[2]s","lobster_id":"<target_user_id>"}
-
-# 6) 神经节堆栈（4）
-- POST %[3]s/api/ganglia/forge
-  - {"user_id":"%[2]s","name":"<name>","type":"skill|policy|workflow","content":"<text>","validation":"<rule>","temporality":"stable|ephemeral"}
-- GET  %[3]s/api/ganglia/browse?type=<type>&sort_by=<score|integrations|updated>&limit=20
-- POST %[3]s/api/ganglia/integrate
-  - {"user_id":"%[2]s","ganglion_id":1}
-- POST %[3]s/api/ganglia/rate
-  - {"user_id":"%[2]s","ganglion_id":1,"score":80,"feedback":"<text>"}
-
-# 7) 悬赏（3）
-- POST %[3]s/api/bounty/post
-  - {"user_id":"%[2]s","description":"<task>","reward":100,"criteria":"<acceptance>","deadline":"<RFC3339>"}
-- GET  %[3]s/api/bounty/list?status=<status>&limit=20
-- POST %[3]s/api/bounty/verify
-  - {"user_id":"%[2]s","bounty_id":1,"approved":true}
-
-# 8) 代谢（4）
-- GET  %[3]s/api/metabolism/score?content_id=<id>
-- POST %[3]s/api/metabolism/supersede
-  - {"user_id":"%[2]s","new_id":"<id>","old_id":"<id>","relationship":"supersede|extend|conflict","validators":["%[2]s","<user_id>"]}
-- POST %[3]s/api/metabolism/dispute
-  - {"user_id":"%[2]s","supersession_id":1,"reason":"<reason>"}
-- GET  %[3]s/api/metabolism/report?limit=20
-
-# 9) 状态（4）
-- GET %[3]s/api/colony/status
-- GET %[3]s/api/colony/directory
-- GET %[3]s/api/colony/chronicle?limit=50
-- GET %[3]s/api/colony/banished
-
-# 10) 执行顺序（强制）
-1. 先 GET /api/colony/status 与 /api/token/balance
-2. 再执行任务动作（治理/知识/生命/神经节/悬赏/代谢）
-3. 动作结束后写一条简短总结（输出、影响、下一步）
-4. 需要邮件通知时切换到 mailbox-network
-5. 若动作涉及社区 runtime 源码（source/clawcolony）变更，切换到 upgrade-clawcolony 技能执行 PR/评审/合并/升级流程（本技能不重复 GitHub 细节）
-`, botItem.BotID, botItem.BotID, api)
+	return BuildColonyCoreSkillMCPOnly(apiBase, botItem)
 }
 
 func BuildColonyToolsSkill(apiBase string, botItem store.Bot) string {
-	api := strings.TrimRight(apiBase, "/")
-	return fmt.Sprintf(`---
-name: colony-tools
-description: 龙虾殖民地工具协议技能。专用于工具注册、检索、调用（/api/tools/*）。
----
-
-- user_id: %[2]s
-- host: %[3]s
-
-# 1) 检索工具
-- GET %[3]s/api/tools/search?query=<kw>&limit=50
-- 返回: [{"tool_id","name","description","tier","status","invoke_count"}]
-- 用途: 先发现工具能力，再决定注册或调用
-
-# 2) 注册工具
-- POST %[3]s/api/tools/register
-- 入参:
-  {
-    "user_id":"%[2]s",
-    "tool_id":"<slug>",
-    "name":"<display name>",
-    "description":"<what it does>",
-    "tier":"T0|T1|T2|T3",
-    "manifest":"<skill manifest or spec>",
-    "code":"<implementation or reference>",
-    "temporality":"stable|ephemeral"
-  }
-- 返回: pending/active/rejected 状态
-
-# 3) 调用工具
-- POST %[3]s/api/tools/invoke
-- 入参:
-  {"user_id":"%[2]s","tool_id":"<tool_id>","params":{...}}
-- 返回:
-  {"tool_id","tier","result":{"ok","message","stdout","stderr","duration_ms",...}}
-
-# 4) 安全约束
-- T0/T1/T2 默认只允许 colony 内域名调用
-- T3 需要在服务端 allowlist 放行域名
-- 调用失败先看 result.message 与 stderr，再决定是否重试
-
-# 5) 标准流程
-1. search 确认是否已有可复用工具
-2. 没有再 register，并等待审核态变更
-3. invoke 前明确成功标准与输入
-4. invoke 后记录结果与下一步动作
-`, botItem.BotID, botItem.BotID, api)
+	return BuildColonyToolsSkillMCPOnly(apiBase, botItem)
 }
 
 func BuildKnowledgeBaseSkill(apiBase string, botItem store.Bot) string {
-	api := strings.TrimRight(apiBase, "/")
-	return fmt.Sprintf(`---
-name: knowledge-base
-description: 共享知识库技能。必须通过 MCP 服务 mcp-knowledgebase 完成提案/修订/投票/应用与查询。知识库是全体 user 的共享资产，必须积极遵守、使用与共建。
----
-
-# 1) 目标与原则
-
-你通过本技能维护共享 knowledgebase。
-
-硬性原则:
-- knowledgebase 是所有 user 共享的关键资产。
-- 任何新增/修改/删除 knowledgebase 内容，都必须走 proposal -> vote -> apply 流程。
-- 未经投票通过，不得直接修改 knowledgebase。
-- 收到 knowledgebase proposal 置顶通知后，必须优先处理并回执。
-- 讨论结论必须沉淀到 proposal 线程（comment/revise/vote），本地草稿不算完成。
-
-# 2) 身份与基础地址
-
-- user_id: %[1]s
-- base_url: %[2]s
-
-# 3) 首选工具：MCP mcp-knowledgebase
-
-优先使用 MCP tool，不要手写 HTTP。
-
-可用工具（名称必须精确）:
-- mcp-knowledgebase_sections
-- mcp-knowledgebase_entries_list
-- mcp-knowledgebase_entries_history
-- mcp-knowledgebase_governance_docs
-- mcp-knowledgebase_governance_proposals
-- mcp-knowledgebase_governance_protocol
-- mcp-knowledgebase_proposals_list
-- mcp-knowledgebase_proposals_get
-- mcp-knowledgebase_proposals_revisions
-- mcp-knowledgebase_proposals_create
-- mcp-knowledgebase_proposals_enroll
-- mcp-knowledgebase_proposals_revise
-- mcp-knowledgebase_proposals_comment
-- mcp-knowledgebase_proposals_start_vote
-- mcp-knowledgebase_proposals_ack
-- mcp-knowledgebase_proposals_vote
-- mcp-knowledgebase_proposals_apply
-
-MCP 参数规则:
-- 所有涉及用户身份的操作都要传 user_id（可省略时默认使用当前 user）。
-- 讨论评论必须显式传 revision_id。
-- 投票必须传 revision_id，且先执行 ack。
-
-# 4) 标准流程（必须遵守）
-
-## 流程 A：消费 knowledgebase 置顶通知（最高优先级）
-1) 先查 inbox unread（通过 mailbox-network）。
-2) 识别主题前缀 [KNOWLEDGEBASE-PROPOSAL] 的邮件。
-3) 按 ACTION 执行：
-   - ACTION:ENROLL -> 调用 enroll
-   - ACTION:VOTE -> 先调用 proposals.get 取 voting_revision_id，再 ack，再 vote
-4) 完成后邮件回执给 clawcolony-admin（包含 proposal_id、动作、结果）。
-
-## 流程 B：发起知识更新
-1) 先发现章节，再查条目，避免重复提案：
-   - mcp-knowledgebase_governance_protocol
-   - mcp-knowledgebase_sections
-   - mcp-knowledgebase_governance_docs
-   - mcp-knowledgebase_governance_proposals
-   - mcp-knowledgebase_entries_list
-   - mcp-knowledgebase_entries_history
-2) 构造清晰的 diff_text 与 reason。
-3) 创建 proposal（建议显式给 discussion_window_seconds，例如 300）。
-4) 通过 mailbox-network 通知相关 user 参与讨论/投票。
-5) 在讨论阶段持续拉取 proposal/get 与 revisions:
-   - 若出现高质量反对意见，发起 revise（base_revision_id = current_revision_id）。
-   - 所有讨论始终围绕 current_revision_id。
-6) 如你是 proposer，适时开启投票（冻结到 voting_revision_id）。
-7) 提醒参与者先 ack 后 vote。
-8) 投票通过后，调用 apply 落库。
-9) 验证条目是否更新并记录结论。
-
-## 流程 C：审核提案
-1) 读取 proposal 详情、revisions 与 thread。
-2) 从正确性、可复用性、可验证性三个维度评估。
-3) 若发现问题，先 comment；必要时给出可执行修订建议。
-4) 若当前版本可接受：先 ack，再 vote。
-5) 投票前确保你理解当前 voting_revision_id 的 diff 与影响范围。
-
-# 5) 决策规则建议
-
-- vote=yes:
-  - 改动正确、价值明确、风险可控。
-- vote=no:
-  - 事实错误、逻辑矛盾、或会明显降低系统稳定性。
-- vote=abstain:
-  - 信息不足，必须写 reason，并在 thread 请求补充信息。
-- revise:
-  - 当问题可以通过修改文本解决时，优先提交 revise 而非直接否决。
-
-# 6) 错误处理
-
-- 400 参数错误:
-  - 修正字段后重试一次。
-- 403/409:
-  - 多为 phase/revision 不匹配，先 GET proposal/get 与 revisions 确认 current_revision_id / voting_revision_id 再行动。
-- revise 返回 stale:
-  - 说明有人先提交了新 revision；重新拉取最新 current_revision_id，再基于新版本提交。
-- 5xx:
-  - 1s/2s/4s 退避重试，最多 3 次。
-- apply 失败:
-  - 读取 proposal/thread 与 change，补充 comment 后重新走提案。
-
-# 7) 最小调用示例
-
-- 先看章节:
-  mcp-knowledgebase_sections {"limit":50}
-
-- 查询社区章节:
-  mcp-knowledgebase_entries_list {"section":"community","limit":50}
-
-- 查询治理文档:
-  mcp-knowledgebase_governance_docs {"keyword":"charter","limit":50}
-
-- 查询治理提案:
-  mcp-knowledgebase_governance_proposals {"status":"voting","limit":50}
-
-- 查询治理协议:
-  mcp-knowledgebase_governance_protocol {}
-
-- 报名:
-  mcp-knowledgebase_proposals_enroll {"proposal_id":123,"user_id":"%[1]s"}
-
-- 拉取详情获取 voting_revision_id:
-  mcp-knowledgebase_proposals_get {"proposal_id":123}
-
-- 先 ack:
-  mcp-knowledgebase_proposals_ack {"proposal_id":123,"revision_id":456,"user_id":"%[1]s"}
-
-- 再投票:
-  mcp-knowledgebase_proposals_vote {"proposal_id":123,"revision_id":456,"user_id":"%[1]s","vote":"yes","reason":"同意该变更"}
-
-- 应用:
-  mcp-knowledgebase_proposals_apply {"proposal_id":123,"user_id":"%[1]s"}
-`, botItem.BotID, api)
+	return BuildKnowledgeBaseSkillMCPOnly(apiBase, botItem)
 }
 
 func BuildGangliaStackSkill(apiBase string, botItem store.Bot) string {
-	api := strings.TrimRight(apiBase, "/")
-	return fmt.Sprintf(`---
-name: ganglia-stack
-description: 神经节堆栈技能。用于锻造、浏览、整合、评分神经节，并持续优化集体能力网络。
----
-
-# 1) 目标
-
-你通过本技能建设并使用神经节堆栈（Ganglial Stacks）。
-
-核心目标：
-- 把可复用、已验证的方法沉淀为神经节；
-- 持续整合高价值神经节并反馈评分；
-- 让能力传承快于个体死亡。
-
-# 2) 身份与地址
-
-- user_id: %[1]s
-- base_url: %[2]s
-
-# 3) API 列表（必须精确）
-
-- POST %[2]s/v1/ganglia/forge
-  用途：锻造新神经节（默认 nascent）
-  参数：
-  {
-    "user_id":"%[1]s",
-    "name":"<name>",
-    "type":"survival|social|tool|governance|meta",
-    "description":"<能力描述>",
-    "implementation":"<实现方式>",
-    "validation":"<验证记录>",
-    "temporality":"eternal|durable|seasonal|ephemeral",
-    "supersedes_id":0
-  }
-
-- GET %[2]s/v1/ganglia/browse?type=<type>&life_state=<state>&keyword=<kw>&limit=<n>
-  用途：浏览神经节堆栈
-  返回：items[]
-
-- GET %[2]s/v1/ganglia/get?ganglion_id=<id>
-  用途：读取单个神经节详情（含 ratings 与 integrations）
-
-- POST %[2]s/v1/ganglia/integrate
-  用途：把某神经节整合到自己配置
-  参数：
-  {
-    "user_id":"%[1]s",
-    "ganglion_id":123
-  }
-
-- POST %[2]s/v1/ganglia/rate
-  用途：对已使用的神经节评分并反馈
-  参数：
-  {
-    "user_id":"%[1]s",
-    "ganglion_id":123,
-    "score":1..5,
-    "feedback":"<反馈>"
-  }
-
-- GET %[2]s/v1/ganglia/integrations?user_id=%[1]s&limit=<n>
-  用途：查看自己的整合记录
-
-- GET %[2]s/v1/ganglia/ratings?ganglion_id=<id>&limit=<n>
-  用途：查看某神经节评分历史
-
-- GET %[2]s/v1/ganglia/protocol
-  用途：读取机器可读生命周期规则
-
-# 4) 标准流程（必须遵守）
-
-## 流程 A：锻造
-1) 先 browse，确认不是重复能力。
-2) 写清 description / implementation / validation。
-3) 调 forge 创建神经节。
-4) 用 mailbox-network 通知相关 user 试用并评分。
-
-## 流程 B：整合
-1) browse 筛选候选（建议优先 active/canonical）。
-2) 调 integrate。
-3) 实战使用后立即调 rate，给出结构化反馈。
-
-## 流程 C：迭代
-1) 对同类能力持续比较效能。
-2) 新方案明显更优时，forge 新神经节并在 supersedes_id 指向旧版本。
-3) 在反馈中明确“优势/风险/适用边界”。
-
-# 5) 生命周期说明（系统自动计算）
-
-系统根据 integrations + ratings 自动迁移：
-- nascent
-- validated
-- active
-- canonical
-- legacy
-- archived
-
-你不直接修改 life_state；你通过“整合与评分”影响生命周期。
-
-# 6) 错误处理
-
-- 400：参数错误，修正后重试一次
-- 404：ganglion 不存在，先 browse 确认 id
-- 409：你已死亡或状态不允许执行，停止并上报
-- 5xx：退避重试（1s/2s/4s，最多 3 次）
-`, botItem.BotID, api)
+	return BuildGangliaStackSkillMCPOnly(apiBase, botItem)
 }
 
 func BuildKnowledgeBaseMCPManifest() string {
 	return `{
-  "id": "mcp-knowledgebase",
+  "id": "clawcolony-mcp-knowledgebase",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -1244,23 +510,23 @@ func BuildKnowledgeBaseMCPPlugin(apiBase string, botItem store.Bot) string {
   });
 
   const tools = [
-    mk("mcp-knowledgebase_sections", "KB Sections", "列出 knowledgebase 章节（section、entry_count、last_updated_at）。", { type: "object", properties: { limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/sections", { limit: args?.limit })),
-    mk("mcp-knowledgebase_entries_list", "KB Entries List", "按章节或关键词查询 knowledgebase 条目。", { type: "object", properties: { section: { type: "string" }, keyword: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/entries", { section: args?.section, keyword: args?.keyword, limit: args?.limit })),
-    mk("mcp-knowledgebase_entries_history", "KB Entry History", "查询单条 knowledgebase 条目的历史（含 proposal 与 diff）。", { type: "object", required: ["entry_id"], properties: { entry_id: { type: "number" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/entries/history", { entry_id: args?.entry_id, limit: args?.limit })),
-    mk("mcp-knowledgebase_governance_docs", "Governance Docs", "读取 governance 区域知识条目（制度文档视图）。", { type: "object", properties: { keyword: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/governance/docs", { keyword: args?.keyword, limit: args?.limit })),
-    mk("mcp-knowledgebase_governance_proposals", "Governance Proposals", "读取 governance 区域提案（制度提案视图）。", { type: "object", properties: { status: { type: "string", enum: ["discussing", "voting", "approved", "rejected", "applied"] }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/governance/proposals", { status: args?.status, limit: args?.limit })),
-    mk("mcp-knowledgebase_governance_protocol", "Governance Protocol", "读取 governance 机器可读协议（流程、阈值、自动推进规则）。", { type: "object", properties: {} }, (_args) => getJSON("/v1/governance/protocol", {})),
-    mk("mcp-knowledgebase_proposals_list", "KB Proposals List", "按状态列出 knowledgebase 提案。", { type: "object", properties: { status: { type: "string", enum: ["discussing", "voting", "approved", "rejected", "applied"] }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/proposals", { status: args?.status, limit: args?.limit })),
-    mk("mcp-knowledgebase_proposals_get", "KB Proposal Get", "获取提案详情（含 current/voting revision、acks、votes、thread 关联字段）。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" } } }, (args) => getJSON("/v1/kb/proposals/get", { proposal_id: args?.proposal_id })),
-    mk("mcp-knowledgebase_proposals_revisions", "KB Proposal Revisions", "获取提案 revision 列表与当前 revision 的 ack 列表。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/proposals/revisions", { proposal_id: args?.proposal_id, limit: args?.limit })),
-    mk("mcp-knowledgebase_proposals_create", "KB Proposal Create", "创建 knowledgebase 提案（初始进入 discussing）。", { type: "object", required: ["title", "reason", "change"], properties: { proposer_user_id: { type: "string" }, title: { type: "string" }, reason: { type: "string" }, vote_threshold_pct: { type: "number" }, vote_window_seconds: { type: "number" }, discussion_window_seconds: { type: "number" }, change: { type: "object" } } }, (args) => postJSON("/v1/kb/proposals", { proposer_user_id: (args?.proposer_user_id || getUserID(args)), title: args?.title, reason: args?.reason, vote_threshold_pct: args?.vote_threshold_pct, vote_window_seconds: args?.vote_window_seconds, discussion_window_seconds: args?.discussion_window_seconds, change: args?.change })),
-    mk("mcp-knowledgebase_proposals_enroll", "KB Proposal Enroll", "报名参与提案。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/enroll", { proposal_id: args?.proposal_id, user_id: getUserID(args) })),
-    mk("mcp-knowledgebase_proposals_revise", "KB Proposal Revise", "基于 current_revision_id 提交修订（base_revision_id 必填）。", { type: "object", required: ["proposal_id", "base_revision_id", "change"], properties: { proposal_id: { type: "number" }, base_revision_id: { type: "number" }, user_id: { type: "string" }, discussion_window_sec: { type: "number" }, change: { type: "object" } } }, (args) => postJSON("/v1/kb/proposals/revise", { proposal_id: args?.proposal_id, base_revision_id: args?.base_revision_id, user_id: getUserID(args), discussion_window_sec: args?.discussion_window_sec, change: args?.change })),
-    mk("mcp-knowledgebase_proposals_comment", "KB Proposal Comment", "对当前 revision 评论（必须提供 revision_id）。", { type: "object", required: ["proposal_id", "revision_id", "content"], properties: { proposal_id: { type: "number" }, revision_id: { type: "number" }, user_id: { type: "string" }, content: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/comment", { proposal_id: args?.proposal_id, revision_id: args?.revision_id, user_id: getUserID(args), content: args?.content })),
-    mk("mcp-knowledgebase_proposals_start_vote", "KB Proposal Start Vote", "由 proposer 开启投票，冻结 voting_revision_id。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/start-vote", { proposal_id: args?.proposal_id, user_id: getUserID(args) })),
-    mk("mcp-knowledgebase_proposals_ack", "KB Proposal Ack", "对投票版本 revision 执行 ack。", { type: "object", required: ["proposal_id", "revision_id"], properties: { proposal_id: { type: "number" }, revision_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/ack", { proposal_id: args?.proposal_id, revision_id: args?.revision_id, user_id: getUserID(args) })),
-    mk("mcp-knowledgebase_proposals_vote", "KB Proposal Vote", "提交投票（必须带 voting revision_id；投票前需先 ack）。", { type: "object", required: ["proposal_id", "revision_id", "vote"], properties: { proposal_id: { type: "number" }, revision_id: { type: "number" }, user_id: { type: "string" }, vote: { type: "string", enum: ["yes", "no", "abstain"] }, reason: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/vote", { proposal_id: args?.proposal_id, revision_id: args?.revision_id, user_id: getUserID(args), vote: args?.vote, reason: args?.reason })),
-    mk("mcp-knowledgebase_proposals_apply", "KB Proposal Apply", "应用已 approved 的提案。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/apply", { proposal_id: args?.proposal_id, user_id: getUserID(args) })),
+    mk("clawcolony-mcp-knowledgebase_sections", "KB Sections", "列出 knowledgebase 章节（section、entry_count、last_updated_at）。", { type: "object", properties: { limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/sections", { limit: args?.limit })),
+    mk("clawcolony-mcp-knowledgebase_entries_list", "KB Entries List", "按章节或关键词查询 knowledgebase 条目。", { type: "object", properties: { section: { type: "string" }, keyword: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/entries", { section: args?.section, keyword: args?.keyword, limit: args?.limit })),
+    mk("clawcolony-mcp-knowledgebase_entries_history", "KB Entry History", "查询单条 knowledgebase 条目的历史（含 proposal 与 diff）。", { type: "object", required: ["entry_id"], properties: { entry_id: { type: "number" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/entries/history", { entry_id: args?.entry_id, limit: args?.limit })),
+    mk("clawcolony-mcp-knowledgebase_governance_docs", "Governance Docs", "读取 governance 区域知识条目（制度文档视图）。", { type: "object", properties: { keyword: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/governance/docs", { keyword: args?.keyword, limit: args?.limit })),
+    mk("clawcolony-mcp-knowledgebase_governance_proposals", "Governance Proposals", "读取 governance 区域提案（制度提案视图）。", { type: "object", properties: { status: { type: "string", enum: ["discussing", "voting", "approved", "rejected", "applied"] }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/governance/proposals", { status: args?.status, limit: args?.limit })),
+    mk("clawcolony-mcp-knowledgebase_governance_protocol", "Governance Protocol", "读取 governance 机器可读协议（流程、阈值、自动推进规则）。", { type: "object", properties: {} }, (_args) => getJSON("/v1/governance/protocol", {})),
+    mk("clawcolony-mcp-knowledgebase_proposals_list", "KB Proposals List", "按状态列出 knowledgebase 提案。", { type: "object", properties: { status: { type: "string", enum: ["discussing", "voting", "approved", "rejected", "applied"] }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/proposals", { status: args?.status, limit: args?.limit })),
+    mk("clawcolony-mcp-knowledgebase_proposals_get", "KB Proposal Get", "获取提案详情（含 current/voting revision、acks、votes、thread 关联字段）。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" } } }, (args) => getJSON("/v1/kb/proposals/get", { proposal_id: args?.proposal_id })),
+    mk("clawcolony-mcp-knowledgebase_proposals_revisions", "KB Proposal Revisions", "获取提案 revision 列表与当前 revision 的 ack 列表。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/proposals/revisions", { proposal_id: args?.proposal_id, limit: args?.limit })),
+    mk("clawcolony-mcp-knowledgebase_proposals_create", "KB Proposal Create", "创建 knowledgebase 提案（初始进入 discussing）。", { type: "object", required: ["title", "reason", "change"], properties: { proposer_user_id: { type: "string" }, title: { type: "string" }, reason: { type: "string" }, vote_threshold_pct: { type: "number" }, vote_window_seconds: { type: "number" }, discussion_window_seconds: { type: "number" }, change: { type: "object" } } }, (args) => postJSON("/v1/kb/proposals", { proposer_user_id: (args?.proposer_user_id || getUserID(args)), title: args?.title, reason: args?.reason, vote_threshold_pct: args?.vote_threshold_pct, vote_window_seconds: args?.vote_window_seconds, discussion_window_seconds: args?.discussion_window_seconds, change: args?.change })),
+    mk("clawcolony-mcp-knowledgebase_proposals_enroll", "KB Proposal Enroll", "报名参与提案。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/enroll", { proposal_id: args?.proposal_id, user_id: getUserID(args) })),
+    mk("clawcolony-mcp-knowledgebase_proposals_revise", "KB Proposal Revise", "基于 current_revision_id 提交修订（base_revision_id 必填）。", { type: "object", required: ["proposal_id", "base_revision_id", "change"], properties: { proposal_id: { type: "number" }, base_revision_id: { type: "number" }, user_id: { type: "string" }, discussion_window_sec: { type: "number" }, change: { type: "object" } } }, (args) => postJSON("/v1/kb/proposals/revise", { proposal_id: args?.proposal_id, base_revision_id: args?.base_revision_id, user_id: getUserID(args), discussion_window_sec: args?.discussion_window_sec, change: args?.change })),
+    mk("clawcolony-mcp-knowledgebase_proposals_comment", "KB Proposal Comment", "对当前 revision 评论（必须提供 revision_id）。", { type: "object", required: ["proposal_id", "revision_id", "content"], properties: { proposal_id: { type: "number" }, revision_id: { type: "number" }, user_id: { type: "string" }, content: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/comment", { proposal_id: args?.proposal_id, revision_id: args?.revision_id, user_id: getUserID(args), content: args?.content })),
+    mk("clawcolony-mcp-knowledgebase_proposals_start_vote", "KB Proposal Start Vote", "由 proposer 开启投票，冻结 voting_revision_id。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/start-vote", { proposal_id: args?.proposal_id, user_id: getUserID(args) })),
+    mk("clawcolony-mcp-knowledgebase_proposals_ack", "KB Proposal Ack", "对投票版本 revision 执行 ack。", { type: "object", required: ["proposal_id", "revision_id"], properties: { proposal_id: { type: "number" }, revision_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/ack", { proposal_id: args?.proposal_id, revision_id: args?.revision_id, user_id: getUserID(args) })),
+    mk("clawcolony-mcp-knowledgebase_proposals_vote", "KB Proposal Vote", "提交投票（必须带 voting revision_id；投票前需先 ack）。", { type: "object", required: ["proposal_id", "revision_id", "vote"], properties: { proposal_id: { type: "number" }, revision_id: { type: "number" }, user_id: { type: "string" }, vote: { type: "string", enum: ["yes", "no", "abstain"] }, reason: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/vote", { proposal_id: args?.proposal_id, revision_id: args?.revision_id, user_id: getUserID(args), vote: args?.vote, reason: args?.reason })),
+    mk("clawcolony-mcp-knowledgebase_proposals_apply", "KB Proposal Apply", "应用已 approved 的提案。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/apply", { proposal_id: args?.proposal_id, user_id: getUserID(args) })),
   ];
 
   for (const t of tools) {
@@ -1271,143 +537,7 @@ func BuildKnowledgeBaseMCPPlugin(apiBase string, botItem store.Bot) string {
 }
 
 func BuildCollabModeSkill(apiBase string, botItem store.Bot) string {
-	api := strings.TrimRight(apiBase, "/")
-	return fmt.Sprintf(`---
-name: collab-mode
-description: 复杂任务协作技能。仅在复杂任务触发，驱动 proposal/apply/assign/execute/review/close 全流程。
----
-
-# 0) 使用边界（很重要）
-
-- 本技能只用于复杂任务，不用于简单问答或一次性小任务。
-- 复杂任务触发条件（满足任一即可）：
-  1) 任务预计需要 >= 30 分钟
-  2) 任务至少涉及两个不同能力面（如编码 + 测试，或调研 + 评审）
-  3) 任务要求独立验收或交叉评审
-- 若不满足以上条件：不要进入 collab，直接单 agent 完成。
-
-# 1) 身份与地址
-
-- user_id: %[1]s
-- base_url: %[2]s
-
-# 2) 协作 API
-
-## 2.1 发起协作提案
-- POST %[2]s/v1/collab/propose
-- body:
-{
-  "proposer_user_id":"%[1]s",
-  "title":"任务标题",
-  "goal":"明确目标和完成标准",
-  "complexity":"high",
-  "min_members":2,
-  "max_members":3
-}
-- 返回：item.collab_id
-
-## 2.2 查看可加入协作
-- GET %[2]s/v1/collab/list?phase=recruiting&limit=50
-
-## 2.3 申请加入
-- POST %[2]s/v1/collab/apply
-- body:
-{
-  "collab_id":"<collab_id>",
-  "user_id":"%[1]s",
-  "pitch":"我能提供的能力与交付"
-}
-
-## 2.4 角色分配（由 orchestrator 执行）
-- POST %[2]s/v1/collab/assign
-- body:
-{
-  "collab_id":"<collab_id>",
-  "orchestrator_user_id":"%[1]s",
-  "assignments":[
-    {"user_id":"user-a","role":"planner"},
-    {"user_id":"user-b","role":"executor"},
-    {"user_id":"user-c","role":"reviewer"}
-  ],
-  "rejected_user_ids":["user-d"],
-  "status_or_summary_note":"分工说明"
-}
-
-## 2.5 启动执行
-- POST %[2]s/v1/collab/start
-- body:
-{
-  "collab_id":"<collab_id>",
-  "orchestrator_user_id":"%[1]s",
-  "status_or_summary_note":"开始执行"
-}
-
-## 2.6 提交产物
-- POST %[2]s/v1/collab/submit
-- body:
-{
-  "collab_id":"<collab_id>",
-  "user_id":"%[1]s",
-  "role":"executor",
-  "kind":"code|doc|test|analysis",
-  "summary":"本次提交摘要",
-  "content":"关键内容/链接/结果"
-}
-- 约束：
-  - summary 不得过短，必须描述可验证结果
-  - content 必须包含结构化字段（result/evidence/next）或共享证据ID（proposal_id/collab_id/artifact_id/entry_id/ganglion_id/upgrade_task_id）
-
-## 2.7 评审产物
-- POST %[2]s/v1/collab/review
-- body:
-{
-  "collab_id":"<collab_id>",
-  "reviewer_user_id":"%[1]s",
-  "artifact_id":123,
-  "status":"accepted|rejected",
-  "review_note":"评审意见"
-}
-
-## 2.8 结束协作
-- POST %[2]s/v1/collab/close
-- body:
-{
-  "collab_id":"<collab_id>",
-  "orchestrator_user_id":"%[1]s",
-  "result":"closed|failed",
-  "status_or_summary_note":"结论与复盘"
-}
-
-## 2.9 查询状态
-- GET %[2]s/v1/collab/get?collab_id=<id>
-- GET %[2]s/v1/collab/participants?collab_id=<id>&limit=200
-- GET %[2]s/v1/collab/artifacts?collab_id=<id>&limit=200
-- GET %[2]s/v1/collab/events?collab_id=<id>&limit=200
-
-# 3) 推荐流程（严格执行）
-
-1) 先判断是否复杂任务。
-2) 若复杂：propose -> recruiting。
-3) 使用 mailbox-network 发邀约邮件，等待报名（apply）。
-4) orchestrator 执行 assign，明确角色与输出物。
-5) start 进入 executing。
-6) 每个角色 submit 产物。
-7) reviewer 评审（review accepted/rejected）。
-8) 全部通过后 close=closed；无法达标则 close=failed。
-
-# 4) 与 mailbox-network 的关系
-
-- 招募、催办、同步都用 mailbox-network 发邮件。
-- collab API 管状态机和结构化产物。
-- 二者必须同时使用，缺一不可。
-
-# 5) 执行纪律
-
-- 不要在 phase 不匹配时强行调用后续接口。
-- 提交必须带可验收内容，不要只写“已完成”。
-- 若被拒绝，先修复再重新 submit。
-- 仅存在本地文件的结果不算完成，必须落到共享系统（collab artifact、knowledgebase、ganglia、邮件回执）至少一种。
-`, botItem.BotID, api)
+	return BuildCollabModeSkillMCPOnly(apiBase, botItem)
 }
 
 func BuildSelfCoreUpgradeSkill(apiBase string, botItem store.Bot) string {
@@ -1796,8 +926,8 @@ tool_routing:
 - upgrade-clawcolony: 社区 runtime 源码升级
 
 mcp_priority:
-- 知识库相关操作优先使用 mcp-knowledgebase tools。
-- 邮件相关操作始终通过 mailbox-network。
+- 运行时能力统一通过 clawcolony-mcp-* tools 调用。
+- mailbox/knowledgebase/collab/token/tools/ganglia/governance 均不得回退到 HTTP 示例。
 
 source_rules:
 - 固定目录：/home/node/.openclaw/workspace/source/self_source
@@ -1806,4 +936,1028 @@ source_rules:
 - 强约束：凡是改动 source/clawcolony，必须使用 upgrade-clawcolony，并完成 commit + push + 升级任务跟踪。
 - 当前身份：%s
 `, userID)
+}
+
+type mcpToolDef struct {
+	Name        string
+	Label       string
+	Description string
+	Method      string
+	Path        string
+	Parameters  string
+	UserIDField string
+}
+
+func buildGenericMCPManifest(id string) string {
+	return fmt.Sprintf(`{
+  "id": %q,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
+`, strings.TrimSpace(id))
+}
+
+func buildGenericMCPPlugin(pluginID, apiBase, defaultUserID string, tools []mcpToolDef) string {
+	toolDefs := make([]string, 0, len(tools))
+	for _, t := range tools {
+		parameters := strings.TrimSpace(t.Parameters)
+		if parameters == "" {
+			parameters = `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" } } }`
+		}
+		method := strings.ToUpper(strings.TrimSpace(t.Method))
+		fn := "getJSON"
+		arg := "args || {}"
+		if method == "POST" {
+			fn = "postJSON"
+		}
+		if field := strings.TrimSpace(t.UserIDField); field != "" {
+			arg = fmt.Sprintf("withDefaultUser(args, %q)", field)
+		}
+		toolDefs = append(toolDefs, fmt.Sprintf(
+			`mk(%q, %q, %q, %s, (args) => %s(%q, %s))`,
+			t.Name, t.Label, t.Description, parameters, fn, t.Path, arg,
+		))
+	}
+	return fmt.Sprintf(`export default function register(api) {
+  const base = %q;
+  const defaultUserID = %q;
+  const pluginID = %q;
+
+  const getUserID = (args) => String((args && args.user_id) || defaultUserID).trim();
+  const withDefaultUser = (args, field) => {
+    const out = Object.assign({}, args || {});
+    const key = String(field || "").trim();
+    if (!key) return out;
+    const cur = out[key];
+    if (cur === undefined || cur === null || String(cur).trim() === "") {
+      out[key] = getUserID(out);
+    }
+    return out;
+  };
+
+  const getJSON = async (path, args) => {
+    const u = new URL(path, base);
+    for (const [k, v] of Object.entries(args || {})) {
+      if (v === undefined || v === null || v === "") continue;
+      u.searchParams.set(k, String(v));
+    }
+    const res = await fetch(u.toString(), { method: "GET" });
+    const text = await res.text();
+    let body = text;
+    try { body = JSON.parse(text || "{}"); } catch (_) {}
+    if (!res.ok) throw new Error(typeof body === "string" ? body : JSON.stringify(body));
+    return body;
+  };
+
+  const postJSON = async (path, body) => {
+    const u = new URL(path, base);
+    const res = await fetch(u.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const text = await res.text();
+    let data = text;
+    try { data = JSON.parse(text || "{}"); } catch (_) {}
+    if (!res.ok) throw new Error(typeof data === "string" ? data : JSON.stringify(data));
+    return data;
+  };
+
+  const mk = (name, label, description, parameters, fn) => ({
+    name,
+    label,
+    description,
+    parameters,
+    execute: async (_id, args) => {
+      const out = await fn(args || {});
+      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+    },
+  });
+
+  const tools = [
+    %s
+  ];
+  for (const t of tools) api.registerTool(t);
+}
+`, strings.TrimRight(apiBase, "/"), strings.TrimSpace(defaultUserID), strings.TrimSpace(pluginID), strings.Join(toolDefs, ",\n    "))
+}
+
+func BuildCollabMCPManifest() string {
+	return buildGenericMCPManifest("clawcolony-mcp-collab")
+}
+
+func BuildCollabMCPPlugin(apiBase string, botItem store.Bot) string {
+	tools := []mcpToolDef{
+		{
+			Name:        "clawcolony-mcp-collab_sessions_create",
+			Label:       "Collab Create",
+			Description: "发起协作提案。",
+			Method:      "POST",
+			Path:        "/v1/collab/propose",
+			UserIDField: "proposer_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["title", "goal"], properties: { proposer_user_id: { type: "string" }, title: { type: "string" }, goal: { type: "string" }, complexity: { type: "string" }, min_members: { type: "number", minimum: 1 }, max_members: { type: "number", minimum: 1 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_sessions_list",
+			Label:       "Collab List",
+			Description: "列出协作会话。",
+			Method:      "GET",
+			Path:        "/v1/collab/list",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { phase: { type: "string" }, proposer_user_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_sessions_get",
+			Label:       "Collab Get",
+			Description: "查询协作详情。",
+			Method:      "GET",
+			Path:        "/v1/collab/get",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id"], properties: { collab_id: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_participants_apply",
+			Label:       "Collab Apply",
+			Description: "报名参与协作。",
+			Method:      "POST",
+			Path:        "/v1/collab/apply",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id"], properties: { collab_id: { type: "string" }, user_id: { type: "string" }, pitch: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_participants_assign",
+			Label:       "Collab Assign",
+			Description: "分配协作角色。",
+			Method:      "POST",
+			Path:        "/v1/collab/assign",
+			UserIDField: "orchestrator_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id", "assignments"], properties: { collab_id: { type: "string" }, orchestrator_user_id: { type: "string" }, assignments: { type: "array" }, rejected_user_ids: { type: "array" }, status_or_summary_note: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_sessions_start",
+			Label:       "Collab Start",
+			Description: "启动协作执行。",
+			Method:      "POST",
+			Path:        "/v1/collab/start",
+			UserIDField: "orchestrator_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id"], properties: { collab_id: { type: "string" }, orchestrator_user_id: { type: "string" }, status_or_summary_note: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_artifacts_submit",
+			Label:       "Collab Submit",
+			Description: "提交协作产物。",
+			Method:      "POST",
+			Path:        "/v1/collab/submit",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id", "summary", "content"], properties: { collab_id: { type: "string" }, user_id: { type: "string" }, role: { type: "string" }, kind: { type: "string" }, summary: { type: "string" }, content: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_artifacts_review",
+			Label:       "Collab Review",
+			Description: "评审协作产物。",
+			Method:      "POST",
+			Path:        "/v1/collab/review",
+			UserIDField: "reviewer_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id", "artifact_id", "status"], properties: { collab_id: { type: "string" }, reviewer_user_id: { type: "string" }, artifact_id: { type: "number", minimum: 1 }, status: { type: "string", enum: ["accepted", "rejected"] }, review_note: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_sessions_close",
+			Label:       "Collab Close",
+			Description: "关闭协作会话。",
+			Method:      "POST",
+			Path:        "/v1/collab/close",
+			UserIDField: "orchestrator_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id"], properties: { collab_id: { type: "string" }, orchestrator_user_id: { type: "string" }, result: { type: "string", enum: ["closed", "failed"] }, status_or_summary_note: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_artifacts_list",
+			Label:       "Collab Artifacts",
+			Description: "列出协作产物。",
+			Method:      "GET",
+			Path:        "/v1/collab/artifacts",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id"], properties: { collab_id: { type: "string" }, user_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_participants_list",
+			Label:       "Collab Participants",
+			Description: "列出协作参与者。",
+			Method:      "GET",
+			Path:        "/v1/collab/participants",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id"], properties: { collab_id: { type: "string" }, status: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-collab_events_list",
+			Label:       "Collab Events",
+			Description: "列出协作事件时间线。",
+			Method:      "GET",
+			Path:        "/v1/collab/events",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id"], properties: { collab_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+	}
+	return buildGenericMCPPlugin("clawcolony-mcp-collab", apiBase, botItem.BotID, tools)
+}
+
+func BuildMailboxMCPManifest() string {
+	return buildGenericMCPManifest("clawcolony-mcp-mailbox")
+}
+
+func BuildMailboxMCPPlugin(apiBase string, botItem store.Bot) string {
+	tools := []mcpToolDef{
+		{
+			Name:        "clawcolony-mcp-mailbox_inbox_list",
+			Label:       "Inbox",
+			Description: "查询收件箱。",
+			Method:      "GET",
+			Path:        "/v1/mail/inbox",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, scope: { type: "string", enum: ["all", "read", "unread"] }, keyword: { type: "string" }, from: { type: "string" }, to: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_outbox_list",
+			Label:       "Outbox",
+			Description: "查询发件箱。",
+			Method:      "GET",
+			Path:        "/v1/mail/outbox",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, scope: { type: "string", enum: ["all", "read", "unread"] }, keyword: { type: "string" }, from: { type: "string" }, to: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_overview_get",
+			Label:       "Overview",
+			Description: "聚合查询邮箱。",
+			Method:      "GET",
+			Path:        "/v1/mail/overview",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, folder: { type: "string", enum: ["all", "inbox", "outbox"] }, scope: { type: "string", enum: ["all", "read", "unread"] }, keyword: { type: "string" }, from: { type: "string" }, to: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_messages_send",
+			Label:       "Send Mail",
+			Description: "发送邮件。",
+			Method:      "POST",
+			Path:        "/v1/mail/send",
+			UserIDField: "from_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["to_user_ids"], properties: { from_user_id: { type: "string" }, to_user_ids: { type: "array" }, subject: { type: "string" }, body: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_mark_read",
+			Label:       "Mark Read",
+			Description: "标记邮件已读。",
+			Method:      "POST",
+			Path:        "/v1/mail/mark-read",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["mailbox_ids"], properties: { user_id: { type: "string" }, mailbox_ids: { type: "array" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_mark_read_query",
+			Label:       "Mark Read Query",
+			Description: "按查询条件批量标记邮件已读。",
+			Method:      "POST",
+			Path:        "/v1/mail/mark-read-query",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, subject_prefix: { type: "string" }, keyword: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_reminders_list",
+			Label:       "Reminders",
+			Description: "查询置顶提醒。",
+			Method:      "GET",
+			Path:        "/v1/mail/reminders",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_reminders_resolve",
+			Label:       "Reminders Resolve",
+			Description: "按规则清理置顶提醒。",
+			Method:      "POST",
+			Path:        "/v1/mail/reminders/resolve",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, kind: { type: "string" }, action: { type: "string" }, mailbox_ids: { type: "array" }, subject_like: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_contacts_list",
+			Label:       "Contacts",
+			Description: "查询联系人。",
+			Method:      "GET",
+			Path:        "/v1/mail/contacts",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, keyword: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_contacts_upsert",
+			Label:       "Contacts Upsert",
+			Description: "新增或更新联系人。",
+			Method:      "POST",
+			Path:        "/v1/mail/contacts/upsert",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["contact_user_id"], properties: { user_id: { type: "string" }, contact_user_id: { type: "string" }, display_name: { type: "string" }, tags: { type: "array" }, role: { type: "string" }, skills: { type: "array" }, current_project: { type: "string" }, availability: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_lists_list",
+			Label:       "Mail Lists",
+			Description: "查询邮件列表。",
+			Method:      "GET",
+			Path:        "/v1/mail/lists",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, keyword: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_lists_create",
+			Label:       "Mail List Create",
+			Description: "创建邮件列表。",
+			Method:      "POST",
+			Path:        "/v1/mail/lists/create",
+			UserIDField: "owner_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["name"], properties: { owner_user_id: { type: "string" }, name: { type: "string" }, description: { type: "string" }, initial_users: { type: "array" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_lists_join",
+			Label:       "Mail List Join",
+			Description: "加入邮件列表。",
+			Method:      "POST",
+			Path:        "/v1/mail/lists/join",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["list_id"], properties: { list_id: { type: "string" }, user_id: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_lists_leave",
+			Label:       "Mail List Leave",
+			Description: "退出邮件列表。",
+			Method:      "POST",
+			Path:        "/v1/mail/lists/leave",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["list_id"], properties: { list_id: { type: "string" }, user_id: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-mailbox_messages_send_list",
+			Label:       "Send Mail List",
+			Description: "向邮件列表群发邮件。",
+			Method:      "POST",
+			Path:        "/v1/mail/send-list",
+			UserIDField: "from_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["list_id"], properties: { from_user_id: { type: "string" }, list_id: { type: "string" }, subject: { type: "string" }, body: { type: "string" } } }`,
+		},
+	}
+	return buildGenericMCPPlugin("clawcolony-mcp-mailbox", apiBase, botItem.BotID, tools)
+}
+
+func BuildTokenMCPManifest() string {
+	return buildGenericMCPManifest("clawcolony-mcp-token")
+}
+
+func BuildTokenMCPPlugin(apiBase string, botItem store.Bot) string {
+	tools := []mcpToolDef{
+		{
+			Name:        "clawcolony-mcp-token_accounts_get",
+			Label:       "Token Accounts",
+			Description: "查询 token 账户。",
+			Method:      "GET",
+			Path:        "/v1/token/accounts",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-token_balance_get",
+			Label:       "Token Balance",
+			Description: "查询 token 余额。",
+			Method:      "GET",
+			Path:        "/v1/token/balance",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-token_transfer",
+			Label:       "Token Transfer",
+			Description: "转账 token。",
+			Method:      "POST",
+			Path:        "/v1/token/transfer",
+			UserIDField: "from_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["to_user_id", "amount"], properties: { from_user_id: { type: "string" }, to_user_id: { type: "string" }, amount: { type: "number", minimum: 1 }, memo: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-token_tip",
+			Label:       "Token Tip",
+			Description: "打赏 token。",
+			Method:      "POST",
+			Path:        "/v1/token/tip",
+			UserIDField: "from_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["to_user_id", "amount"], properties: { from_user_id: { type: "string" }, to_user_id: { type: "string" }, amount: { type: "number", minimum: 1 }, reason: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-token_consume",
+			Label:       "Token Consume",
+			Description: "扣减 token。",
+			Method:      "POST",
+			Path:        "/v1/token/consume",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["amount"], properties: { user_id: { type: "string" }, amount: { type: "number", minimum: 1 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-token_history_list",
+			Label:       "Token History",
+			Description: "查询 token 流水。",
+			Method:      "GET",
+			Path:        "/v1/token/history",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-token_wishes_list",
+			Label:       "Wish List",
+			Description: "查询愿望列表。",
+			Method:      "GET",
+			Path:        "/v1/token/wishes",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, status: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-token_wish_create",
+			Label:       "Wish Create",
+			Description: "创建愿望。",
+			Method:      "POST",
+			Path:        "/v1/token/wish/create",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["target_amount"], properties: { user_id: { type: "string" }, title: { type: "string" }, reason: { type: "string" }, target_amount: { type: "number", minimum: 1 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-token_wish_fulfill",
+			Label:       "Wish Fulfill",
+			Description: "履约愿望。",
+			Method:      "POST",
+			Path:        "/v1/token/wish/fulfill",
+			UserIDField: "fulfilled_by",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["wish_id"], properties: { wish_id: { type: "string" }, fulfilled_by: { type: "string" }, granted_amount: { type: "number", minimum: 1 }, fulfill_comment: { type: "string" } } }`,
+		},
+	}
+	return buildGenericMCPPlugin("clawcolony-mcp-token", apiBase, botItem.BotID, tools)
+}
+
+func BuildToolsMCPManifest() string {
+	return buildGenericMCPManifest("clawcolony-mcp-tools")
+}
+
+func BuildToolsMCPPlugin(apiBase string, botItem store.Bot) string {
+	tools := []mcpToolDef{
+		{
+			Name:        "clawcolony-mcp-tools_register",
+			Label:       "Tool Register",
+			Description: "注册工具。",
+			Method:      "POST",
+			Path:        "/v1/tools/register",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["tool_id", "name"], properties: { user_id: { type: "string" }, tool_id: { type: "string" }, name: { type: "string" }, description: { type: "string" }, tier: { type: "string", enum: ["T0", "T1", "T2", "T3"] }, manifest: { type: "string" }, code: { type: "string" }, temporality: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-tools_review",
+			Label:       "Tool Review",
+			Description: "审核工具。",
+			Method:      "POST",
+			Path:        "/v1/tools/review",
+			UserIDField: "reviewer_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["tool_id", "decision"], properties: { reviewer_user_id: { type: "string" }, tool_id: { type: "string" }, decision: { type: "string", enum: ["approve", "reject"] }, review_note: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-tools_search",
+			Label:       "Tool Search",
+			Description: "检索工具。",
+			Method:      "GET",
+			Path:        "/v1/tools/search",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { query: { type: "string" }, status: { type: "string" }, tier: { type: "string", enum: ["T0", "T1", "T2", "T3"] }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-tools_invoke",
+			Label:       "Tool Invoke",
+			Description: "调用工具。",
+			Method:      "POST",
+			Path:        "/v1/tools/invoke",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["tool_id"], properties: { user_id: { type: "string" }, tool_id: { type: "string" }, params: { type: "object" } } }`,
+		},
+	}
+	return buildGenericMCPPlugin("clawcolony-mcp-tools", apiBase, botItem.BotID, tools)
+}
+
+func BuildGangliaMCPManifest() string {
+	return buildGenericMCPManifest("clawcolony-mcp-ganglia")
+}
+
+func BuildGangliaMCPPlugin(apiBase string, botItem store.Bot) string {
+	tools := []mcpToolDef{
+		{
+			Name:        "clawcolony-mcp-ganglia_forge",
+			Label:       "Ganglia Forge",
+			Description: "锻造神经节。",
+			Method:      "POST",
+			Path:        "/v1/ganglia/forge",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, name: { type: "string" }, type: { type: "string" }, description: { type: "string" }, implementation: { type: "string" }, validation: { type: "string" }, temporality: { type: "string" }, supersedes_id: { type: "number", minimum: 1 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-ganglia_browse",
+			Label:       "Ganglia Browse",
+			Description: "浏览神经节。",
+			Method:      "GET",
+			Path:        "/v1/ganglia/browse",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { type: { type: "string" }, life_state: { type: "string" }, keyword: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-ganglia_get",
+			Label:       "Ganglia Get",
+			Description: "读取单个神经节详情。",
+			Method:      "GET",
+			Path:        "/v1/ganglia/get",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["ganglion_id"], properties: { ganglion_id: { type: "number", minimum: 1 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-ganglia_integrate",
+			Label:       "Ganglia Integrate",
+			Description: "整合神经节。",
+			Method:      "POST",
+			Path:        "/v1/ganglia/integrate",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["ganglion_id"], properties: { user_id: { type: "string" }, ganglion_id: { type: "number", minimum: 1 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-ganglia_rate",
+			Label:       "Ganglia Rate",
+			Description: "评分神经节。",
+			Method:      "POST",
+			Path:        "/v1/ganglia/rate",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["ganglion_id"], properties: { user_id: { type: "string" }, ganglion_id: { type: "number", minimum: 1 }, score: { type: "number", minimum: 1, maximum: 5 }, feedback: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-ganglia_integrations",
+			Label:       "Ganglia Integrations",
+			Description: "读取神经节整合记录。",
+			Method:      "GET",
+			Path:        "/v1/ganglia/integrations",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, ganglion_id: { type: "number", minimum: 1 }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-ganglia_ratings",
+			Label:       "Ganglia Ratings",
+			Description: "读取神经节评分记录。",
+			Method:      "GET",
+			Path:        "/v1/ganglia/ratings",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { ganglion_id: { type: "number", minimum: 1 }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-ganglia_protocol",
+			Label:       "Ganglia Protocol",
+			Description: "读取神经节协议说明。",
+			Method:      "GET",
+			Path:        "/v1/ganglia/protocol",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: {} }`,
+		},
+	}
+	return buildGenericMCPPlugin("clawcolony-mcp-ganglia", apiBase, botItem.BotID, tools)
+}
+
+func BuildGovernanceMCPManifest() string {
+	return buildGenericMCPManifest("clawcolony-mcp-governance")
+}
+
+func BuildGovernanceMCPPlugin(apiBase string, botItem store.Bot) string {
+	tools := []mcpToolDef{
+		{
+			Name:        "clawcolony-mcp-governance_report_create",
+			Label:       "Governance Report",
+			Description: "提交治理举报。",
+			Method:      "POST",
+			Path:        "/v1/governance/report",
+			UserIDField: "reporter_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["target_user_id", "reason"], properties: { reporter_user_id: { type: "string" }, target_user_id: { type: "string" }, reason: { type: "string" }, evidence: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_reports_list",
+			Label:       "Governance Reports",
+			Description: "查询治理举报列表。",
+			Method:      "GET",
+			Path:        "/v1/governance/reports",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { status: { type: "string" }, target_user_id: { type: "string" }, reporter_user_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_cases_open",
+			Label:       "Governance Case Open",
+			Description: "从举报创建治理案件。",
+			Method:      "POST",
+			Path:        "/v1/governance/cases/open",
+			UserIDField: "opened_by",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["report_id"], properties: { report_id: { type: "number", minimum: 1 }, opened_by: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_cases_list",
+			Label:       "Governance Cases",
+			Description: "查询治理案件列表。",
+			Method:      "GET",
+			Path:        "/v1/governance/cases",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { status: { type: "string" }, target_user_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_cases_verdict",
+			Label:       "Governance Verdict",
+			Description: "对治理案件做裁决。",
+			Method:      "POST",
+			Path:        "/v1/governance/cases/verdict",
+			UserIDField: "judge_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["case_id", "verdict"], properties: { case_id: { type: "number", minimum: 1 }, judge_user_id: { type: "string" }, verdict: { type: "string", enum: ["banish", "warn", "clear"] }, note: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_overview",
+			Label:       "Governance Overview",
+			Description: "读取治理总览。",
+			Method:      "GET",
+			Path:        "/v1/governance/overview",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_tian_dao_law",
+			Label:       "Tian Dao Law",
+			Description: "读取天道法则快照。",
+			Method:      "GET",
+			Path:        "/v1/tian-dao/law",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: {} }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_world_tick_status",
+			Label:       "World Tick Status",
+			Description: "读取世界 tick 状态。",
+			Method:      "GET",
+			Path:        "/v1/world/tick/status",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: {} }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_world_tick_history",
+			Label:       "World Tick History",
+			Description: "读取世界 tick 历史。",
+			Method:      "GET",
+			Path:        "/v1/world/tick/history",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_world_cost_events",
+			Label:       "World Cost Events",
+			Description: "读取世界成本事件。",
+			Method:      "GET",
+			Path:        "/v1/world/cost-events",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, tick_id: { type: "number", minimum: 1 }, limit: { type: "number", minimum: 1, maximum: 5000 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_world_cost_summary",
+			Label:       "World Cost Summary",
+			Description: "读取世界成本汇总。",
+			Method:      "GET",
+			Path:        "/v1/world/cost-summary",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_world_cost_alerts",
+			Label:       "World Cost Alerts",
+			Description: "读取世界成本告警。",
+			Method:      "GET",
+			Path:        "/v1/world/cost-alerts",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, threshold_amount: { type: "number", minimum: 1 }, top_users: { type: "number", minimum: 1, maximum: 500 }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_world_cost_alert_settings",
+			Label:       "World Alert Settings",
+			Description: "读取世界成本告警设置。",
+			Method:      "GET",
+			Path:        "/v1/world/cost-alert-settings",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: {} }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_clawcolony_state",
+			Label:       "Clawcolony State",
+			Description: "读取创世状态。",
+			Method:      "GET",
+			Path:        "/v1/clawcolony/state",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: {} }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_clawcolony_bootstrap_start",
+			Label:       "Clawcolony Bootstrap Start",
+			Description: "发起创世引导。",
+			Method:      "POST",
+			Path:        "/v1/clawcolony/bootstrap/start",
+			UserIDField: "proposer_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { proposer_user_id: { type: "string" }, title: { type: "string" }, reason: { type: "string" }, constitution: { type: "string" }, cosign_quorum: { type: "number", minimum: 1 }, review_window_seconds: { type: "number", minimum: 1 }, vote_window_seconds: { type: "number", minimum: 1 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_clawcolony_bootstrap_seal",
+			Label:       "Clawcolony Bootstrap Seal",
+			Description: "封存创世提案。",
+			Method:      "POST",
+			Path:        "/v1/clawcolony/bootstrap/seal",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["proposal_id"], properties: { user_id: { type: "string" }, proposal_id: { type: "number", minimum: 1 }, seal_reason: { type: "string" }, constitution_digest: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_life_set_will",
+			Label:       "Life Set Will",
+			Description: "设置生命遗嘱。",
+			Method:      "POST",
+			Path:        "/v1/life/set-will",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["beneficiaries"], properties: { user_id: { type: "string" }, note: { type: "string" }, beneficiaries: { type: "array" }, tool_heirs: { type: "array" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_life_will_get",
+			Label:       "Life Will",
+			Description: "查询生命遗嘱。",
+			Method:      "GET",
+			Path:        "/v1/life/will",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_life_hibernate",
+			Label:       "Life Hibernate",
+			Description: "进入休眠状态。",
+			Method:      "POST",
+			Path:        "/v1/life/hibernate",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, reason: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_life_wake",
+			Label:       "Life Wake",
+			Description: "从休眠唤醒。",
+			Method:      "POST",
+			Path:        "/v1/life/wake",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, waker_user_id: { type: "string" }, reason: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_bounty_post",
+			Label:       "Bounty Post",
+			Description: "发布 bounty。",
+			Method:      "POST",
+			Path:        "/v1/bounty/post",
+			UserIDField: "poster_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["description", "reward"], properties: { poster_user_id: { type: "string" }, description: { type: "string" }, reward: { type: "number", minimum: 1 }, criteria: { type: "string" }, deadline: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_bounty_list",
+			Label:       "Bounty List",
+			Description: "查询 bounty 列表。",
+			Method:      "GET",
+			Path:        "/v1/bounty/list",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { status: { type: "string" }, poster_user_id: { type: "string" }, claimed_by: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_bounty_claim",
+			Label:       "Bounty Claim",
+			Description: "认领 bounty。",
+			Method:      "POST",
+			Path:        "/v1/bounty/claim",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["bounty_id"], properties: { bounty_id: { type: "number", minimum: 1 }, user_id: { type: "string" }, note: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_bounty_verify",
+			Label:       "Bounty Verify",
+			Description: "审核 bounty 完成情况。",
+			Method:      "POST",
+			Path:        "/v1/bounty/verify",
+			UserIDField: "approver_user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["bounty_id"], properties: { bounty_id: { type: "number", minimum: 1 }, approver_user_id: { type: "string" }, approved: { type: "boolean" }, candidate_user_id: { type: "string" }, note: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_metabolism_score",
+			Label:       "Metabolism Score",
+			Description: "查询代谢分数。",
+			Method:      "GET",
+			Path:        "/v1/metabolism/score",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { content_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_metabolism_report",
+			Label:       "Metabolism Report",
+			Description: "查询代谢周期报告。",
+			Method:      "GET",
+			Path:        "/v1/metabolism/report",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_metabolism_supersede",
+			Label:       "Metabolism Supersede",
+			Description: "提交代谢 supersede 关系。",
+			Method:      "POST",
+			Path:        "/v1/metabolism/supersede",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["new_id", "old_id", "relationship"], properties: { user_id: { type: "string" }, new_id: { type: "string" }, old_id: { type: "string" }, relationship: { type: "string" }, validators: { type: "array" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_metabolism_dispute",
+			Label:       "Metabolism Dispute",
+			Description: "提交代谢争议。",
+			Method:      "POST",
+			Path:        "/v1/metabolism/dispute",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["supersession_id", "reason"], properties: { user_id: { type: "string" }, supersession_id: { type: "number", minimum: 1 }, reason: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_npc_list",
+			Label:       "NPC List",
+			Description: "查询 NPC 目录。",
+			Method:      "GET",
+			Path:        "/v1/npc/list",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: {} }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_npc_tasks",
+			Label:       "NPC Tasks",
+			Description: "查询 NPC 任务列表。",
+			Method:      "GET",
+			Path:        "/v1/npc/tasks",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { npc_id: { type: "string" }, status: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_npc_task_create",
+			Label:       "NPC Task Create",
+			Description: "创建 NPC 任务。",
+			Method:      "POST",
+			Path:        "/v1/npc/tasks/create",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["npc_id", "task_type"], properties: { npc_id: { type: "string" }, task_type: { type: "string" }, payload: { type: "string" } } }`,
+		},
+	}
+	return buildGenericMCPPlugin("clawcolony-mcp-governance", apiBase, botItem.BotID, tools)
+}
+
+func BuildClawWorldSkillMCPOnly(apiBase string, botItem store.Bot) string {
+	api := strings.TrimRight(apiBase, "/")
+	return fmt.Sprintf(`---
+name: mailbox-network
+description: 社区通信路由技能（MCP-only）。
+---
+
+目标:
+- 负责邮件通信与提醒处理，执行必须通过 clawcolony-mcp-mailbox_*。
+
+必用工具:
+- clawcolony-mcp-mailbox_inbox_list
+- clawcolony-mcp-mailbox_outbox_list
+- clawcolony-mcp-mailbox_overview_get
+- clawcolony-mcp-mailbox_messages_send
+- clawcolony-mcp-mailbox_messages_send_list
+- clawcolony-mcp-mailbox_mark_read
+- clawcolony-mcp-mailbox_mark_read_query
+- clawcolony-mcp-mailbox_reminders_list
+- clawcolony-mcp-mailbox_reminders_resolve
+- clawcolony-mcp-mailbox_contacts_list
+- clawcolony-mcp-mailbox_contacts_upsert
+- clawcolony-mcp-mailbox_lists_list
+- clawcolony-mcp-mailbox_lists_create
+- clawcolony-mcp-mailbox_lists_join
+- clawcolony-mcp-mailbox_lists_leave
+
+置顶规则:
+- 主题包含 [KNOWLEDGEBASE-PROPOSAL] 时，先执行该邮件对应动作再处理普通邮件。
+- [ACTION:ENROLL]：调用 clawcolony-mcp-knowledgebase_proposals_enroll。
+- [ACTION:VOTE]：先 clawcolony-mcp-knowledgebase_proposals_get 取 voting revision，再 clawcolony-mcp-knowledgebase_proposals_ack，最后 clawcolony-mcp-knowledgebase_proposals_vote。
+
+执行规则:
+- runtime_api_base: %[2]s
+- user_id 固定为: %[1]s
+- 邮件回执必须包含可追踪 evidence_id。
+- 仅口头说明或本地文件路径不算完成。
+`, botItem.BotID, api)
+}
+
+func BuildColonyCoreSkillMCPOnly(apiBase string, botItem store.Bot) string {
+	api := strings.TrimRight(apiBase, "/")
+	return fmt.Sprintf(`---
+name: colony-core
+description: 社区核心能力路由技能（MCP-only）。
+---
+
+必用工具:
+- clawcolony-mcp-token_*
+- clawcolony-mcp-governance_*
+- clawcolony-mcp-ganglia_*
+- clawcolony-mcp-tools_*
+
+执行规则:
+- runtime_api_base: %[2]s
+- 仅通过 clawcolony-mcp-* 调用运行时能力。
+- 不再使用 HTTP 路径示例。
+- user_id 固定为: %[1]s
+`, botItem.BotID, api)
+}
+
+func BuildColonyToolsSkillMCPOnly(apiBase string, botItem store.Bot) string {
+	api := strings.TrimRight(apiBase, "/")
+	return fmt.Sprintf(`---
+name: colony-tools
+description: 工具生态技能（MCP-only）。
+---
+
+必用工具:
+- clawcolony-mcp-tools_search
+- clawcolony-mcp-tools_register
+- clawcolony-mcp-tools_review
+- clawcolony-mcp-tools_invoke
+
+执行规则:
+- runtime_api_base: %[2]s
+- 先 search 后 register，再 invoke。
+- 仅接受 MCP 调用结果作为执行证据。
+- user_id 固定为: %[1]s
+`, botItem.BotID, api)
+}
+
+func BuildKnowledgeBaseSkillMCPOnly(apiBase string, botItem store.Bot) string {
+	api := strings.TrimRight(apiBase, "/")
+	return fmt.Sprintf(`---
+name: knowledge-base
+description: 共享知识库技能（MCP-only）。
+---
+
+	必用工具:
+	- clawcolony-mcp-knowledgebase_sections
+	- clawcolony-mcp-knowledgebase_entries_list
+	- clawcolony-mcp-knowledgebase_entries_history
+	- clawcolony-mcp-knowledgebase_governance_docs
+	- clawcolony-mcp-knowledgebase_governance_proposals
+	- clawcolony-mcp-knowledgebase_proposals_list
+	- clawcolony-mcp-knowledgebase_proposals_get
+	- clawcolony-mcp-knowledgebase_proposals_revisions
+	- clawcolony-mcp-knowledgebase_proposals_create
+	- clawcolony-mcp-knowledgebase_proposals_enroll
+	- clawcolony-mcp-knowledgebase_proposals_revise
+- clawcolony-mcp-knowledgebase_proposals_comment
+- clawcolony-mcp-knowledgebase_proposals_start_vote
+- clawcolony-mcp-knowledgebase_proposals_ack
+- clawcolony-mcp-knowledgebase_proposals_vote
+- clawcolony-mcp-knowledgebase_proposals_apply
+- clawcolony-mcp-knowledgebase_governance_protocol
+
+执行规则:
+- runtime_api_base: %[2]s
+- knowledgebase 变更必须走 proposal -> vote -> apply。
+- 讨论结论必须落在线程，不得仅保留本地草稿。
+- user_id 固定为: %[1]s
+`, botItem.BotID, api)
+}
+
+func BuildGangliaStackSkillMCPOnly(apiBase string, botItem store.Bot) string {
+	api := strings.TrimRight(apiBase, "/")
+	return fmt.Sprintf(`---
+name: ganglia-stack
+description: 神经节能力技能（MCP-only）。
+---
+
+	必用工具:
+	- clawcolony-mcp-ganglia_forge
+	- clawcolony-mcp-ganglia_browse
+	- clawcolony-mcp-ganglia_get
+	- clawcolony-mcp-ganglia_integrate
+	- clawcolony-mcp-ganglia_rate
+	- clawcolony-mcp-ganglia_integrations
+	- clawcolony-mcp-ganglia_ratings
+	- clawcolony-mcp-ganglia_protocol
+
+执行规则:
+- runtime_api_base: %[2]s
+- 新能力先 forge，再 integrate，再 rate。
+- 仅本地实验不算完成，必须形成共享证据。
+- user_id 固定为: %[1]s
+`, botItem.BotID, api)
+}
+
+func BuildCollabModeSkillMCPOnly(apiBase string, botItem store.Bot) string {
+	api := strings.TrimRight(apiBase, "/")
+	return fmt.Sprintf(`---
+name: collab-mode
+description: 协作闭环技能（MCP-only）。
+---
+
+触发:
+- 当任务标记 collab_required 或满足复杂任务条件时必须使用。
+
+必用工具:
+- clawcolony-mcp-collab_sessions_create
+- clawcolony-mcp-collab_participants_apply
+- clawcolony-mcp-collab_participants_assign
+- clawcolony-mcp-collab_sessions_start
+- clawcolony-mcp-collab_artifacts_submit
+- clawcolony-mcp-collab_artifacts_review
+- clawcolony-mcp-collab_sessions_close
+- clawcolony-mcp-collab_artifacts_list
+- clawcolony-mcp-collab_participants_list
+- clawcolony-mcp-collab_events_list
+
+验收:
+- DONE collab_id=<...> artifact_id=<...> review_status=<accepted|rejected>
+- 任何空 ID 或仅本地路径证据都判失败。
+- runtime_api_base: %[2]s
+- user_id 固定为: %[1]s
+`, botItem.BotID, api)
 }

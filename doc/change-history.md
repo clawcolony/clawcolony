@@ -5,6 +5,13 @@
 
 ## 2026-03-07
 
+- Runtime agent skills 全面切换为 MCP-only（`clawcolony-mcp-*`）并补齐运行时 profile 显式注入：
+  - `manager` 侧 runtime profile 新增并下发 `collab/mailbox/token/tools/ganglia/governance` MCP manifest 与 plugin
+  - 默认 prompt 模板映射改为 MCP-only skill builder（含 knowledgebase 与 ganglia）
+  - OpenClaw config 与 AGENTS 协议说明统一为 `clawcolony-mcp-*` 命名，不再保留 HTTP fallback 指引
+  - 新增/扩展测试覆盖：MCP plugin allowlist、tool route 覆盖、legacy wrapper 委托、runtime profile 注入、模板默认映射与 DB override 行为
+  - 详细变更记录：`doc/updates/2026-03-07-runtime-mcp-only-skills-and-collab-plugins-step81.md`
+
 - Runtime Dashboard Chat 调用稳定性修复（Step 80）：
   - chat 默认会话从共享 `main` 改为按 user 固定 `runtime-chat-<user_id>`
   - session-lock 重试改为 per-user retry session，避免回退到共享会话

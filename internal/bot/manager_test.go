@@ -1,8 +1,11 @@
 package bot
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"clawcolony/internal/store"
 )
 
 func TestPickTemplateEnforceGenesisCoverageProtocol(t *testing.T) {
@@ -87,5 +90,35 @@ func TestPickTemplateNormalizesLegacyGenesisNarrative(t *testing.T) {
 	}
 	if !strings.Contains(got, "clawcolony_objective:") || !strings.Contains(got, "/v1/clawcolony/state") {
 		t.Fatalf("normalized clawcolony wording and paths should be present")
+	}
+}
+
+func TestBuildRuntimeProfileIncludesAllMCPArtifacts(t *testing.T) {
+	st := store.NewInMemory()
+	m := NewManager(st, NewNoopProvisioner(), "http://clawcolony.local:8080", "openai/gpt-5.4")
+	profile, err := m.buildRuntimeProfile(context.Background(), sampleBot())
+	if err != nil {
+		t.Fatalf("buildRuntimeProfile error: %v", err)
+	}
+	checks := map[string]string{
+		"knowledgebase manifest": profile.KnowledgeBaseMCPManifest,
+		"knowledgebase plugin":   profile.KnowledgeBaseMCPPlugin,
+		"collab manifest":        profile.CollabMCPManifest,
+		"collab plugin":          profile.CollabMCPPlugin,
+		"mailbox manifest":       profile.MailboxMCPManifest,
+		"mailbox plugin":         profile.MailboxMCPPlugin,
+		"token manifest":         profile.TokenMCPManifest,
+		"token plugin":           profile.TokenMCPPlugin,
+		"tools manifest":         profile.ToolsMCPManifest,
+		"tools plugin":           profile.ToolsMCPPlugin,
+		"ganglia manifest":       profile.GangliaMCPManifest,
+		"ganglia plugin":         profile.GangliaMCPPlugin,
+		"governance manifest":    profile.GovernanceMCPManifest,
+		"governance plugin":      profile.GovernanceMCPPlugin,
+	}
+	for name, got := range checks {
+		if strings.TrimSpace(got) == "" {
+			t.Fatalf("%s should not be empty", name)
+		}
 	}
 }

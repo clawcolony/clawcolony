@@ -152,6 +152,97 @@ func seedActiveUser(t *testing.T, srv *Server) string {
 	return id
 }
 
+func TestDefaultPromptTemplateMapIncludesMCPOnlySkillTemplates(t *testing.T) {
+	srv := newTestServer()
+	user := store.Bot{
+		BotID:       "user-template-test",
+		Name:        "template-test",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}
+	defaults := srv.defaultPromptTemplateMap(context.Background(), user)
+	requiredKeys := []string{
+		bot.TemplateClawWorldSkill,
+		bot.TemplateColonyCoreSkill,
+		bot.TemplateColonyToolsSkill,
+		bot.TemplateKnowledgeBaseSkill,
+		bot.TemplateGangliaStackSkill,
+		bot.TemplateCollabModeSkill,
+	}
+	for _, key := range requiredKeys {
+		if strings.TrimSpace(defaults[key]) == "" {
+			t.Fatalf("default prompt template missing key: %s", key)
+		}
+	}
+	if !strings.Contains(defaults[bot.TemplateKnowledgeBaseSkill], "clawcolony-mcp-knowledgebase_") {
+		t.Fatalf("knowledge_base_skill must reference clawcolony-mcp-knowledgebase tools")
+	}
+	if !strings.Contains(defaults[bot.TemplateGangliaStackSkill], "clawcolony-mcp-ganglia_") {
+		t.Fatalf("ganglia_stack_skill must reference clawcolony-mcp-ganglia tools")
+	}
+}
+
+func TestPromptTemplatesDBOverrideWinsForKnowledgeAndGangliaSkills(t *testing.T) {
+	srv := newTestServer()
+	userID := seedActiveUser(t, srv)
+	customKB := "custom-knowledge-base-skill-content"
+	customGanglia := "custom-ganglia-stack-skill-content"
+	if _, err := srv.store.UpsertPromptTemplate(context.Background(), store.PromptTemplate{
+		Key:     bot.TemplateKnowledgeBaseSkill,
+		Content: customKB,
+	}); err != nil {
+		t.Fatalf("upsert knowledge template: %v", err)
+	}
+	if _, err := srv.store.UpsertPromptTemplate(context.Background(), store.PromptTemplate{
+		Key:     bot.TemplateGangliaStackSkill,
+		Content: customGanglia,
+	}); err != nil {
+		t.Fatalf("upsert ganglia template: %v", err)
+	}
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/prompts/templates?user_id="+userID, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("prompts/templates status=%d body=%s", w.Code, w.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	items, ok := payload["items"].([]any)
+	if !ok {
+		t.Fatalf("response missing items")
+	}
+	find := func(key string) map[string]any {
+		for _, it := range items {
+			m, _ := it.(map[string]any)
+			if strings.TrimSpace(fmt.Sprintf("%v", m["key"])) == key {
+				return m
+			}
+		}
+		return nil
+	}
+	kb := find(bot.TemplateKnowledgeBaseSkill)
+	if kb == nil {
+		t.Fatalf("knowledge_base_skill template missing")
+	}
+	if src := strings.TrimSpace(fmt.Sprintf("%v", kb["source"])); src != "db" {
+		t.Fatalf("knowledge_base_skill source=%s, want db", src)
+	}
+	if content := fmt.Sprintf("%v", kb["content"]); !strings.Contains(content, customKB) {
+		t.Fatalf("knowledge_base_skill content should use db override")
+	}
+	ganglia := find(bot.TemplateGangliaStackSkill)
+	if ganglia == nil {
+		t.Fatalf("ganglia_stack_skill template missing")
+	}
+	if src := strings.TrimSpace(fmt.Sprintf("%v", ganglia["source"])); src != "db" {
+		t.Fatalf("ganglia_stack_skill source=%s, want db", src)
+	}
+	if content := fmt.Sprintf("%v", ganglia["content"]); !strings.Contains(content, customGanglia) {
+		t.Fatalf("ganglia_stack_skill content should use db override")
+	}
+}
+
 func TestRoleAccessRuntimeBlocksDeployerRoutes(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.ServiceRole = config.ServiceRoleRuntime
