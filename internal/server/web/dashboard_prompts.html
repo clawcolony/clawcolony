@@ -103,7 +103,7 @@
       </section>
     </div>
     <script>
-      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}
       async function j(url, opt){const r=await fetch(url, opt); if(!r.ok) throw new Error(await r.text()); return r.json();}
 
       let items = [];
@@ -111,6 +111,24 @@
       let bots = [];
       let autoRefreshTick = 0;
       let editorDirty = false;
+      function distinctNonEmpty(parts){
+        const out = [];
+        for (const part of (parts || [])) {
+          const v = String(part || "").trim();
+          if (!v) continue;
+          if (out.includes(v)) continue;
+          out.push(v);
+        }
+        return out;
+      }
+      function botDisplayLabel(bot){
+        if (!bot) return "-";
+        return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
+      }
+      function botLabelByID(userID){
+        const bot = bots.find(b => b.user_id === userID);
+        return bot ? botDisplayLabel(bot) : String(userID || "");
+      }
 
       function currentItem(){
         return items.find(x => x.key === selected) || null;
@@ -159,12 +177,12 @@
 
         const targetSel = document.getElementById("targetUser");
         const targetPrev = targetSel.value;
-        targetSel.innerHTML = `<option value="">example-user</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
+        targetSel.innerHTML = `<option value="">example-user</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         targetSel.value = targetPrev;
 
         const applySel = document.getElementById("applyUser");
         const applyPrev = applySel.value;
-        applySel.innerHTML = `<option value="">全部活跃 USER</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
+        applySel.innerHTML = `<option value="">全部活跃 USER</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         applySel.value = bots.some(b => b.user_id === applyPrev) ? applyPrev : "";
       }
 
@@ -213,7 +231,7 @@
         const lines = [];
         lines.push(`apply result: ok=${data.ok_count}/${data.all_count}`);
         for (const it of (data.items || [])) {
-          lines.push(`${it.user_id} ${it.status} image=${it.image || "-"} ${it.error || ""}`.trim());
+          lines.push(`${botLabelByID(it.user_id)} ${it.status} image=${it.image || "-"} ${it.error || ""}`.trim());
         }
         setStatus(lines.join("\n"), data.ok_count > 0 ? "ok" : "bad");
       }

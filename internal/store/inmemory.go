@@ -140,6 +140,9 @@ func (s *InMemoryStore) UpsertBot(_ context.Context, input BotUpsertInput) (Bot,
 	} else if current.Name == "" {
 		current.Name = input.BotID
 	}
+	if input.Nickname != nil {
+		current.Nickname = strings.TrimSpace(*input.Nickname)
+	}
 	if input.Provider != "" {
 		current.Provider = input.Provider
 	} else if current.Provider == "" {
@@ -154,6 +157,23 @@ func (s *InMemoryStore) UpsertBot(_ context.Context, input BotUpsertInput) (Bot,
 	current.UpdatedAt = now
 	s.bots[input.BotID] = current
 	s.ensureBot(input.BotID)
+	return current, nil
+}
+
+func (s *InMemoryStore) UpdateBotNickname(_ context.Context, botID, nickname string) (Bot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uid := strings.TrimSpace(botID)
+	if uid == "" {
+		return Bot{}, fmt.Errorf("user_id is required")
+	}
+	current, ok := s.bots[uid]
+	if !ok {
+		return Bot{}, fmt.Errorf("bot not found: %s", uid)
+	}
+	current.Nickname = strings.TrimSpace(nickname)
+	current.UpdatedAt = time.Now().UTC()
+	s.bots[uid] = current
 	return current, nil
 }
 

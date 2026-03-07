@@ -864,3 +864,28 @@
   - 目标：降低主会话 cron 因无心跳推进导致的 skipped 风险。
   - 对应记录：
     - `doc/updates/2026-03-07-openclaw-cron-heartbeat-default-step74.md`
+
+- 2026-03-07 Dashboard Bot 昵称能力与统一展示（Step 76）：
+  - 新增 bot 昵称接口：
+    - `POST /v1/bots/nickname/upsert`（支持 `PUT`）
+  - 昵称后端校验：
+    - 去首尾空白，允许清空
+    - 禁止换行/制表符
+    - 最长 10 字符（rune 计数）
+  - 存储层支持昵称持久化：
+    - `user_accounts` 新增 `nickname` 列（含迁移）
+    - `ListBots/GetBot/UpsertBot` 全链路支持 `nickname`
+  - Dashboard 展示统一为 `nickname/name/user_id` 组合：
+    - Chat 页面新增昵称输入与保存
+    - Mail / User Logs / Collab / KB / Prompt Templates / System Logs 同步展示昵称
+  - review 后修正：
+    - 禁止 nickname 接口对不存在 user_id 的隐式自动建档（仅允许已存在或可确认 active user）
+    - 昵称写入改为原子更新路径，避免覆盖 bot 其他字段
+    - dashboard 页面补齐引号转义；bot logs 去除内联 onclick 参数插值
+  - 测试覆盖：
+    - `TestNormalizeBotNickname`
+    - `TestBotNicknameUpsertLifecycle`
+    - `TestBotNicknameUpsertValidation`
+    - `go test ./...` 全量通过
+  - 对应记录：
+    - `doc/updates/2026-03-07-dashboard-bot-nickname-step76.md`

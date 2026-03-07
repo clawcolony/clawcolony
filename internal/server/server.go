@@ -936,6 +936,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/world/evolution-alert-settings/upsert", s.handleWorldEvolutionAlertSettingsUpsert)
 	s.mux.HandleFunc("/v1/world/evolution-alert-notifications", s.handleWorldEvolutionAlertNotifications)
 	s.mux.HandleFunc("/v1/bots", s.handleBots)
+	s.mux.HandleFunc("/v1/bots/nickname/upsert", s.handleBotNicknameUpsert)
 	s.mux.HandleFunc("/v1/bots/profile/readme", s.handleBotProfileReadme)
 	s.mux.HandleFunc("/v1/prompts/templates", s.handlePromptTemplates)
 	s.mux.HandleFunc("/v1/prompts/templates/upsert", s.handlePromptTemplateUpsert)
@@ -2769,6 +2770,83 @@ func (s *Server) handleBots(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+type botNicknameUpsertRequest struct {
+	UserID   string `json:"user_id"`
+	Nickname string `json:"nickname"`
+}
+
+const maxBotNicknameRunes = 10
+
+func normalizeBotNickname(raw string) (string, error) {
+	nick := strings.TrimSpace(raw)
+	if nick == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(nick, "\r\n\t") {
+		return "", fmt.Errorf("nickname must be a single-line string")
+	}
+	if utf8.RuneCountInString(nick) > maxBotNicknameRunes {
+		return "", fmt.Errorf("nickname must be <= %d characters", maxBotNicknameRunes)
+	}
+	return nick, nil
+}
+
+func (s *Server) handleBotNicknameUpsert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req botNicknameUpsertRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	nickname, err := normalizeBotNickname(req.Nickname)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	items, err := s.store.ListBots(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	item, found := findBotByUserID(items, req.UserID)
+	if !found {
+		active, activeOK := s.activeBotIDsInNamespace(r.Context())
+		if !activeOK {
+			writeError(w, http.StatusNotFound, "user_id not found")
+			return
+		}
+		if _, ok := active[req.UserID]; !ok {
+			writeError(w, http.StatusNotFound, "user_id not found")
+			return
+		}
+		item = syntheticActiveBot(req.UserID)
+	}
+	if _, err = s.store.UpsertBot(r.Context(), store.BotUpsertInput{
+		BotID:       item.BotID,
+		Name:        item.Name,
+		Provider:    item.Provider,
+		Status:      item.Status,
+		Initialized: item.Initialized,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	item, err = s.store.UpdateBotNickname(r.Context(), req.UserID, nickname)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"item": item})
+}
+
 func syntheticActiveBot(userID string) store.Bot {
 	return store.Bot{
 		BotID:       userID,
@@ -2777,6 +2855,19 @@ func syntheticActiveBot(userID string) store.Bot {
 		Status:      "running",
 		Initialized: true,
 	}
+}
+
+func findBotByUserID(items []store.Bot, userID string) (store.Bot, bool) {
+	for _, item := range items {
+		if strings.TrimSpace(item.BotID) == userID {
+			item.BotID = userID
+			if strings.TrimSpace(item.Name) == "" {
+				item.Name = userID
+			}
+			return item, true
+		}
+	}
+	return store.Bot{}, false
 }
 
 func mergeMissingActiveBots(items []store.Bot, active map[string]struct{}) []store.Bot {
@@ -8019,6 +8110,7 @@ func (s *Server) apiCatalog() []string {
 		"GET /api/colony/chronicle",
 		"GET /api/colony/banished",
 		"GET /v1/bots",
+		"POST /v1/bots/nickname/upsert",
 		"GET /v1/bots/logs?user_id=<id>&tail=<n>",
 		"GET /v1/bots/logs/all?tail=<n>&limit=<n>",
 		"GET /v1/bots/openclaw/<user_id>/",

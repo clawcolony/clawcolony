@@ -116,23 +116,47 @@
     </div>
     <script>
       const CLAWCOLONY_ID = "clawcolony-admin";
-      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}
       async function j(url, opt){const r=await fetch(url, opt); if(!r.ok) throw new Error(await r.text()); return r.json();}
       let bots = [];
       let includeInactive = false;
       let usersRefreshTick = 0;
+      function distinctNonEmpty(parts){
+        const out = [];
+        for (const part of (parts || [])) {
+          const v = String(part || "").trim();
+          if (!v) continue;
+          if (out.includes(v)) continue;
+          out.push(v);
+        }
+        return out;
+      }
+      function botDisplayLabel(bot){
+        if (!bot) return "-";
+        return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
+      }
+      function botByID(userID){
+        return bots.find(b => b.user_id === userID) || null;
+      }
+      function addressLabel(addr){
+        const raw = String(addr || "").trim();
+        if (!raw) return "-";
+        if (raw === CLAWCOLONY_ID) return CLAWCOLONY_ID;
+        const bot = botByID(raw);
+        return bot ? botDisplayLabel(bot) : raw;
+      }
       async function loadUsers(){
         const data = await j(`/v1/bots?include_inactive=${includeInactive ? "1" : "0"}`);
         bots = data.items || [];
         const sel = document.getElementById("userFilter");
         const prev = sel.value || "";
-        sel.innerHTML = `<option value="">全部</option><option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
+        sel.innerHTML = `<option value="">全部</option><option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         if (prev && Array.from(sel.options).some(o => o.value === prev)) {
           sel.value = prev;
         }
         const sendTo = document.getElementById("sendTo");
         const prevTo = sendTo.value || "";
-        sendTo.innerHTML = `<option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
+        sendTo.innerHTML = `<option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         if (prevTo && Array.from(sendTo.options).some(o => o.value === prevTo)) {
           sendTo.value = prevTo;
         }
@@ -147,11 +171,11 @@
         const owners = Array.from(groups.keys()).sort();
         return owners.map(owner => `
           <div class="group">
-            <div class="group-head">owner=${esc(owner)} · count=${groups.get(owner).length}</div>
+            <div class="group-head">owner=${esc(addressLabel(owner))} · count=${groups.get(owner).length}</div>
             <div class="group-body">
               ${groups.get(owner).map(it => `
                 <div class="item">
-                  <div class="meta">${esc(it.sent_at)} · from=${esc(it.from_address)} · to=${esc(it.to_address)} <span class="status ${it.is_read ? "read":"unread"}">${it.is_read ? "已读":"未读"}</span></div>
+                  <div class="meta">${esc(it.sent_at)} · from=${esc(addressLabel(it.from_address))} · to=${esc(addressLabel(it.to_address))} <span class="status ${it.is_read ? "read":"unread"}">${it.is_read ? "已读":"未读"}</span></div>
                   <div class="subject">${esc(it.subject || "(no subject)")}</div>
                   <div class="body">${esc(it.body || "")}</div>
                 </div>
@@ -174,8 +198,8 @@
         if(!items.length) return `<div class="meta">暂无联系人</div>`;
         return items.map(it => `
           <div class="item">
-            <div class="meta">${esc(it.contact_address)} · ${esc(it.peer_status || "unknown")} ${it.is_active ? "· active" : ""}</div>
-            <div class="subject">${esc(it.display_name || it.contact_address)}</div>
+            <div class="meta">${esc(addressLabel(it.contact_address))} · ${esc(it.peer_status || "unknown")} ${it.is_active ? "· active" : ""}</div>
+            <div class="subject">${esc(it.display_name || addressLabel(it.contact_address))}</div>
             <div class="meta" style="margin-top:4px;">role=${esc(it.role || "-")} · availability=${esc(it.availability || "-")}</div>
             <div class="meta" style="margin-top:4px;">project=${esc(it.current_project || "-")}</div>
             <div>${(it.tags || []).map(t=>`<span class="pill">${esc(t)}</span>`).join("")}${(it.skills || []).map(t=>`<span class="pill">${esc("skill:"+t)}</span>`).join("")}</div>

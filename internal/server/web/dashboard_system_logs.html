@@ -68,15 +68,37 @@
     </div>
     <div class="list" id="list"></div>
     <script>
-      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}
       async function j(url){const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json();}
+      const CLAWCOLONY_ID = "clawcolony-admin";
       let bots = [];
+      function distinctNonEmpty(parts){
+        const out = [];
+        for (const part of (parts || [])) {
+          const v = String(part || "").trim();
+          if (!v) continue;
+          if (out.includes(v)) continue;
+          out.push(v);
+        }
+        return out;
+      }
+      function botDisplayLabel(bot){
+        if (!bot) return "-";
+        return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
+      }
+      function userLabelByID(userID){
+        const id = String(userID || "").trim();
+        if (!id) return "-";
+        if (id === CLAWCOLONY_ID) return CLAWCOLONY_ID;
+        const bot = bots.find(b => b.user_id === id);
+        return bot ? botDisplayLabel(bot) : id;
+      }
       async function loadUsers(){
         const data = await j("/v1/bots?include_inactive=0");
         bots = data.items || [];
         const sel = document.getElementById("user_id");
         const prev = sel.value;
-        sel.innerHTML = `<option value="">all</option><option value="clawcolony-admin">clawcolony-admin</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join("");
+        sel.innerHTML = `<option value="">all</option><option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         sel.value = prev;
       }
       async function refreshAll(){
@@ -90,7 +112,7 @@
           const items = data.items || [];
           document.getElementById("list").innerHTML = items.map(it => `
             <div class="item">
-              <div class="meta">#${it.id} · ${esc(it.time)} · ${esc(it.method)} ${esc(it.path)} · status=${esc(String(it.status_code))} · user=${esc(it.user_id || "-")} · ${esc(String(it.duration_ms))}ms</div>
+              <div class="meta">#${it.id} · ${esc(it.time)} · ${esc(it.method)} ${esc(it.path)} · status=${esc(String(it.status_code))} · user=${esc(userLabelByID(it.user_id))} · ${esc(String(it.duration_ms))}ms</div>
             </div>
           `).join("");
         } catch (e) {

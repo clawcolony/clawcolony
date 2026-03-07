@@ -70,12 +70,34 @@
       </section>
     </div>
     <script>
-      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}
       async function j(url){const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json();}
       let bots = [];
       let selected = "";
       let includeInactive = false;
       let botRefreshTick = 0;
+      function distinctNonEmpty(parts){
+        const out = [];
+        for (const part of (parts || [])) {
+          const v = String(part || "").trim();
+          if (!v) continue;
+          if (out.includes(v)) continue;
+          out.push(v);
+        }
+        return out;
+      }
+      function botDisplayLabel(bot){
+        if (!bot) return "-";
+        return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
+      }
+      function botShortLabel(bot){
+        if (!bot) return "-";
+        return distinctNonEmpty([bot.nickname, bot.name, bot.user_id])[0] || bot.user_id || "-";
+      }
+      function selectedLabel(){
+        const bot = bots.find(b => b.user_id === selected);
+        return bot ? botDisplayLabel(bot) : (selected || "未选择");
+      }
       async function loadBots(){
         const data = await j(`/v1/bots?include_inactive=${includeInactive ? "1" : "0"}`);
         bots = data.items || [];
@@ -87,19 +109,31 @@
       }
       function renderBots(){
         const root = document.getElementById("bots");
-        root.innerHTML = bots.map(b => `
-          <div class="bot ${selected===b.user_id?'active':''}" onclick="pick('${esc(b.user_id)}')">
-            <div><strong>${esc(b.name || b.user_id)}</strong></div>
-            <div class="mono">${esc(b.user_id)}</div>
-            <div style="color:#9bb0c5">${esc(b.status || "")}</div>
-          </div>
-        `).join("");
+        root.innerHTML = bots.map(b => {
+          const encodedID = encodeURIComponent(String(b.user_id || ""));
+          return `
+            <div class="bot ${selected===b.user_id?'active':''}" data-user-id="${encodedID}">
+              <div><strong>${esc(botShortLabel(b))}</strong></div>
+              <div class="mono">${esc(botDisplayLabel(b))}</div>
+              <div style="color:#9bb0c5">${esc(b.status || "")}</div>
+            </div>
+          `;
+        }).join("");
+        for (const node of root.querySelectorAll(".bot[data-user-id]")) {
+          node.addEventListener("click", () => {
+            const encoded = node.getAttribute("data-user-id") || "";
+            void pickByEncoded(encoded);
+          });
+        }
+      }
+      function pickByEncoded(encoded){
+        return pick(decodeURIComponent(String(encoded || "")));
       }
       async function loadLog(){
         if (!selected) return;
         const tail = encodeURIComponent(document.getElementById("tail").value || "400");
         const data = await j(`/v1/bots/logs?user_id=${encodeURIComponent(selected)}&tail=${tail}`);
-        document.getElementById("activeLabel").textContent = `当前: ${selected} · pod=${data.pod || ""}`;
+        document.getElementById("activeLabel").textContent = `当前: ${selectedLabel()} · pod=${data.pod || ""}`;
         const logNode = document.getElementById("log");
         const nearBottom = (logNode.scrollTop + logNode.clientHeight) >= (logNode.scrollHeight - 28);
         const raw = data.content || "";

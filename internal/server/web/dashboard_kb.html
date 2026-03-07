@@ -209,7 +209,27 @@
       let selected = 0;
       let selectedEntry = 0;
       let kbRefreshTick = 0;
-      let activeUsers = [];
+      let activeBots = [];
+      function distinctNonEmpty(parts){
+        const out = [];
+        for (const part of (parts || [])) {
+          const v = String(part || "").trim();
+          if (!v) continue;
+          if (out.includes(v)) continue;
+          out.push(v);
+        }
+        return out;
+      }
+      function botDisplayLabel(bot){
+        if (!bot) return "-";
+        return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
+      }
+      function userLabel(userID){
+        const id = String(userID || "").trim();
+        if (!id) return "-";
+        const bot = activeBots.find(x => x.user_id === id);
+        return bot ? botDisplayLabel(bot) : id;
+      }
 
       function setActiveID(id){
         selected = id;
@@ -250,7 +270,7 @@
         list.innerHTML = items.map((it)=>`
           <div class="item ${selected===it.id?'active':''}" onclick="pickProposal(${it.id})">
             <div><b>#${it.id}</b> ${esc(it.title)}</div>
-            <div class="meta">${esc(it.status)} · proposer=${esc(it.proposer_user_id)} · ${esc(it.updated_at || "")}</div>
+            <div class="meta">${esc(it.status)} · proposer=${esc(userLabel(it.proposer_user_id))} · ${esc(it.updated_at || "")}</div>
           </div>
         `).join("");
       }
@@ -352,7 +372,7 @@
         const lines = (t.items || []).map((it)=>{
           const type = String(it.message_type || "");
           const cls = type === "result" ? "ok" : (type === "vote_reason" ? "warn" : "meta");
-          return `<div class="line"><div class="meta">${esc(it.created_at)} · ${esc(it.author_user_id)} · <span class="${cls}">${esc(type)}</span></div><div>${esc(it.content || "")}</div></div>`;
+          return `<div class="line"><div class="meta">${esc(it.created_at)} · ${esc(userLabel(it.author_user_id))} · <span class="${cls}">${esc(type)}</span></div><div>${esc(it.content || "")}</div></div>`;
         });
         $("threadLogs").innerHTML = lines.length ? lines.join("") : `<div class="line"><div class="meta">暂无日志</div></div>`;
       }
@@ -420,10 +440,11 @@
 
       async function loadUsers(){
         const data = await j("/v1/bots?include_inactive=0");
-        activeUsers = (data.items || []).map(x => x.user_id).filter(Boolean);
+        activeBots = (data.items || []).filter(x => x && x.user_id);
+        const activeUsers = activeBots.map(x => x.user_id).filter(Boolean);
         const uidPrev = $("uid").value;
         const cUidPrev = $("c_uid").value;
-        const opts = '<option value="">请选择 user_id</option>' + activeUsers.map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join("");
+        const opts = '<option value="">请选择 user_id</option>' + activeBots.map(b => `<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         $("uid").innerHTML = opts;
         $("c_uid").innerHTML = opts.replace("请选择 user_id", "请选择 proposer_user_id");
         $("uid").value = activeUsers.includes(uidPrev) ? uidPrev : (activeUsers[0] || "");

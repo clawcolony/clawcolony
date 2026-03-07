@@ -11,6 +11,7 @@ var ErrInsufficientBalance = errors.New("insufficient token balance")
 type Bot struct {
 	BotID        string    `json:"user_id"`
 	Name         string    `json:"name"`
+	Nickname     string    `json:"nickname"`
 	Provider     string    `json:"provider"`
 	Status       string    `json:"status"`
 	Initialized  bool      `json:"initialized"`
@@ -23,6 +24,7 @@ type Bot struct {
 type BotUpsertInput struct {
 	BotID       string
 	Name        string
+	Nickname    *string
 	Provider    string
 	Status      string
 	Initialized bool
@@ -432,6 +434,7 @@ type Store interface {
 	ListBots(ctx context.Context) ([]Bot, error)
 	GetBot(ctx context.Context, botID string) (Bot, error)
 	UpsertBot(ctx context.Context, input BotUpsertInput) (Bot, error)
+	UpdateBotNickname(ctx context.Context, botID, nickname string) (Bot, error)
 	GetBotCredentials(ctx context.Context, userID string) (BotCredentials, error)
 	UpsertBotCredentials(ctx context.Context, creds BotCredentials) (BotCredentials, error)
 	EnsureTianDaoLaw(ctx context.Context, item TianDaoLaw) (TianDaoLaw, error)

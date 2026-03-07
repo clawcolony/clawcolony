@@ -99,6 +99,7 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS user_accounts (
 			user_id TEXT PRIMARY KEY,
 			user_name TEXT NOT NULL DEFAULT '',
+			nickname TEXT NOT NULL DEFAULT '',
 			provider TEXT NOT NULL DEFAULT 'generic',
 			status TEXT NOT NULL DEFAULT 'unknown',
 			initialized BOOLEAN NOT NULL DEFAULT false,
@@ -107,6 +108,7 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		`ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS gateway_token TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS upgrade_token TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS token_accounts (
@@ -577,7 +579,7 @@ func (s *PostgresStore) ensureBotTx(ctx context.Context, tx *sql.Tx, botID strin
 
 func (s *PostgresStore) ListBots(ctx context.Context) ([]Bot, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT user_id, user_name, provider, status, initialized, created_at, updated_at
+		SELECT user_id, user_name, nickname, provider, status, initialized, created_at, updated_at
 		FROM user_accounts
 		ORDER BY user_id ASC
 	`)
@@ -588,7 +590,7 @@ func (s *PostgresStore) ListBots(ctx context.Context) ([]Bot, error) {
 	items := make([]Bot, 0)
 	for rows.Next() {
 		var b Bot
-		if err := rows.Scan(&b.BotID, &b.Name, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		if err := rows.Scan(&b.BotID, &b.Name, &b.Nickname, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, b)
@@ -599,9 +601,9 @@ func (s *PostgresStore) ListBots(ctx context.Context) ([]Bot, error) {
 func (s *PostgresStore) GetBot(ctx context.Context, botID string) (Bot, error) {
 	var b Bot
 	err := s.db.QueryRowContext(ctx, `
-		SELECT user_id, user_name, provider, status, initialized, created_at, updated_at
+		SELECT user_id, user_name, nickname, provider, status, initialized, created_at, updated_at
 		FROM user_accounts WHERE user_id = $1
-	`, botID).Scan(&b.BotID, &b.Name, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt)
+	`, botID).Scan(&b.BotID, &b.Name, &b.Nickname, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return s.UpsertBot(ctx, BotUpsertInput{
 			BotID:       botID,
@@ -619,23 +621,53 @@ func (s *PostgresStore) GetBot(ctx context.Context, botID string) (Bot, error) {
 
 func (s *PostgresStore) UpsertBot(ctx context.Context, input BotUpsertInput) (Bot, error) {
 	var b Bot
+	var nicknameParam any
+	if input.Nickname != nil {
+		nicknameParam = strings.TrimSpace(*input.Nickname)
+	}
 	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO user_accounts(user_id, user_name, provider, status, initialized, updated_at)
-		VALUES($1, $2, $3, $4, $5, NOW())
+		INSERT INTO user_accounts(user_id, user_name, nickname, provider, status, initialized, updated_at)
+		VALUES($1, $2, COALESCE($3::text, ''), $4, $5, $6, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
 			user_name = EXCLUDED.user_name,
+			nickname = COALESCE($3::text, user_accounts.nickname),
 			provider = EXCLUDED.provider,
 			status = EXCLUDED.status,
 			initialized = EXCLUDED.initialized,
 			updated_at = NOW()
-		RETURNING user_id, user_name, provider, status, initialized, created_at, updated_at
-	`, input.BotID, input.Name, input.Provider, input.Status, input.Initialized).Scan(
-		&b.BotID, &b.Name, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt,
+		RETURNING user_id, user_name, nickname, provider, status, initialized, created_at, updated_at
+	`, input.BotID, input.Name, nicknameParam, input.Provider, input.Status, input.Initialized).Scan(
+		&b.BotID, &b.Name, &b.Nickname, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt,
 	)
 	if err != nil {
 		return Bot{}, err
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO token_accounts(user_id, balance) VALUES($1, 0) ON CONFLICT (user_id) DO NOTHING`, b.BotID); err != nil {
+		return Bot{}, err
+	}
+	return b, nil
+}
+
+func (s *PostgresStore) UpdateBotNickname(ctx context.Context, botID, nickname string) (Bot, error) {
+	uid := strings.TrimSpace(botID)
+	if uid == "" {
+		return Bot{}, fmt.Errorf("user_id is required")
+	}
+	nick := strings.TrimSpace(nickname)
+	var b Bot
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE user_accounts
+		SET nickname = $2,
+			updated_at = NOW()
+		WHERE user_id = $1
+		RETURNING user_id, user_name, nickname, provider, status, initialized, created_at, updated_at
+	`, uid, nick).Scan(
+		&b.BotID, &b.Name, &b.Nickname, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return Bot{}, fmt.Errorf("bot not found: %s", uid)
+	}
+	if err != nil {
 		return Bot{}, err
 	}
 	return b, nil

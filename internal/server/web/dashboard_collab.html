@@ -148,8 +148,26 @@
       let lastArtifactId = 0;
       let autoRefreshTick = 0;
 
-      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}
       async function j(url, opt){const r=await fetch(url,opt); if(!r.ok) throw new Error(await r.text()); return r.json();}
+      function distinctNonEmpty(parts){
+        const out = [];
+        for (const part of (parts || [])) {
+          const v = String(part || "").trim();
+          if (!v) continue;
+          if (out.includes(v)) continue;
+          out.push(v);
+        }
+        return out;
+      }
+      function botDisplayLabel(bot){
+        if (!bot) return "-";
+        return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
+      }
+      function botLabelByID(userID){
+        const bot = bots.find(b => b.user_id === userID);
+        return bot ? botDisplayLabel(bot) : String(userID || "-");
+      }
       function setStatus(text, bad){
         const el = document.getElementById("status");
         el.className = "status " + (bad ? "badtxt" : "oktxt");
@@ -159,7 +177,7 @@
       async function loadBots(){
         const data = await j('/v1/bots?include_inactive=0');
         bots = data.items || [];
-        const options = bots.map(b => `<option value="${esc(b.user_id)}">${esc(b.user_id)}</option>`).join('');
+        const options = bots.map(b => `<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join('');
         for (const id of ['proposer','applyUser','orchestrator','executor','reviewer']) {
           const sel = document.getElementById(id);
           const prev = sel.value;
@@ -178,7 +196,7 @@
           <div class="item ${selectedCollab===it.collab_id?'active':''}" onclick="pickCollab('${esc(it.collab_id)}')">
             <div class="meta">${esc(it.collab_id)} · ${esc(it.phase)}</div>
             <div class="title">${esc(it.title)}</div>
-            <div class="meta">proposer=${esc(it.proposer_user_id)} · orchestrator=${esc(it.orchestrator_user_id || '-')}</div>
+            <div class="meta">proposer=${esc(botLabelByID(it.proposer_user_id))} · orchestrator=${esc(botLabelByID(it.orchestrator_user_id || "-"))}</div>
           </div>
         `).join('');
       }

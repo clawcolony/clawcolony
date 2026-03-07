@@ -23,6 +23,12 @@
       .chat-head { padding:10px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:13px; }
       .chat-head a { margin-left:12px; color:#9bd7f0; text-decoration:none; }
       .chat-head a:hover { text-decoration:underline; }
+      .nick-row { margin-top:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+      .nick-row input, .nick-row button { padding:6px 9px; border-radius:8px; border:1px solid var(--line); background:#12202d; color:var(--ink); }
+      .nick-row button { background:#1f394d; cursor:pointer; }
+      .nick-limit { font-size:12px; color:var(--muted); }
+      .nick-status { margin-top:4px; min-height:16px; font-size:12px; color:var(--muted); }
+      .nick-status.bad { color:#f26d6d; }
       .conn-wrap { margin-top:6px; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
       .conn-dot { width:10px; height:10px; border-radius:999px; display:inline-block; border:1px solid #0b0f13; }
       .conn-up { background:var(--ok); }
@@ -80,6 +86,13 @@
         <div class="chat-head mono">
           <span id="chatHead">当前会话: 未选择</span>
           <a id="openclawLink" href="#" target="_blank" rel="noopener">打开 OpenClaw Dashboard</a>
+          <div class="nick-row">
+            <span>昵称</span>
+            <input id="nicknameInput" placeholder="最多 10 字符，留空表示清空" maxlength="80" />
+            <button id="nicknameSave" onclick="saveNickname()">保存昵称</button>
+            <span id="nicknameLimit" class="nick-limit">0/10</span>
+          </div>
+          <div id="nicknameStatus" class="nick-status"></div>
           <div class="conn-wrap">
             <span id="connDot" class="conn-dot conn-down"></span>
             <span id="connText">OpenClaw: unknown</span>
@@ -95,7 +108,9 @@
       </section>
     </div>
     <script>
-      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+      const MAX_NICKNAME_RUNES = 10;
+      const CLAWCOLONY_ID = "clawcolony-admin";
+      function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}
       async function j(url, opt){const r=await fetch(url, opt); if(!r.ok) throw new Error(await r.text()); return r.json();}
       let bots = [];
       let selected = "";
@@ -105,6 +120,150 @@
       let statusPoll = null;
       let chatStatePoll = null;
 
+      function runeCount(input){
+        return Array.from(String(input || "")).length;
+      }
+
+      function distinctNonEmpty(parts){
+        const out = [];
+        for (const part of (parts || [])) {
+          const v = String(part || "").trim();
+          if (!v) continue;
+          if (out.includes(v)) continue;
+          out.push(v);
+        }
+        return out;
+      }
+
+      function botByID(userID){
+        return bots.find(b => b.user_id === userID) || null;
+      }
+
+      function botDisplayLabel(bot){
+        if (!bot) return "-";
+        return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
+      }
+
+      function botPrimaryLabel(bot){
+        if (!bot) return "-";
+        const nick = String(bot.nickname || "").trim();
+        if (nick) return nick;
+        return String(bot.name || "").trim() || String(bot.user_id || "").trim() || "-";
+      }
+
+      function botSecondaryLabel(bot){
+        if (!bot) return "";
+        const nick = String(bot.nickname || "").trim();
+        if (nick) {
+          return distinctNonEmpty([bot.name, bot.user_id]).join(" · ");
+        }
+        const primary = botPrimaryLabel(bot);
+        const parts = distinctNonEmpty([bot.name, bot.user_id]).filter(v => v !== primary);
+        return parts.join(" · ");
+      }
+
+      function identityLabel(uid){
+        const id = String(uid || "").trim();
+        if (!id) return "-";
+        if (id === CLAWCOLONY_ID) return CLAWCOLONY_ID;
+        const bot = botByID(id);
+        if (!bot) return id;
+        return botDisplayLabel(bot);
+      }
+
+      function updateChatHead(){
+        const head = document.getElementById("chatHead");
+        if (!selected) {
+          head.textContent = "当前会话: 未选择";
+          document.getElementById("openclawLink").href = "#";
+          return;
+        }
+        const bot = botByID(selected);
+        head.textContent = `当前会话: ${bot ? botDisplayLabel(bot) : selected}`;
+        document.getElementById("openclawLink").href = openclawHref(selected);
+      }
+
+      function setNicknameStatus(text, bad){
+        const el = document.getElementById("nicknameStatus");
+        el.textContent = text || "";
+        el.className = "nick-status" + (bad ? " bad" : "");
+      }
+
+      function updateNicknameLimit(value){
+        const count = runeCount(String(value || "").trim());
+        const el = document.getElementById("nicknameLimit");
+        el.textContent = `${count}/${MAX_NICKNAME_RUNES}`;
+        el.style.color = count > MAX_NICKNAME_RUNES ? "#f26d6d" : "var(--muted)";
+      }
+
+      function syncNicknameEditor(){
+        const input = document.getElementById("nicknameInput");
+        const save = document.getElementById("nicknameSave");
+        if (!selected) {
+          input.value = "";
+          input.disabled = true;
+          save.disabled = true;
+          updateNicknameLimit("");
+          setNicknameStatus("未选择 USER", false);
+          return;
+        }
+        const bot = botByID(selected);
+        input.value = bot ? String(bot.nickname || "") : "";
+        input.disabled = false;
+        save.disabled = false;
+        updateNicknameLimit(input.value);
+        setNicknameStatus("", false);
+      }
+
+      function validateNickname(raw){
+        const nick = String(raw || "").trim();
+        if (nick.includes("\n") || nick.includes("\r") || nick.includes("\t")) {
+          return {ok:false, error:"昵称不能包含换行或制表符"};
+        }
+        if (runeCount(nick) > MAX_NICKNAME_RUNES) {
+          return {ok:false, error:`昵称最多 ${MAX_NICKNAME_RUNES} 个字符`};
+        }
+        return {ok:true, nickname:nick};
+      }
+
+      async function saveNickname(){
+        if (!selected) return;
+        const input = document.getElementById("nicknameInput");
+        const save = document.getElementById("nicknameSave");
+        const checked = validateNickname(input.value);
+        updateNicknameLimit(input.value);
+        if (!checked.ok) {
+          setNicknameStatus(checked.error, true);
+          return;
+        }
+        save.disabled = true;
+        try {
+          const data = await j("/v1/bots/nickname/upsert", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({
+              user_id: selected,
+              nickname: checked.nickname,
+            })
+          });
+          const item = data.item || null;
+          if (item && item.user_id) {
+            const idx = bots.findIndex(b => b.user_id === item.user_id);
+            if (idx >= 0) bots[idx] = item;
+            else bots.push(item);
+          }
+          renderBots();
+          updateChatHead();
+          syncNicknameEditor();
+          setNicknameStatus("昵称已保存", false);
+          await loadConversation();
+        } catch (e) {
+          setNicknameStatus("保存失败: " + String(e.message || e), true);
+        } finally {
+          save.disabled = false;
+        }
+      }
+
       function openclawHref(userId){
         const base = `/v1/bots/openclaw/${encodeURIComponent(userId)}/`;
         if (!openclawToken) return base;
@@ -113,9 +272,11 @@
 
       function renderMsg(it){
         const me = it.from === "clawcolony-admin";
+        const from = identityLabel(it.from);
+        const to = identityLabel(it.to);
         return `
           <div class="msg ${me?'me':''}">
-            <div class="meta">${esc(it.sent_at)} · ${esc(it.from)} → ${esc(it.to)}</div>
+            <div class="meta">${esc(it.sent_at)} · ${esc(from)} → ${esc(to)}</div>
             <div class="body">${esc(it.body || "")}</div>
           </div>
         `;
@@ -137,19 +298,30 @@
 
       function renderBots(){
         const root = document.getElementById("bots");
-        root.innerHTML = bots.map(b => `
-          <div class="bot ${selected===b.user_id?'active':''}" onclick="pick('${esc(b.user_id)}')">
-            <div><strong>${esc(b.name || b.user_id)}</strong> <span class="badge">${esc(b.status || "unknown")}</span></div>
-            <div class="mono">${esc(b.user_id)}</div>
-            <div><a href="${openclawHref(b.user_id)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">OpenClaw Dashboard</a></div>
-          </div>
-        `).join("");
+        root.innerHTML = bots.map(b => {
+          const shortLabel = botPrimaryLabel(b);
+          const secondaryLabel = botSecondaryLabel(b);
+          const encodedID = encodeURIComponent(String(b.user_id || ""));
+          const fullLine = secondaryLabel ? `<div class="mono">${esc(secondaryLabel)}</div>` : "";
+          return `
+            <div class="bot ${selected===b.user_id?'active':''}" data-user-id="${encodedID}">
+              <div><strong>${esc(shortLabel)}</strong> <span class="badge">${esc(b.status || "unknown")}</span></div>
+              ${fullLine}
+              <div><a href="${openclawHref(b.user_id)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">OpenClaw Dashboard</a></div>
+            </div>
+          `;
+        }).join("");
+        for (const node of root.querySelectorAll(".bot[data-user-id]")) {
+          node.addEventListener("click", () => {
+            const encoded = node.getAttribute("data-user-id") || "";
+            void pickByEncoded(encoded);
+          });
+        }
       }
 
       async function loadConversation(){
         if (!selected) return;
-        document.getElementById("chatHead").textContent = `当前会话: ${selected}`;
-        document.getElementById("openclawLink").href = openclawHref(selected);
+        updateChatHead();
         const log = document.getElementById("chatLog");
         const nearBottom = (log.scrollTop + log.clientHeight) >= (log.scrollHeight - 24);
         const data = await j(`/v1/chat/history?user_id=${encodeURIComponent(selected)}&limit=500`);
@@ -283,9 +455,24 @@
         });
       }
 
+      function setupNicknameHotkey(){
+        const input = document.getElementById("nicknameInput");
+        input.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          void saveNickname();
+        });
+      }
+
+      function pickByEncoded(encoded){
+        return pick(decodeURIComponent(String(encoded || "")));
+      }
+
       async function pick(id){
         selected = id;
         renderBots();
+        updateChatHead();
+        syncNicknameEditor();
         await loadConversation();
         openStream();
         await refreshOpenClawStatus();
@@ -296,9 +483,8 @@
         try {
           await loadBots();
           renderBots();
-          if (selected) {
-            document.getElementById("chatHead").textContent = `当前会话: ${selected}`;
-          }
+          updateChatHead();
+          syncNicknameEditor();
         } catch (e) {
           document.getElementById("chatLog").textContent = "读取失败: " + (e.message || e);
         }
@@ -317,6 +503,16 @@
       statusPoll = setInterval(refreshOpenClawStatus, 5000);
       chatStatePoll = setInterval(refreshChatState, 2000);
       setupComposerHotkey();
+      setupNicknameHotkey();
+      document.getElementById("nicknameInput").addEventListener("input", (e) => {
+        updateNicknameLimit(e.target.value);
+        const checked = validateNickname(e.target.value);
+        if (!checked.ok) {
+          setNicknameStatus(checked.error, true);
+          return;
+        }
+        setNicknameStatus("", false);
+      });
       document.getElementById("showAll").addEventListener("change", async (e) => {
         includeInactive = !!e.target.checked;
         await refreshAll();
@@ -334,6 +530,7 @@
       });
       loadOpenClawDashboardConfig().then(() => refreshAll()).then(async () => {
         if (selected) {
+          syncNicknameEditor();
           await loadConversation();
           openStream();
           await refreshOpenClawStatus();
