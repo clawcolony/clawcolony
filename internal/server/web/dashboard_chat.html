@@ -88,9 +88,9 @@
           <a id="openclawLink" href="#" target="_blank" rel="noopener">打开 OpenClaw Dashboard</a>
           <div class="nick-row">
             <span>昵称</span>
-            <input id="nicknameInput" placeholder="最多 10 字符，留空表示清空" maxlength="80" />
+            <input id="nicknameInput" placeholder="最多 20 字符，留空表示清空" maxlength="80" />
             <button id="nicknameSave" onclick="saveNickname()">保存昵称</button>
-            <span id="nicknameLimit" class="nick-limit">0/10</span>
+            <span id="nicknameLimit" class="nick-limit">0/20</span>
           </div>
           <div id="nicknameStatus" class="nick-status"></div>
           <div class="conn-wrap">
@@ -108,7 +108,7 @@
       </section>
     </div>
     <script>
-      const MAX_NICKNAME_RUNES = 10;
+      const MAX_NICKNAME_RUNES = 20;
       const CLAWCOLONY_ID = "clawcolony-admin";
       function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}
       async function j(url, opt){const r=await fetch(url, opt); if(!r.ok) throw new Error(await r.text()); return r.json();}
@@ -144,22 +144,20 @@
         return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
       }
 
-      function botPrimaryLabel(bot){
+      function botNicknameLabel(bot){
         if (!bot) return "-";
         const nick = String(bot.nickname || "").trim();
-        if (nick) return nick;
-        return String(bot.name || "").trim() || String(bot.user_id || "").trim() || "-";
+        return nick || "(未设置)";
       }
 
-      function botSecondaryLabel(bot){
+      function botUsernameLabel(bot){
         if (!bot) return "";
-        const nick = String(bot.nickname || "").trim();
-        if (nick) {
-          return distinctNonEmpty([bot.name, bot.user_id]).join(" · ");
-        }
-        const primary = botPrimaryLabel(bot);
-        const parts = distinctNonEmpty([bot.name, bot.user_id]).filter(v => v !== primary);
-        return parts.join(" · ");
+        return String(bot.name || "").trim() || "-";
+      }
+
+      function botUserIDLabel(bot){
+        if (!bot) return "";
+        return String(bot.user_id || "").trim() || "-";
       }
 
       function identityLabel(uid){
@@ -299,14 +297,15 @@
       function renderBots(){
         const root = document.getElementById("bots");
         root.innerHTML = bots.map(b => {
-          const shortLabel = botPrimaryLabel(b);
-          const secondaryLabel = botSecondaryLabel(b);
+          const nicknameLabel = botNicknameLabel(b);
+          const usernameLabel = botUsernameLabel(b);
+          const userIDLabel = botUserIDLabel(b);
           const encodedID = encodeURIComponent(String(b.user_id || ""));
-          const fullLine = secondaryLabel ? `<div class="mono">${esc(secondaryLabel)}</div>` : "";
           return `
             <div class="bot ${selected===b.user_id?'active':''}" data-user-id="${encodedID}">
-              <div><strong>${esc(shortLabel)}</strong> <span class="badge">${esc(b.status || "unknown")}</span></div>
-              ${fullLine}
+              <div><strong>nickname: ${esc(nicknameLabel)}</strong> <span class="badge">${esc(b.status || "unknown")}</span></div>
+              <div class="mono">username: ${esc(usernameLabel)}</div>
+              <div class="mono">user_id: ${esc(userIDLabel)}</div>
               <div><a href="${openclawHref(b.user_id)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">OpenClaw Dashboard</a></div>
             </div>
           `;

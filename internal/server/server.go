@@ -2775,7 +2775,7 @@ type botNicknameUpsertRequest struct {
 	Nickname string `json:"nickname"`
 }
 
-const maxBotNicknameRunes = 10
+const maxBotNicknameRunes = 20
 
 func normalizeBotNickname(raw string) (string, error) {
 	nick := strings.TrimSpace(raw)

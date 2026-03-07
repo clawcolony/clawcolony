@@ -5,6 +5,11 @@
 
 ## 2026-03-07
 
+- Dashboard Chat 标识补全与昵称上限调整（Step 78）：
+  - bot card 固定展示 `nickname`、`username`、`user_id` 三项
+  - 昵称长度上限由 `10` 调整为 `20`（前后端一致）
+  - 详细变更记录：`doc/updates/2026-03-07-dashboard-chat-labels-and-nickname-limit-step78.md`
+
 - Runtime 单实例收敛与地址迁移防回归（Step 77）：
   - `scripts/dev_minikube.sh` 增加部署后 legacy runtime 清理（默认清理 `clawcolony` namespace 的旧 runtime service/deployment）
   - 增加 existing agents 迁移：自动修正 `CLAWCOLONY_API_BASE_URL`、`INTERNAL_HTTP_ALLOWLIST`、`user-*-profile` 中的旧 runtime 地址
