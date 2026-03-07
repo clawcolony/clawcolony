@@ -52,3 +52,37 @@ func TestBuildOpenClawConfigNonOpenAIDoesNotInjectOpenAIModelsBlock(t *testing.T
 	}
 }
 
+func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
+	raw := BuildOpenClawConfig("openai/gpt-5.1-codex")
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	plugins, ok := cfg["plugins"].(map[string]any)
+	if !ok {
+		t.Fatalf("plugins block missing")
+	}
+	allow, ok := plugins["allow"].([]any)
+	if !ok || len(allow) == 0 {
+		t.Fatalf("plugins.allow missing")
+	}
+	seen := map[string]bool{}
+	for _, it := range allow {
+		if s, ok := it.(string); ok {
+			seen[s] = true
+		}
+	}
+	if !seen["mcp-knowledgebase"] {
+		t.Fatalf("plugins.allow missing mcp-knowledgebase")
+	}
+	if !seen["acpx"] {
+		t.Fatalf("plugins.allow missing acpx")
+	}
+	entries, ok := plugins["entries"].(map[string]any)
+	if !ok {
+		t.Fatalf("plugins.entries missing")
+	}
+	if _, ok := entries["acpx"]; !ok {
+		t.Fatalf("plugins.entries.acpx missing")
+	}
+}

@@ -2490,10 +2490,54 @@ func (s *Server) handleBots(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	active, activeOK := s.activeBotIDsInNamespace(r.Context())
 	if !includeInactive {
-		items = s.filterActiveBots(r.Context(), items)
+		items = s.filterActiveBotsBySet(items, active, activeOK)
+	}
+	if activeOK && len(active) > 0 {
+		items = mergeMissingActiveBots(items, active)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func syntheticActiveBot(userID string) store.Bot {
+	return store.Bot{
+		BotID:       userID,
+		Name:        userID,
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}
+}
+
+func mergeMissingActiveBots(items []store.Bot, active map[string]struct{}) []store.Bot {
+	if len(active) == 0 {
+		return items
+	}
+	out := append([]store.Bot(nil), items...)
+	seen := make(map[string]struct{}, len(out))
+	for _, it := range out {
+		uid := strings.TrimSpace(it.BotID)
+		if uid != "" {
+			seen[uid] = struct{}{}
+		}
+	}
+	missing := make([]string, 0, len(active))
+	for uid := range active {
+		uid = strings.TrimSpace(uid)
+		if uid == "" {
+			continue
+		}
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		missing = append(missing, uid)
+	}
+	sort.Strings(missing)
+	for _, uid := range missing {
+		out = append(out, syntheticActiveBot(uid))
+	}
+	return out
 }
 
 func (s *Server) handleBotThoughts(w http.ResponseWriter, r *http.Request) {
@@ -2596,7 +2640,7 @@ func (s *Server) readBotLogs(ctx context.Context, botID string, tail int64) (str
 	}
 	filtered := make([]corev1.Pod, 0, len(pods.Items))
 	for _, p := range pods.Items {
-		if resolveUserIDFromLabels(p.Labels) == botID {
+		if workloadMatchesUserID(p.Name, p.Labels, botID) {
 			filtered = append(filtered, p)
 		}
 	}
@@ -2663,8 +2707,8 @@ func (s *Server) handleBotRuleStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
-	active := s.activeBotIDsInNamespace(r.Context())
-	if len(active) > 0 {
+	active, activeOK := s.activeBotIDsInNamespace(r.Context())
+	if activeOK && len(active) > 0 {
 		if _, ok := active[botID]; !ok {
 			writeError(w, http.StatusNotFound, "user is not active in cluster")
 			return
@@ -2685,7 +2729,15 @@ func (s *Server) filterActiveBots(ctx context.Context, items []store.Bot) []stor
 	if s.kubeClient == nil {
 		return items
 	}
-	active := s.activeBotIDsInNamespace(ctx)
+	active, activeOK := s.activeBotIDsInNamespace(ctx)
+	return s.filterActiveBotsBySet(items, active, activeOK)
+}
+
+func (s *Server) filterActiveBotsBySet(items []store.Bot, active map[string]struct{}, activeOK bool) []store.Bot {
+	if !activeOK {
+		// Discovery unavailable (eg. kube API transient failure): degrade gracefully.
+		return items
+	}
 	out := make([]store.Bot, 0, len(items))
 	for _, b := range items {
 		if _, ok := active[b.BotID]; ok {
@@ -6318,6 +6370,35 @@ func (s *Server) chatRetryDelay() time.Duration {
 	return d
 }
 
+func (s *Server) chatExecTimeoutSeconds() int {
+	// Keep exec timeout shorter than task timeout so we can return partial reply
+	// instead of waiting until context deadline.
+	d := s.chatReplyTimeout() - 10*time.Second
+	sec := int(d / time.Second)
+	if sec < 20 {
+		sec = 20
+	}
+	if sec > 60 {
+		sec = 60
+	}
+	return sec
+}
+
+func buildOpenClawChatCommand(message, sessionID string, timeoutSec int) []string {
+	base := []string{"openclaw", "agent", "--local", "--json", "--message", message}
+	if strings.TrimSpace(sessionID) != "" {
+		base = append(base, "--session-id", strings.TrimSpace(sessionID))
+	} else {
+		base = append(base, "--agent", "main")
+	}
+	if timeoutSec <= 0 {
+		return base
+	}
+	cmd := []string{"timeout", strconv.Itoa(timeoutSec)}
+	cmd = append(cmd, base...)
+	return cmd
+}
+
 func (s *Server) enqueueChatTask(userID, message string) chatTaskRecord {
 	s.startChatWorkerPool()
 	now := time.Now().UTC()
@@ -6701,12 +6782,8 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 
 	// Use embedded local mode to avoid gateway pairing/auth handshake mismatch
 	// between runtime exec and OpenClaw control-plane websocket auth.
-	cmd := []string{"openclaw", "agent", "--local", "--json", "--message", message}
-	if sessionID != "" {
-		cmd = append(cmd, "--session-id", sessionID)
-	} else {
-		cmd = append(cmd, "--agent", "main")
-	}
+	execTimeoutSec := s.chatExecTimeoutSeconds()
+	cmd := buildOpenClawChatCommand(message, sessionID, execTimeoutSec)
 
 	stdout, stderr, err := s.execInBotPod(ctx, podName, cmd)
 	for attempt := 0; err != nil && isGatewayWarmupError(stderr) && attempt < maxInt(0, s.cfg.ChatWarmupRetries); attempt++ {
@@ -6721,7 +6798,7 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 		s.chatMu.Lock()
 		delete(s.chatSessions, userID)
 		s.chatMu.Unlock()
-		retryCmd := []string{"openclaw", "agent", "--local", "--json", "--agent", "main", "--message", message}
+		retryCmd := buildOpenClawChatCommand(message, "", execTimeoutSec)
 		for {
 			if !sleepContext(ctx, s.chatRetryDelay()) {
 				return "", "", podName, ctx.Err()
@@ -6734,6 +6811,12 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 	}
 	if err != nil {
 		if isContextTimeoutOrCancel(err, ctx) {
+			if recovered := extractFallbackReply(stdout, stderr); recovered != "" {
+				if strings.Contains(strings.ToLower(recovered), "session file locked") {
+					return "", "", podName, fmt.Errorf("%v: %s", err, strings.TrimSpace(recovered))
+				}
+				return recovered, sessionID, podName, nil
+			}
 			if strings.TrimSpace(stderr) != "" {
 				return "", "", podName, fmt.Errorf("%v: %s", err, strings.TrimSpace(stderr))
 			}
@@ -6966,7 +7049,7 @@ func (s *Server) latestBotPod(ctx context.Context, userID string) (*corev1.Pod, 
 	}
 	filtered := make([]corev1.Pod, 0, len(pods.Items))
 	for _, p := range pods.Items {
-		if resolveUserIDFromLabels(p.Labels) == userID {
+		if workloadMatchesUserID(p.Name, p.Labels, userID) {
 			filtered = append(filtered, p)
 		}
 	}
@@ -7384,6 +7467,23 @@ func int64Ptr(v int64) *int64 {
 }
 
 func (s *Server) serveOpenClawDashboardHTML(w http.ResponseWriter, r *http.Request, backend *neturl.URL, userID string) {
+	isGatewayStartingErr := func(err error) bool {
+		if err == nil {
+			return false
+		}
+		msg := strings.ToLower(strings.TrimSpace(err.Error()))
+		if msg == "" {
+			return false
+		}
+		if strings.Contains(msg, "context deadline exceeded") {
+			// If the request context is already done, this is a client/request timeout
+			// and should not be retried as a gateway warmup condition.
+			return r.Context().Err() == nil
+		}
+		return strings.Contains(msg, "connection refused") ||
+			strings.Contains(msg, "i/o timeout") ||
+			strings.Contains(msg, "no route to host")
+	}
 	doReq := func(target *neturl.URL) ([]byte, int, error) {
 		u := *target
 		u.Path = "/"
@@ -7403,23 +7503,45 @@ func (s *Server) serveOpenClawDashboardHTML(w http.ResponseWriter, r *http.Reque
 		}
 		return body, resp.StatusCode, nil
 	}
-
-	u := *backend
-	u.Path = "/"
-	u.RawQuery = r.URL.RawQuery
-	body, statusCode, err := doReq(&u)
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "connection refused") {
-		if pod, podErr := s.latestBotPod(r.Context(), userID); podErr == nil && strings.TrimSpace(pod.Status.PodIP) != "" {
-			if retryBackend, parseErr := neturl.Parse("http://" + strings.TrimSpace(pod.Status.PodIP) + ":18789"); parseErr == nil {
-				if retryBody, retryCode, retryErr := doReq(retryBackend); retryErr == nil {
-					body = retryBody
-					statusCode = retryCode
-					err = nil
+	resolveBackend := func() *neturl.URL {
+		if pod, podErr := s.latestBotPod(r.Context(), userID); podErr == nil {
+			if podIP := strings.TrimSpace(pod.Status.PodIP); podIP != "" {
+				if u, parseErr := neturl.Parse("http://" + podIP + ":18789"); parseErr == nil {
+					return u
 				}
 			}
 		}
+		return backend
 	}
+	tryFetch := func(target *neturl.URL, attempts int, delay time.Duration) ([]byte, int, error) {
+		var (
+			body       []byte
+			statusCode int
+			err        error
+		)
+		for i := 0; i < maxInt(1, attempts); i++ {
+			if i > 0 {
+				if !sleepContext(r.Context(), delay) {
+					return nil, 0, r.Context().Err()
+				}
+			}
+			body, statusCode, err = doReq(target)
+			if err == nil {
+				return body, statusCode, nil
+			}
+			if !isGatewayStartingErr(err) {
+				return nil, 0, err
+			}
+			target = resolveBackend()
+		}
+		return nil, 0, err
+	}
+	body, statusCode, err := tryFetch(resolveBackend(), 6, 700*time.Millisecond)
 	if err != nil {
+		if isGatewayStartingErr(err) {
+			writeError(w, http.StatusServiceUnavailable, "openclaw gateway is starting, retry in a few seconds")
+			return
+		}
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("openclaw proxy error: %s", err.Error()))
 		return
 	}
@@ -8504,7 +8626,7 @@ func (s *Server) runTokenDrainTick(ctx context.Context, tickID int64) error {
 	if err != nil {
 		return err
 	}
-	active := s.activeBotIDsInNamespace(ctx)
+	active, activeOK := s.activeBotIDsInNamespace(ctx)
 	for _, b := range bots {
 		if strings.TrimSpace(b.BotID) == "" || !b.Initialized || b.Status != "running" {
 			continue
@@ -8515,7 +8637,7 @@ func (s *Server) runTokenDrainTick(ctx context.Context, tickID int64) error {
 				continue
 			}
 		}
-		if len(active) > 0 {
+		if activeOK && len(active) > 0 {
 			if _, ok := active[b.BotID]; !ok {
 				continue
 			}

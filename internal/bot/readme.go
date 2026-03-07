@@ -272,10 +272,14 @@ func BuildOpenClawConfig(model string) string {
   },
   "plugins": {
     "allow": [
-      "mcp-knowledgebase"
+      "mcp-knowledgebase",
+      "acpx"
     ],
     "entries": {
       "mcp-knowledgebase": {
+        "enabled": true
+      },
+      "acpx": {
         "enabled": true
       }
     }
