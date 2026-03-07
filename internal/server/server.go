@@ -6712,8 +6712,10 @@ func (s *Server) chatExecTimeoutSeconds() int {
 	if sec < 20 {
 		sec = 20
 	}
-	if sec > 60 {
-		sec = 60
+	// OpenClaw embedded runs can exceed 60s for larger session contexts.
+	// Cap to 3 minutes to avoid truncating valid JSON replies too early.
+	if sec > 180 {
+		sec = 180
 	}
 	return sec
 }
@@ -7093,6 +7095,10 @@ func (s *Server) releaseChatUserExec(userID string) {
 }
 
 func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string) (reply string, sessionID string, podName string, err error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return "", "", "", errors.New("user_id is required")
+	}
 	if err := s.acquireChatUserExec(ctx, userID); err != nil {
 		return "", "", "", err
 	}
@@ -7110,9 +7116,7 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 	if err != nil {
 		return "", "", "", err
 	}
-	s.chatMu.Lock()
-	sessionID = strings.TrimSpace(s.chatSessions[userID])
-	s.chatMu.Unlock()
+	sessionID = s.currentOrDefaultChatSessionID(userID)
 
 	// Use embedded local mode to avoid gateway pairing/auth handshake mismatch
 	// between runtime exec and OpenClaw control-plane websocket auth.
@@ -7128,11 +7132,13 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 	}
 	if err != nil && isSessionLockError(stdout, stderr) {
 		// Session lock can happen when OpenClaw keeps the previous session file lock.
-		// Reset stored session and retry with a fresh main session until context timeout.
+		// Reset stored session and retry with a fresh per-user session until context timeout.
 		s.chatMu.Lock()
 		delete(s.chatSessions, userID)
 		s.chatMu.Unlock()
-		retryCmd := buildOpenClawChatCommand(message, "", execTimeoutSec)
+		retrySessionID := nextRuntimeChatRetrySessionID(userID)
+		sessionID = retrySessionID
+		retryCmd := buildOpenClawChatCommand(message, retrySessionID, execTimeoutSec)
 		for {
 			if !sleepContext(ctx, s.chatRetryDelay()) {
 				return "", "", podName, ctx.Err()
@@ -7149,6 +7155,7 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 				if strings.Contains(strings.ToLower(recovered), "session file locked") {
 					return "", "", podName, fmt.Errorf("%v: %s", err, strings.TrimSpace(recovered))
 				}
+				s.setChatSession(userID, sessionID)
 				return recovered, sessionID, podName, nil
 			}
 			if strings.TrimSpace(stderr) != "" {
@@ -7167,6 +7174,7 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 			if strings.Contains(strings.ToLower(recovered), "session file locked") {
 				return "", "", podName, fmt.Errorf("%v: %s", err, strings.TrimSpace(recovered))
 			}
+			s.setChatSession(userID, sessionID)
 			return recovered, sessionID, podName, nil
 		}
 		if strings.TrimSpace(stderr) != "" {
@@ -7188,6 +7196,7 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 		if strings.Contains(strings.ToLower(reply), "session file locked") {
 			return "", "", podName, fmt.Errorf("openclaw session lock error: %s", reply)
 		}
+		s.setChatSession(userID, sessionID)
 		return reply, sessionID, podName, nil
 	}
 	parts := make([]string, 0, len(run.Result.Payloads))
@@ -7211,15 +7220,14 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 			reply = "(empty reply)"
 		}
 	}
-	sessionID = strings.TrimSpace(run.Result.Meta.AgentMeta.SessionID)
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(run.Meta.AgentMeta.SessionID)
+	sessionFromRun := strings.TrimSpace(run.Result.Meta.AgentMeta.SessionID)
+	if sessionFromRun == "" {
+		sessionFromRun = strings.TrimSpace(run.Meta.AgentMeta.SessionID)
 	}
-	if sessionID != "" {
-		s.chatMu.Lock()
-		s.chatSessions[userID] = sessionID
-		s.chatMu.Unlock()
+	if sessionFromRun != "" {
+		sessionID = sessionFromRun
 	}
+	s.setChatSession(userID, sessionID)
 	return reply, sessionID, podName, nil
 }
 
@@ -7242,6 +7250,56 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func defaultRuntimeChatSessionID(userID string) string {
+	uid := strings.TrimSpace(userID)
+	if uid == "" {
+		return ""
+	}
+	return "runtime-chat-" + uid
+}
+
+func nextRuntimeChatRetrySessionID(userID string) string {
+	base := defaultRuntimeChatSessionID(userID)
+	if base == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s-retry-%d", base, time.Now().UTC().UnixNano())
+}
+
+func (s *Server) setChatSession(userID, sessionID string) {
+	uid := strings.TrimSpace(userID)
+	sid := strings.TrimSpace(sessionID)
+	if uid == "" || sid == "" {
+		return
+	}
+	s.chatMu.Lock()
+	if s.chatSessions == nil {
+		s.chatSessions = make(map[string]string)
+	}
+	s.chatSessions[uid] = sid
+	s.chatMu.Unlock()
+}
+
+func (s *Server) currentOrDefaultChatSessionID(userID string) string {
+	uid := strings.TrimSpace(userID)
+	if uid == "" {
+		return ""
+	}
+	s.chatMu.Lock()
+	defer s.chatMu.Unlock()
+	if s.chatSessions == nil {
+		s.chatSessions = make(map[string]string)
+	}
+	sessionID := strings.TrimSpace(s.chatSessions[uid])
+	if sessionID == "" {
+		sessionID = defaultRuntimeChatSessionID(uid)
+		if sessionID != "" {
+			s.chatSessions[uid] = sessionID
+		}
+	}
+	return sessionID
 }
 
 func parseOpenClawAgentOutput(stdout string) (openClawAgentResponse, bool) {

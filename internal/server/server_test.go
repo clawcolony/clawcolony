@@ -3566,6 +3566,118 @@ func TestIsContextTimeoutOrCancel(t *testing.T) {
 	}
 }
 
+func TestDefaultRuntimeChatSessionID(t *testing.T) {
+	if got := defaultRuntimeChatSessionID(""); got != "" {
+		t.Fatalf("empty user id should return empty session id, got %q", got)
+	}
+	if got := defaultRuntimeChatSessionID(" user-abc "); got != "runtime-chat-user-abc" {
+		t.Fatalf("unexpected default session id: got=%q", got)
+	}
+}
+
+func TestNextRuntimeChatRetrySessionID(t *testing.T) {
+	base := defaultRuntimeChatSessionID("user-abc")
+	got := nextRuntimeChatRetrySessionID("user-abc")
+	if got == "" {
+		t.Fatalf("expected non-empty retry session id")
+	}
+	if !strings.HasPrefix(got, base+"-retry-") {
+		t.Fatalf("unexpected retry session prefix: got=%q base=%q", got, base)
+	}
+	if got := nextRuntimeChatRetrySessionID(""); got != "" {
+		t.Fatalf("empty user id should return empty retry session id, got=%q", got)
+	}
+}
+
+func TestCurrentOrDefaultChatSessionID(t *testing.T) {
+	srv := newTestServer()
+	got := srv.currentOrDefaultChatSessionID(" user-abc ")
+	if got != "runtime-chat-user-abc" {
+		t.Fatalf("unexpected default session id from server: got=%q", got)
+	}
+	srv.chatMu.Lock()
+	stored := srv.chatSessions["user-abc"]
+	srv.chatMu.Unlock()
+	if stored != got {
+		t.Fatalf("server did not persist default session id: stored=%q got=%q", stored, got)
+	}
+	if got2 := srv.currentOrDefaultChatSessionID("user-abc"); got2 != got {
+		t.Fatalf("expected idempotent session id: first=%q second=%q", got, got2)
+	}
+	if gotEmpty := srv.currentOrDefaultChatSessionID("   "); gotEmpty != "" {
+		t.Fatalf("empty user id should return empty session id, got=%q", gotEmpty)
+	}
+}
+
+func TestCurrentOrDefaultChatSessionIDUsesExisting(t *testing.T) {
+	srv := newTestServer()
+	srv.chatMu.Lock()
+	srv.chatSessions["user-abc"] = "sess-existing"
+	srv.chatMu.Unlock()
+	if got := srv.currentOrDefaultChatSessionID("user-abc"); got != "sess-existing" {
+		t.Fatalf("expected existing session id to be reused, got=%q", got)
+	}
+}
+
+func TestSetChatSession(t *testing.T) {
+	srv := newTestServer()
+	srv.setChatSession(" user-abc ", " sess-1 ")
+	srv.chatMu.Lock()
+	got := srv.chatSessions["user-abc"]
+	srv.chatMu.Unlock()
+	if got != "sess-1" {
+		t.Fatalf("unexpected stored session: got=%q", got)
+	}
+}
+
+func TestSetChatSessionNoopOnEmptyValues(t *testing.T) {
+	srv := newTestServer()
+	srv.setChatSession("", "sess")
+	srv.setChatSession("user-abc", "")
+	srv.setChatSession("  ", "sess")
+	srv.setChatSession("user-abc", "   ")
+	srv.chatMu.Lock()
+	count := len(srv.chatSessions)
+	srv.chatMu.Unlock()
+	if count != 0 {
+		t.Fatalf("expected empty session map, got count=%d", count)
+	}
+}
+
+func TestChatExecTimeoutSecondsCap(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.ChatReplyTimeout = 8 * time.Minute
+	if got := srv.chatExecTimeoutSeconds(); got != 180 {
+		t.Fatalf("chat exec timeout cap mismatch: got=%d want=180", got)
+	}
+
+	srv.cfg.ChatReplyTimeout = 185 * time.Second
+	if got := srv.chatExecTimeoutSeconds(); got != 175 {
+		t.Fatalf("chat exec timeout should keep 10s headroom: got=%d want=175", got)
+	}
+
+	srv.cfg.ChatReplyTimeout = 40 * time.Second
+	if got := srv.chatExecTimeoutSeconds(); got != 30 {
+		t.Fatalf("chat exec timeout for short reply timeout: got=%d want=30", got)
+	}
+
+	srv.cfg.ChatReplyTimeout = 15 * time.Second
+	if got := srv.chatExecTimeoutSeconds(); got != 20 {
+		t.Fatalf("chat exec timeout lower bound mismatch: got=%d want=20", got)
+	}
+}
+
+func TestSendChatToOpenClawRequiresUserID(t *testing.T) {
+	srv := newTestServer()
+	_, _, _, err := srv.sendChatToOpenClaw(context.Background(), "   ", "hello")
+	if err == nil {
+		t.Fatalf("expected error for empty user id")
+	}
+	if !strings.Contains(err.Error(), "user_id is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestThinkCostEventAmountByRateMilli(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.ThinkCostRateMilli = 1500

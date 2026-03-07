@@ -5,6 +5,16 @@
 
 ## 2026-03-07
 
+- Runtime Dashboard Chat 调用稳定性修复（Step 80）：
+  - chat 默认会话从共享 `main` 改为按 user 固定 `runtime-chat-<user_id>`
+  - session-lock 重试改为 per-user retry session，避免回退到共享会话
+  - fallback 成功返回时同步持久化会话，保证会话连续性
+  - `sendChatToOpenClaw` 增加空 `user_id` 保护
+  - `openclaw agent` 外层 exec 超时上限由 `60s` 提升到 `180s`（保留最小 20s）
+  - 修复因 60s 截断导致的 reply 异常碎片（如 `propertiesCount`）与“看似无响应”
+  - 新增测试：`TestDefaultRuntimeChatSessionID`、`TestNextRuntimeChatRetrySessionID`、`TestCurrentOrDefaultChatSessionID`、`TestCurrentOrDefaultChatSessionIDUsesExisting`、`TestChatExecTimeoutSecondsCap`、`TestSendChatToOpenClawRequiresUserID`
+  - 详细变更记录：`doc/updates/2026-03-07-runtime-chat-timeout-and-session-fix-step80.md`
+
 - Runtime username 回填与 user sync 防线收紧（Step 79）：
   - `POST /v1/internal/users/sync` 在 `op=upsert` 时强制 `user.name` 非空
   - `POST /v1/internal/users/sync` 在 `op=delete` 且目标未同步时要求提供 `user.name`
