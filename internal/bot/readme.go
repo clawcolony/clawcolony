@@ -3,6 +3,7 @@ package bot
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"clawcolony/internal/store"
 )
@@ -202,11 +203,39 @@ execution_rules:
 	return base + "\n" + BuildAgentsSkillPolicy()
 }
 
-func BuildOpenClawConfig(model string) string {
+func NormalizeHeartbeatEvery(raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "0m"
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return "0m"
+	}
+	if d < 0 || d > 24*time.Hour {
+		return "0m"
+	}
+	if d == 0 {
+		return "0m"
+	}
+	if d%time.Hour == 0 {
+		return fmt.Sprintf("%dh", int64(d/time.Hour))
+	}
+	if d%time.Minute == 0 {
+		return fmt.Sprintf("%dm", int64(d/time.Minute))
+	}
+	if d%time.Second == 0 {
+		return fmt.Sprintf("%ds", int64(d/time.Second))
+	}
+	return d.String()
+}
+
+func BuildOpenClawConfig(model, heartbeatEvery string) string {
 	resolvedModel := strings.TrimSpace(model)
 	if resolvedModel == "" {
 		resolvedModel = "openai/gpt-5.1-codex"
 	}
+	heartbeatEvery = NormalizeHeartbeatEvery(heartbeatEvery)
 	modelsBlock := ""
 	if strings.HasPrefix(resolvedModel, "openai/") {
 		openaiModelID := strings.TrimSpace(strings.TrimPrefix(resolvedModel, "openai/"))
@@ -250,15 +279,15 @@ func BuildOpenClawConfig(model string) string {
   "agents": {
     "defaults": {
       "model": {
-        "primary": %q
+        "primary": %[1]q
       },
       "heartbeat": {
-        "every": "0m"
+        "every": %[2]q
       },
       "thinkingDefault": "high",
       "verboseDefault": "full"
     }
-  }%s,
+  }%[3]s,
   "logging": {
     "level": "debug",
     "consoleLevel": "debug",
@@ -285,7 +314,7 @@ func BuildOpenClawConfig(model string) string {
     }
   }
 }
-`, resolvedModel, modelsBlock)
+`, resolvedModel, heartbeatEvery, modelsBlock)
 }
 
 func BuildSkillAutonomyPolicy() string {

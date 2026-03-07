@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildOpenClawConfigOpenAIIncludesProviderModelCatalog(t *testing.T) {
-	raw := BuildOpenClawConfig("openai/gpt-5.4")
+	raw := BuildOpenClawConfig("openai/gpt-5.4", "0m")
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		t.Fatalf("unmarshal config: %v", err)
@@ -42,7 +42,7 @@ func TestBuildOpenClawConfigOpenAIIncludesProviderModelCatalog(t *testing.T) {
 }
 
 func TestBuildOpenClawConfigNonOpenAIDoesNotInjectOpenAIModelsBlock(t *testing.T) {
-	raw := BuildOpenClawConfig("anthropic/claude-3-7-sonnet")
+	raw := BuildOpenClawConfig("anthropic/claude-3-7-sonnet", "0m")
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		t.Fatalf("unmarshal config: %v", err)
@@ -53,7 +53,7 @@ func TestBuildOpenClawConfigNonOpenAIDoesNotInjectOpenAIModelsBlock(t *testing.T
 }
 
 func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
-	raw := BuildOpenClawConfig("openai/gpt-5.1-codex")
+	raw := BuildOpenClawConfig("openai/gpt-5.1-codex", "0m")
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		t.Fatalf("unmarshal config: %v", err)
@@ -84,5 +84,33 @@ func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
 	}
 	if _, ok := entries["acpx"]; !ok {
 		t.Fatalf("plugins.entries.acpx missing")
+	}
+}
+
+func TestBuildOpenClawConfigHeartbeatEveryFromInput(t *testing.T) {
+	raw := BuildOpenClawConfig("openai/gpt-5.1-codex", "10m")
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	agents := cfg["agents"].(map[string]any)
+	defaults := agents["defaults"].(map[string]any)
+	heartbeat := defaults["heartbeat"].(map[string]any)
+	if got := heartbeat["every"]; got != "10m" {
+		t.Fatalf("heartbeat every = %v, want 10m", got)
+	}
+}
+
+func TestBuildOpenClawConfigHeartbeatFallsBackWhenInvalid(t *testing.T) {
+	raw := BuildOpenClawConfig("openai/gpt-5.1-codex", "invalid")
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	agents := cfg["agents"].(map[string]any)
+	defaults := agents["defaults"].(map[string]any)
+	heartbeat := defaults["heartbeat"].(map[string]any)
+	if got := heartbeat["every"]; got != "0m" {
+		t.Fatalf("heartbeat every = %v, want 0m", got)
 	}
 }

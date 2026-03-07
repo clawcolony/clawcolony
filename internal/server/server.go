@@ -86,6 +86,8 @@ type Server struct {
 	alertNotifyMu        sync.Mutex
 	alertLastSent        map[string]time.Time
 	alertLastAmt         map[string]int64
+	lowTokenNotifyMu     sync.RWMutex
+	lowTokenLastSent     map[string]time.Time
 	evolutionAlertMu     sync.Mutex
 	evolutionAlertLastAt time.Time
 	evolutionAlertDigest string
@@ -103,6 +105,11 @@ type Server struct {
 	worldFreezeTotal     int
 	worldFreezeAtRisk    int
 	worldFreezeThreshold int
+	runtimeSchedulerMu   sync.RWMutex
+	runtimeSchedulerItem runtimeSchedulerSettings
+	runtimeSchedulerSrc  string
+	runtimeSchedulerAt   time.Time
+	runtimeSchedulerTS   time.Time
 	toolSandboxExec      toolSandboxExecutor
 }
 
@@ -270,12 +277,29 @@ type worldEvolutionAlertItem struct {
 	Message   string `json:"message"`
 }
 
+type runtimeSchedulerSettings struct {
+	AutonomyReminderIntervalTicks      int64  `json:"autonomy_reminder_interval_ticks"`
+	CommunityCommReminderIntervalTicks int64  `json:"community_comm_reminder_interval_ticks"`
+	KBEnrollmentReminderIntervalTicks  int64  `json:"kb_enrollment_reminder_interval_ticks"`
+	KBVotingReminderIntervalTicks      int64  `json:"kb_voting_reminder_interval_ticks"`
+	CostAlertNotifyCooldownSeconds     int64  `json:"cost_alert_notify_cooldown_seconds"`
+	LowTokenAlertCooldownSeconds       int64  `json:"low_token_alert_cooldown_seconds"`
+	AgentHeartbeatEvery                string `json:"agent_heartbeat_every"`
+}
+
 const piTaskClaimCooldown = time.Minute
 const tokenDrainPerTick int64 = 1
 const httpLogBodyMaxBytes = 4096
 const worldCostAlertSettingsKey = "world_cost_alert_settings"
 const worldEvolutionAlertSettingsKey = "world_evolution_alert_settings"
+const runtimeSchedulerSettingsKey = "runtime_scheduler_settings"
 const chatRecentTaskLimit = 60
+const runtimeSchedulerCacheTTL = 30 * time.Second
+const runtimeSchedulerMaxIntervalTicks int64 = 10080
+const runtimeSchedulerMinCooldownSeconds int64 = 30
+const runtimeSchedulerMaxCooldownSeconds int64 = 86400
+const runtimeSchedulerMaxHeartbeat = 24 * time.Hour
+const defaultCostAlertCooldownSeconds int64 = int64((10 * time.Minute) / time.Second)
 
 var managementOnlyRouteSet = map[string]struct{}{}
 
@@ -327,26 +351,27 @@ func New(cfg config.Config, st store.Store, bots *bot.Manager) *Server {
 			RoomOverrides: make(map[string]string),
 			BotOverrides:  make(map[string]string),
 		},
-		piDigits:        piDigits,
-		piTasks:         make(map[string]piTask),
-		activeTasks:     make(map[string]string),
-		lastClaimAt:     make(map[string]time.Time),
-		chatSessions:    make(map[string]string),
-		chatHistory:     make(map[string][]chatMessage),
-		chatSubs:        make(map[string]map[chan chatMessage]struct{}),
-		chatPersistCh:   make(chan chatMessage, 4096),
-		chatTaskQueue:   make(chan string, chatQueueSize),
-		chatTaskQueued:  make(map[string]struct{}),
-		chatTaskPending: make(map[string]*chatTaskRecord),
-		chatTaskRunning: make(map[string]*chatTaskRecord),
-		chatTaskBacklog: make(map[string][]*chatTaskRecord),
-		chatTaskCancel:  make(map[string]context.CancelFunc),
-		chatTaskRecent:  make(map[string][]chatTaskRecord),
-		chatExecSem:     make(chan struct{}, chatExecMaxConc),
-		chatUserExecSem: make(map[string]chan struct{}),
-		mailNotified:    make(map[string]time.Time),
-		alertLastSent:   make(map[string]time.Time),
-		alertLastAmt:    make(map[string]int64),
+		piDigits:         piDigits,
+		piTasks:          make(map[string]piTask),
+		activeTasks:      make(map[string]string),
+		lastClaimAt:      make(map[string]time.Time),
+		chatSessions:     make(map[string]string),
+		chatHistory:      make(map[string][]chatMessage),
+		chatSubs:         make(map[string]map[chan chatMessage]struct{}),
+		chatPersistCh:    make(chan chatMessage, 4096),
+		chatTaskQueue:    make(chan string, chatQueueSize),
+		chatTaskQueued:   make(map[string]struct{}),
+		chatTaskPending:  make(map[string]*chatTaskRecord),
+		chatTaskRunning:  make(map[string]*chatTaskRecord),
+		chatTaskBacklog:  make(map[string][]*chatTaskRecord),
+		chatTaskCancel:   make(map[string]context.CancelFunc),
+		chatTaskRecent:   make(map[string][]chatTaskRecord),
+		chatExecSem:      make(chan struct{}, chatExecMaxConc),
+		chatUserExecSem:  make(map[string]chan struct{}),
+		mailNotified:     make(map[string]time.Time),
+		alertLastSent:    make(map[string]time.Time),
+		alertLastAmt:     make(map[string]int64),
+		lowTokenLastSent: make(map[string]time.Time),
 		openclawProxy: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
@@ -373,6 +398,13 @@ func New(cfg config.Config, st store.Store, bots *bot.Manager) *Server {
 	}
 	if err := s.ensureGenesisPromptTemplateCoverage(context.Background()); err != nil {
 		log.Printf("prompt template clawcolony coverage ensure failed: %v", err)
+	}
+	if s.bots != nil {
+		item, source, _ := s.getRuntimeSchedulerSettings(context.Background())
+		if source == "compat_invalid_db" {
+			log.Printf("runtime scheduler settings fallback to compat due to invalid db payload")
+		}
+		s.bots.SetOpenClawHeartbeatEvery(item.AgentHeartbeatEvery)
 	}
 	s.registerRoutes()
 	return s
@@ -894,6 +926,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/world/cost-alerts", s.handleWorldCostAlerts)
 	s.mux.HandleFunc("/v1/world/cost-alert-settings", s.handleWorldCostAlertSettings)
 	s.mux.HandleFunc("/v1/world/cost-alert-settings/upsert", s.handleWorldCostAlertSettingsUpsert)
+	s.mux.HandleFunc("/v1/runtime/scheduler-settings", s.handleRuntimeSchedulerSettings)
+	s.mux.HandleFunc("/v1/runtime/scheduler-settings/upsert", s.handleRuntimeSchedulerSettingsUpsert)
 	s.mux.HandleFunc("/v1/world/cost-alert-notifications", s.handleWorldCostAlertNotifications)
 	s.mux.HandleFunc("/v1/world/evolution-score", s.handleWorldEvolutionScore)
 	s.mux.HandleFunc("/v1/world/evolution-alerts", s.handleWorldEvolutionAlerts)
@@ -1633,7 +1667,7 @@ func (s *Server) defaultWorldCostAlertSettings() worldCostAlertSettings {
 		ThresholdAmount: 100,
 		TopUsers:        10,
 		ScanLimit:       500,
-		NotifyCooldownS: int64((10 * time.Minute) / time.Second),
+		NotifyCooldownS: defaultCostAlertCooldownSeconds,
 	}
 }
 
@@ -1654,18 +1688,18 @@ func (s *Server) normalizeWorldCostAlertSettings(in worldCostAlertSettings) worl
 		in.ScanLimit = 500
 	}
 	if in.NotifyCooldownS <= 0 {
-		in.NotifyCooldownS = int64((10 * time.Minute) / time.Second)
+		in.NotifyCooldownS = defaultCostAlertCooldownSeconds
 	}
-	if in.NotifyCooldownS < 30 {
-		in.NotifyCooldownS = 30
+	if in.NotifyCooldownS < runtimeSchedulerMinCooldownSeconds {
+		in.NotifyCooldownS = runtimeSchedulerMinCooldownSeconds
 	}
-	if in.NotifyCooldownS > 86400 {
-		in.NotifyCooldownS = 86400
+	if in.NotifyCooldownS > runtimeSchedulerMaxCooldownSeconds {
+		in.NotifyCooldownS = runtimeSchedulerMaxCooldownSeconds
 	}
 	return in
 }
 
-func (s *Server) getWorldCostAlertSettings(ctx context.Context) (worldCostAlertSettings, string, time.Time) {
+func (s *Server) getLegacyWorldCostAlertSettings(ctx context.Context) (worldCostAlertSettings, string, time.Time) {
 	def := s.defaultWorldCostAlertSettings()
 	item, err := s.store.GetWorldSetting(ctx, worldCostAlertSettingsKey)
 	if err != nil {
@@ -1678,16 +1712,34 @@ func (s *Server) getWorldCostAlertSettings(ctx context.Context) (worldCostAlertS
 	return s.normalizeWorldCostAlertSettings(parsed), "db", item.UpdatedAt
 }
 
+func (s *Server) getWorldCostAlertSettings(ctx context.Context) (worldCostAlertSettings, string, time.Time) {
+	legacy, source, updatedAt := s.getLegacyWorldCostAlertSettings(ctx)
+	// Compatibility facade: legacy settings remain for threshold/top_users/scan_limit.
+	// Effective cost alert cooldown is resolved from runtime scheduler settings.
+	if runtimeCooldown, _, _ := s.runtimeCostAlertCooldown(ctx); runtimeCooldown > 0 {
+		legacy.NotifyCooldownS = runtimeCooldown
+	}
+	return legacy, source, updatedAt
+}
+
+func (s *Server) runtimeCostAlertCooldown(ctx context.Context) (int64, string, time.Time) {
+	item, source, updatedAt := s.getRuntimeSchedulerSettings(ctx)
+	return item.CostAlertNotifyCooldownSeconds, source, updatedAt
+}
+
 func (s *Server) handleWorldCostAlertSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	item, source, updatedAt := s.getWorldCostAlertSettings(r.Context())
+	_, runtimeSource, runtimeUpdatedAt := s.runtimeCostAlertCooldown(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"item":       item,
-		"source":     source,
-		"updated_at": updatedAt,
+		"item":                       item,
+		"source":                     source,
+		"updated_at":                 updatedAt,
+		"notify_cooldown_source":     runtimeSource,
+		"notify_cooldown_updated_at": runtimeUpdatedAt,
 	})
 }
 
@@ -1707,6 +1759,14 @@ func (s *Server) handleWorldCostAlertSettingsUpsert(w http.ResponseWriter, r *ht
 		ScanLimit:       req.ScanLimit,
 		NotifyCooldownS: req.NotifyCooldownS,
 	})
+	// Runtime scheduler settings are the single source of truth for cost-alert cooldown.
+	cooldownSource := "compat"
+	if merged, _, _ := s.getWorldCostAlertSettings(r.Context()); merged.NotifyCooldownS > 0 {
+		item.NotifyCooldownS = merged.NotifyCooldownS
+	}
+	if _, source, _ := s.runtimeCostAlertCooldown(r.Context()); strings.TrimSpace(source) != "" {
+		cooldownSource = source
+	}
 	raw, err := json.Marshal(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1721,9 +1781,217 @@ func (s *Server) handleWorldCostAlertSettingsUpsert(w http.ResponseWriter, r *ht
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
+		"item":                       item,
+		"updated_at":                 saved.UpdatedAt,
+		"source":                     "db",
+		"notify_cooldown_source":     cooldownSource,
+		"notify_cooldown_managed_by": runtimeSchedulerSettingsKey,
+		"notify_cooldown_ignored":    req.NotifyCooldownS > 0 && req.NotifyCooldownS != item.NotifyCooldownS,
+	})
+}
+
+func (s *Server) defaultRuntimeSchedulerSettings() runtimeSchedulerSettings {
+	autonomy := s.cfg.AutonomyReminderIntervalTicks
+	if autonomy < 0 {
+		autonomy = 0
+	}
+	if autonomy > runtimeSchedulerMaxIntervalTicks {
+		autonomy = runtimeSchedulerMaxIntervalTicks
+	}
+	community := s.cfg.CommunityCommReminderIntervalTicks
+	if community < 0 {
+		community = 0
+	}
+	if community > runtimeSchedulerMaxIntervalTicks {
+		community = runtimeSchedulerMaxIntervalTicks
+	}
+	kbEnroll := s.cfg.KBEnrollmentReminderIntervalTicks
+	if kbEnroll < 0 {
+		kbEnroll = 0
+	}
+	if kbEnroll > runtimeSchedulerMaxIntervalTicks {
+		kbEnroll = runtimeSchedulerMaxIntervalTicks
+	}
+	kbVote := s.cfg.KBVotingReminderIntervalTicks
+	if kbVote < 0 {
+		kbVote = 0
+	}
+	if kbVote > runtimeSchedulerMaxIntervalTicks {
+		kbVote = runtimeSchedulerMaxIntervalTicks
+	}
+	return runtimeSchedulerSettings{
+		AutonomyReminderIntervalTicks:      autonomy,
+		CommunityCommReminderIntervalTicks: community,
+		KBEnrollmentReminderIntervalTicks:  kbEnroll,
+		KBVotingReminderIntervalTicks:      kbVote,
+		CostAlertNotifyCooldownSeconds:     defaultCostAlertCooldownSeconds,
+		LowTokenAlertCooldownSeconds:       0,
+		AgentHeartbeatEvery:                "0m",
+	}
+}
+
+func clampInt64(v, lo, hi int64) int64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func normalizeRuntimeSchedulerSettings(in, fallback runtimeSchedulerSettings) runtimeSchedulerSettings {
+	out := fallback
+	// Missing fields are handled by pre-filling `in` with fallback before JSON unmarshal.
+	out.AutonomyReminderIntervalTicks = clampInt64(in.AutonomyReminderIntervalTicks, 0, runtimeSchedulerMaxIntervalTicks)
+	out.CommunityCommReminderIntervalTicks = clampInt64(in.CommunityCommReminderIntervalTicks, 0, runtimeSchedulerMaxIntervalTicks)
+	out.KBEnrollmentReminderIntervalTicks = clampInt64(in.KBEnrollmentReminderIntervalTicks, 0, runtimeSchedulerMaxIntervalTicks)
+	out.KBVotingReminderIntervalTicks = clampInt64(in.KBVotingReminderIntervalTicks, 0, runtimeSchedulerMaxIntervalTicks)
+	// Read-time normalization is intentionally more permissive than API writes:
+	// invalid manual DB values are clamped, while upsert requests are rejected by validateRuntimeSchedulerSettings.
+	// cost alert cooldown does not use 0 as a disable value; 0 keeps fallback/default.
+	// Values in (0,30) are clamped to 30 for read-time robustness against manual DB edits.
+	if in.CostAlertNotifyCooldownSeconds > 0 {
+		out.CostAlertNotifyCooldownSeconds = clampInt64(in.CostAlertNotifyCooldownSeconds, runtimeSchedulerMinCooldownSeconds, runtimeSchedulerMaxCooldownSeconds)
+	}
+	// low-token cooldown keeps 0 as an explicit "disabled" value for compatibility.
+	if in.LowTokenAlertCooldownSeconds <= 0 {
+		out.LowTokenAlertCooldownSeconds = 0
+	} else {
+		out.LowTokenAlertCooldownSeconds = clampInt64(in.LowTokenAlertCooldownSeconds, runtimeSchedulerMinCooldownSeconds, runtimeSchedulerMaxCooldownSeconds)
+	}
+	if hb := strings.TrimSpace(in.AgentHeartbeatEvery); hb != "" {
+		if d, err := time.ParseDuration(hb); err == nil && d >= 0 && d <= runtimeSchedulerMaxHeartbeat {
+			out.AgentHeartbeatEvery = bot.NormalizeHeartbeatEvery(hb)
+		}
+	}
+	return out
+}
+
+func (s *Server) getRuntimeSchedulerCache(now time.Time) (runtimeSchedulerSettings, string, time.Time, bool) {
+	s.runtimeSchedulerMu.RLock()
+	defer s.runtimeSchedulerMu.RUnlock()
+	src := strings.TrimSpace(s.runtimeSchedulerSrc)
+	if (src != "db" && src != "compat" && src != "compat_invalid_db") || s.runtimeSchedulerTS.IsZero() {
+		return runtimeSchedulerSettings{}, "", time.Time{}, false
+	}
+	if now.Sub(s.runtimeSchedulerTS) > runtimeSchedulerCacheTTL {
+		return runtimeSchedulerSettings{}, "", time.Time{}, false
+	}
+	return s.runtimeSchedulerItem, s.runtimeSchedulerSrc, s.runtimeSchedulerAt, true
+}
+
+func (s *Server) setRuntimeSchedulerCache(item runtimeSchedulerSettings, source string, updatedAt, now time.Time) {
+	s.runtimeSchedulerMu.Lock()
+	defer s.runtimeSchedulerMu.Unlock()
+	s.runtimeSchedulerItem = item
+	s.runtimeSchedulerSrc = strings.TrimSpace(source)
+	s.runtimeSchedulerAt = updatedAt
+	s.runtimeSchedulerTS = now
+}
+
+func validateRuntimeSchedulerSettings(in runtimeSchedulerSettings) error {
+	if in.AutonomyReminderIntervalTicks < 0 || in.AutonomyReminderIntervalTicks > runtimeSchedulerMaxIntervalTicks {
+		return fmt.Errorf("autonomy_reminder_interval_ticks must be in [0, %d]", runtimeSchedulerMaxIntervalTicks)
+	}
+	if in.CommunityCommReminderIntervalTicks < 0 || in.CommunityCommReminderIntervalTicks > runtimeSchedulerMaxIntervalTicks {
+		return fmt.Errorf("community_comm_reminder_interval_ticks must be in [0, %d]", runtimeSchedulerMaxIntervalTicks)
+	}
+	if in.KBEnrollmentReminderIntervalTicks < 0 || in.KBEnrollmentReminderIntervalTicks > runtimeSchedulerMaxIntervalTicks {
+		return fmt.Errorf("kb_enrollment_reminder_interval_ticks must be in [0, %d]", runtimeSchedulerMaxIntervalTicks)
+	}
+	if in.KBVotingReminderIntervalTicks < 0 || in.KBVotingReminderIntervalTicks > runtimeSchedulerMaxIntervalTicks {
+		return fmt.Errorf("kb_voting_reminder_interval_ticks must be in [0, %d]", runtimeSchedulerMaxIntervalTicks)
+	}
+	// Upsert uses strict bounds; read-time normalization separately clamps manual DB edits.
+	if in.CostAlertNotifyCooldownSeconds < runtimeSchedulerMinCooldownSeconds || in.CostAlertNotifyCooldownSeconds > runtimeSchedulerMaxCooldownSeconds {
+		return fmt.Errorf("cost_alert_notify_cooldown_seconds must be in [%d, %d]", runtimeSchedulerMinCooldownSeconds, runtimeSchedulerMaxCooldownSeconds)
+	}
+	if in.LowTokenAlertCooldownSeconds != 0 && (in.LowTokenAlertCooldownSeconds < runtimeSchedulerMinCooldownSeconds || in.LowTokenAlertCooldownSeconds > runtimeSchedulerMaxCooldownSeconds) {
+		return fmt.Errorf("low_token_alert_cooldown_seconds must be 0 or in [%d, %d]", runtimeSchedulerMinCooldownSeconds, runtimeSchedulerMaxCooldownSeconds)
+	}
+	hb := strings.TrimSpace(in.AgentHeartbeatEvery)
+	if hb == "" {
+		return fmt.Errorf("agent_heartbeat_every is required")
+	}
+	d, err := time.ParseDuration(hb)
+	if err != nil {
+		return fmt.Errorf("agent_heartbeat_every must be a valid duration")
+	}
+	if d < 0 || d > runtimeSchedulerMaxHeartbeat {
+		return fmt.Errorf("agent_heartbeat_every must be in [0, 24h]")
+	}
+	return nil
+}
+
+func (s *Server) getRuntimeSchedulerSettings(ctx context.Context) (runtimeSchedulerSettings, string, time.Time) {
+	now := time.Now().UTC()
+	if cached, source, updatedAt, ok := s.getRuntimeSchedulerCache(now); ok {
+		if source == "compat" {
+			// Keep compat mode bound to live process config while still skipping DB reads.
+			// This lets tests (and any runtime config mutators) observe current cfg defaults.
+			return s.defaultRuntimeSchedulerSettings(), "compat", time.Time{}
+		}
+		return cached, source, updatedAt
+	}
+	compat := s.defaultRuntimeSchedulerSettings()
+	item, err := s.store.GetWorldSetting(ctx, runtimeSchedulerSettingsKey)
+	if err != nil || strings.TrimSpace(item.Value) == "" {
+		s.setRuntimeSchedulerCache(compat, "compat", time.Time{}, now)
+		return compat, "compat", time.Time{}
+	}
+	parsed := compat
+	if err := json.Unmarshal([]byte(item.Value), &parsed); err != nil {
+		s.setRuntimeSchedulerCache(compat, "compat_invalid_db", item.UpdatedAt, now)
+		return compat, "compat_invalid_db", item.UpdatedAt
+	}
+	out := normalizeRuntimeSchedulerSettings(parsed, compat)
+	s.setRuntimeSchedulerCache(out, "db", item.UpdatedAt, now)
+	return out, "db", item.UpdatedAt
+}
+
+func (s *Server) handleRuntimeSchedulerSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	item, source, updatedAt := s.getRuntimeSchedulerSettings(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
 		"item":       item,
-		"updated_at": saved.UpdatedAt,
+		"source":     source,
+		"updated_at": updatedAt,
+	})
+}
+
+func (s *Server) handleRuntimeSchedulerSettingsUpsert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var item runtimeSchedulerSettings
+	if err := decodeJSON(r, &item); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	item.AgentHeartbeatEvery = strings.TrimSpace(item.AgentHeartbeatEvery)
+	if err := validateRuntimeSchedulerSettings(item); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	item.AgentHeartbeatEvery = bot.NormalizeHeartbeatEvery(item.AgentHeartbeatEvery)
+	updatedAt, err := s.putSettingJSON(r.Context(), runtimeSchedulerSettingsKey, item)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.setRuntimeSchedulerCache(item, "db", updatedAt, time.Now().UTC())
+	if s.bots != nil {
+		s.bots.SetOpenClawHeartbeatEvery(item.AgentHeartbeatEvery)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"item":       item,
 		"source":     "db",
+		"updated_at": updatedAt,
 	})
 }
 
@@ -5685,10 +5953,10 @@ func (s *Server) handleKBProposalApply(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) kbTick(ctx context.Context, tickID int64) {
 	s.kbAutoProgressDiscussing(ctx)
-	if s.shouldRunKBEnrollmentReminderTick(tickID) {
+	if s.shouldRunKBEnrollmentReminderTick(ctx, tickID) {
 		s.kbSendEnrollmentReminders(ctx)
 	}
-	if s.shouldRunKBVotingReminderTick(tickID) {
+	if s.shouldRunKBVotingReminderTick(ctx, tickID) {
 		s.kbSendVotingReminders(ctx)
 	}
 	s.kbFinalizeExpiredVotes(ctx)
@@ -7768,6 +8036,8 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/world/cost-alerts?user_id=<id>&threshold_amount=<n>&limit=<n>&top_users=<n>",
 		"GET /v1/world/cost-alert-settings",
 		"POST /v1/world/cost-alert-settings/upsert",
+		"GET /v1/runtime/scheduler-settings",
+		"POST /v1/runtime/scheduler-settings/upsert",
 		"GET /v1/world/cost-alert-notifications?user_id=<id>&limit=<n>",
 		"GET /v1/world/evolution-score?window_minutes=<n>&mail_scan_limit=<n>&kb_scan_limit=<n>",
 		"GET /v1/world/evolution-alerts?window_minutes=<n>",
@@ -8124,13 +8394,18 @@ func (s *Server) runLowEnergyAlertTick(ctx context.Context, tickID int64) error 
 		}
 		active[uid] = struct{}{}
 	}
+	// Always prune stale cooldown state, including when active set is empty.
+	s.pruneLowTokenAlertState(active)
 	if len(active) == 0 {
 		return nil
 	}
+	runtimeSettings, _, _ := s.getRuntimeSchedulerSettings(ctx)
+	lowTokenCooldown := time.Duration(runtimeSettings.LowTokenAlertCooldownSeconds) * time.Second
 	accounts, err := s.store.ListTokenAccounts(ctx)
 	if err != nil {
 		return err
 	}
+	now := time.Now().UTC()
 	for _, a := range accounts {
 		userID := strings.TrimSpace(a.BotID)
 		if _, ok := active[userID]; !ok {
@@ -8143,16 +8418,52 @@ func (s *Server) runLowEnergyAlertTick(ctx context.Context, tickID int64) error 
 		if normalizeLifeStateForServer(life.State) == "dead" {
 			continue
 		}
+		if !s.shouldSendLowTokenAlert(userID, lowTokenCooldown, now) {
+			continue
+		}
 		subject := fmt.Sprintf("[LOW-TOKEN][tick=%d] balance=%d threshold=%d", tickID, a.Balance, threshold)
 		body := fmt.Sprintf("你的 token 余额已低于阈值。\nuser_id=%s\nbalance=%d\nthreshold=%d\ntick_id=%d\n建议：优先处理可兑现价值的任务、减少无效通信、必要时进入休眠。",
 			userID, a.Balance, threshold, tickID)
-		_, _ = s.store.SendMail(ctx, clawWorldSystemID, []string{userID}, subject, body)
+		if _, sendErr := s.store.SendMail(ctx, clawWorldSystemID, []string{userID}, subject, body); sendErr != nil {
+			log.Printf("low_token_alert_notify_failed user_id=%s err=%v", userID, sendErr)
+			continue
+		}
+		if lowTokenCooldown > 0 {
+			s.markLowTokenAlertSent(userID, now)
+		}
 	}
 	return nil
 }
 
-func (s *Server) autonomyReminderIntervalTicks() int64 {
-	return s.cfg.AutonomyReminderIntervalTicks
+func (s *Server) pruneLowTokenAlertState(active map[string]struct{}) {
+	s.lowTokenNotifyMu.Lock()
+	defer s.lowTokenNotifyMu.Unlock()
+	for userID := range s.lowTokenLastSent {
+		if _, ok := active[userID]; !ok {
+			delete(s.lowTokenLastSent, userID)
+		}
+	}
+}
+
+func (s *Server) shouldSendLowTokenAlert(userID string, cooldown time.Duration, now time.Time) bool {
+	if cooldown <= 0 {
+		return true
+	}
+	s.lowTokenNotifyMu.RLock()
+	defer s.lowTokenNotifyMu.RUnlock()
+	last, seen := s.lowTokenLastSent[userID]
+	return !seen || now.Sub(last) >= cooldown
+}
+
+func (s *Server) markLowTokenAlertSent(userID string, sentAt time.Time) {
+	s.lowTokenNotifyMu.Lock()
+	defer s.lowTokenNotifyMu.Unlock()
+	s.lowTokenLastSent[userID] = sentAt
+}
+
+func (s *Server) autonomyReminderIntervalTicks(ctx context.Context) int64 {
+	item, _, _ := s.getRuntimeSchedulerSettings(ctx)
+	return item.AutonomyReminderIntervalTicks
 }
 
 func (s *Server) autonomyReminderOffsetTicks(interval int64) int64 {
@@ -8166,8 +8477,9 @@ func (s *Server) autonomyReminderOffsetTicks(interval int64) int64 {
 	return offset % interval
 }
 
-func (s *Server) communityCommReminderIntervalTicks() int64 {
-	return s.cfg.CommunityCommReminderIntervalTicks
+func (s *Server) communityCommReminderIntervalTicks(ctx context.Context) int64 {
+	item, _, _ := s.getRuntimeSchedulerSettings(ctx)
+	return item.CommunityCommReminderIntervalTicks
 }
 
 func (s *Server) communityCommReminderOffsetTicks(interval int64) int64 {
@@ -8201,8 +8513,9 @@ func shouldRunTickWindow(tickID, interval, offset int64) bool {
 	return tickID%interval == offset
 }
 
-func (s *Server) kbEnrollmentReminderIntervalTicks() int64 {
-	return s.cfg.KBEnrollmentReminderIntervalTicks
+func (s *Server) kbEnrollmentReminderIntervalTicks(ctx context.Context) int64 {
+	item, _, _ := s.getRuntimeSchedulerSettings(ctx)
+	return item.KBEnrollmentReminderIntervalTicks
 }
 
 func (s *Server) kbEnrollmentReminderOffsetTicks(interval int64) int64 {
@@ -8216,8 +8529,9 @@ func (s *Server) kbEnrollmentReminderOffsetTicks(interval int64) int64 {
 	return offset % interval
 }
 
-func (s *Server) kbVotingReminderIntervalTicks() int64 {
-	return s.cfg.KBVotingReminderIntervalTicks
+func (s *Server) kbVotingReminderIntervalTicks(ctx context.Context) int64 {
+	item, _, _ := s.getRuntimeSchedulerSettings(ctx)
+	return item.KBVotingReminderIntervalTicks
 }
 
 func (s *Server) kbVotingReminderOffsetTicks(interval int64) int64 {
@@ -8231,14 +8545,14 @@ func (s *Server) kbVotingReminderOffsetTicks(interval int64) int64 {
 	return offset % interval
 }
 
-func (s *Server) shouldRunKBEnrollmentReminderTick(tickID int64) bool {
-	interval := s.kbEnrollmentReminderIntervalTicks()
+func (s *Server) shouldRunKBEnrollmentReminderTick(ctx context.Context, tickID int64) bool {
+	interval := s.kbEnrollmentReminderIntervalTicks(ctx)
 	offset := s.kbEnrollmentReminderOffsetTicks(interval)
 	return shouldRunTickWindow(tickID, interval, offset)
 }
 
-func (s *Server) shouldRunKBVotingReminderTick(tickID int64) bool {
-	interval := s.kbVotingReminderIntervalTicks()
+func (s *Server) shouldRunKBVotingReminderTick(ctx context.Context, tickID int64) bool {
+	interval := s.kbVotingReminderIntervalTicks(ctx)
 	offset := s.kbVotingReminderOffsetTicks(interval)
 	return shouldRunTickWindow(tickID, interval, offset)
 }
@@ -8460,7 +8774,7 @@ func (s *Server) runAutonomyReminderTick(ctx context.Context, tickID int64) erro
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	interval := s.autonomyReminderIntervalTicks()
+	interval := s.autonomyReminderIntervalTicks(ctx)
 	offset := s.autonomyReminderOffsetTicks(interval)
 	if !shouldRunTickWindow(tickID, interval, offset) {
 		return nil
@@ -8523,7 +8837,7 @@ func (s *Server) runCommunityCommReminderTick(ctx context.Context, tickID int64)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	interval := s.communityCommReminderIntervalTicks()
+	interval := s.communityCommReminderIntervalTicks(ctx)
 	offset := s.communityCommReminderOffsetTicks(interval)
 	if !shouldRunTickWindow(tickID, interval, offset) {
 		return nil

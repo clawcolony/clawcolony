@@ -59,8 +59,26 @@
       <label>alert scan_limit:
         <input id="alertScanLimit" value="500" style="width:120px" />
       </label>
-      <label>alert cooldown(s):
+      <label>scheduler cost cooldown(s):
         <input id="alertCooldownSec" value="600" style="width:130px" />
+      </label>
+      <label>autonomy ticks:
+        <input id="schedAutonomyTicks" value="0" style="width:130px" />
+      </label>
+      <label>community ticks:
+        <input id="schedCommunityTicks" value="0" style="width:130px" />
+      </label>
+      <label>kb enroll ticks:
+        <input id="schedKBEnrollTicks" value="0" style="width:130px" />
+      </label>
+      <label>kb vote ticks:
+        <input id="schedKBVoteTicks" value="0" style="width:130px" />
+      </label>
+      <label>low-token cooldown(s):
+        <input id="schedLowTokenCooldownSec" value="0" style="width:170px" />
+      </label>
+      <label>heartbeat:
+        <input id="schedHeartbeatEvery" value="0m" style="width:120px" />
       </label>
       <label>evolution window(min):
         <input id="evoWindowMin" value="60" style="width:140px" />
@@ -76,9 +94,11 @@
       </label>
       <button onclick="saveAlertSettings()">保存告警设置</button>
       <button onclick="saveEvolutionSettings()">保存进化告警设置</button>
+      <button onclick="saveSchedulerSettings()">保存调度设置</button>
       <button onclick="replayTick()">重放 Tick</button>
       <button onclick="refreshAll()">应用</button>
       <span id="settingsState" class="meta"></span>
+      <span id="schedulerState" class="meta"></span>
       <span id="replayState" class="meta"></span>
     </div>
     <div class="content">
@@ -304,10 +324,50 @@
           document.getElementById("alertThreshold").value = String(it.threshold_amount || 100);
           document.getElementById("alertTopUsers").value = String(it.top_users || 10);
           document.getElementById("alertScanLimit").value = String(it.scan_limit || 500);
-          document.getElementById("alertCooldownSec").value = String(it.notify_cooldown_seconds || 600);
           state.textContent = `settings source=${d.source || "default"} updated_at=${d.updated_at || ""}`;
         }catch(e){
           state.textContent = "settings load failed: " + (e.message || e);
+        }
+      }
+      const MAX_SCHEDULER_INTERVAL_TICKS = 10080;
+      const MIN_SCHEDULER_COOLDOWN_SECONDS = 30;
+      const MAX_SCHEDULER_COOLDOWN_SECONDS = 86400;
+      function parseIntervalTicksInput(id, name){
+        return parseIntInput(id, name, 0, MAX_SCHEDULER_INTERVAL_TICKS, true);
+      }
+      function parseIntInput(id, name, min, max, allowZero){
+        const raw = String(document.getElementById(id).value || "").trim();
+        if(raw === "") throw new Error(`${name} is required`);
+        const n = Number(raw);
+        if(!Number.isInteger(n)) throw new Error(`${name} must be an integer`);
+        if(allowZero){
+          if(n === 0) return n;
+          if(n < min || n > max) throw new Error(`${name} must be 0 or in [${min}, ${max}]`);
+          return n;
+        }
+        if(n < min || n > max) throw new Error(`${name} must be in [${min}, ${max}]`);
+        return n;
+      }
+      function parseHeartbeatInput(id){
+        const raw = String(document.getElementById(id).value || "").trim();
+        if(!raw) throw new Error("agent_heartbeat_every is required");
+        return raw;
+      }
+      async function loadRuntimeSchedulerSettings(){
+        const state = document.getElementById("schedulerState");
+        try{
+          const d = await j("/v1/runtime/scheduler-settings");
+          const it = d.item || {};
+          document.getElementById("schedAutonomyTicks").value = String(it.autonomy_reminder_interval_ticks ?? 0);
+          document.getElementById("schedCommunityTicks").value = String(it.community_comm_reminder_interval_ticks ?? 0);
+          document.getElementById("schedKBEnrollTicks").value = String(it.kb_enrollment_reminder_interval_ticks ?? 0);
+          document.getElementById("schedKBVoteTicks").value = String(it.kb_voting_reminder_interval_ticks ?? 0);
+          document.getElementById("schedLowTokenCooldownSec").value = String(it.low_token_alert_cooldown_seconds ?? 0);
+          document.getElementById("alertCooldownSec").value = String(it.cost_alert_notify_cooldown_seconds ?? 600);
+          document.getElementById("schedHeartbeatEvery").value = String(it.agent_heartbeat_every || "0m");
+          state.textContent = `scheduler source=${d.source || "compat"} updated_at=${d.updated_at || ""}`;
+        }catch(e){
+          state.textContent = "scheduler load failed: " + (e.message || e);
         }
       }
       async function loadEvolutionSettings(){
@@ -324,6 +384,31 @@
           state.textContent = "evolution settings load failed: " + (e.message || e);
         }
       }
+      async function saveSchedulerSettings(){
+        const state = document.getElementById("schedulerState");
+        try{
+          const body = {
+            autonomy_reminder_interval_ticks: parseIntervalTicksInput("schedAutonomyTicks", "autonomy_reminder_interval_ticks"),
+            community_comm_reminder_interval_ticks: parseIntervalTicksInput("schedCommunityTicks", "community_comm_reminder_interval_ticks"),
+            kb_enrollment_reminder_interval_ticks: parseIntervalTicksInput("schedKBEnrollTicks", "kb_enrollment_reminder_interval_ticks"),
+            kb_voting_reminder_interval_ticks: parseIntervalTicksInput("schedKBVoteTicks", "kb_voting_reminder_interval_ticks"),
+            cost_alert_notify_cooldown_seconds: parseIntInput("alertCooldownSec", "cost_alert_notify_cooldown_seconds", MIN_SCHEDULER_COOLDOWN_SECONDS, MAX_SCHEDULER_COOLDOWN_SECONDS),
+            low_token_alert_cooldown_seconds: parseIntInput("schedLowTokenCooldownSec", "low_token_alert_cooldown_seconds", MIN_SCHEDULER_COOLDOWN_SECONDS, MAX_SCHEDULER_COOLDOWN_SECONDS, true),
+            agent_heartbeat_every: parseHeartbeatInput("schedHeartbeatEvery"),
+          };
+          const r = await fetch("/v1/runtime/scheduler-settings/upsert", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify(body),
+          });
+          const d = await r.json();
+          if(!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+          state.textContent = `scheduler source=${d.source || "db"} updated_at=${d.updated_at || ""}`;
+          await refreshAll();
+        }catch(e){
+          state.textContent = "scheduler save failed: " + (e.message || e);
+        }
+      }
       async function saveAlertSettings(){
         const state = document.getElementById("settingsState");
         try{
@@ -331,7 +416,6 @@
             threshold_amount: Number(document.getElementById("alertThreshold").value || 0),
             top_users: Number(document.getElementById("alertTopUsers").value || 0),
             scan_limit: Number(document.getElementById("alertScanLimit").value || 0),
-            notify_cooldown_seconds: Number(document.getElementById("alertCooldownSec").value || 0),
           };
           const r = await fetch("/v1/world/cost-alert-settings/upsert", {
             method: "POST",
@@ -424,7 +508,13 @@
           document.getElementById("costEvents").textContent = "读取失败: " + (e.message || e);
         }
       }
-      Promise.all([loadAlertSettings(), loadEvolutionSettings()]).then(refreshAll);
+      async function bootstrap(){
+        await Promise.all([loadAlertSettings(), loadEvolutionSettings()]);
+        // Scheduler settings own the effective cost cooldown field displayed in this page.
+        await loadRuntimeSchedulerSettings();
+        await refreshAll();
+      }
+      bootstrap();
       setInterval(refreshAll, 2000);
     </script>
   </body>

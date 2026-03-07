@@ -2387,10 +2387,10 @@ func TestKBReminderTicksDisabledWhenIntervalZero(t *testing.T) {
 	srv.cfg.KBVotingReminderIntervalTicks = 0
 
 	for _, tickID := range []int64{1, 2, 10} {
-		if srv.shouldRunKBEnrollmentReminderTick(tickID) {
+		if srv.shouldRunKBEnrollmentReminderTick(context.Background(), tickID) {
 			t.Fatalf("kb enrollment reminder should be disabled when interval=0 (tick=%d)", tickID)
 		}
-		if srv.shouldRunKBVotingReminderTick(tickID) {
+		if srv.shouldRunKBVotingReminderTick(context.Background(), tickID) {
 			t.Fatalf("kb voting reminder should be disabled when interval=0 (tick=%d)", tickID)
 		}
 	}
@@ -2886,6 +2886,9 @@ func TestWorldCostAlertSettingsEndpoints(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"notify_cooldown_seconds":600`)) {
 		t.Fatalf("expected default cooldown 600: %s", w.Body.String())
 	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"notify_cooldown_source":"compat"`)) {
+		t.Fatalf("expected compat scheduler source for cooldown: %s", w.Body.String())
+	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/world/cost-alert-settings/upsert", map[string]any{
 		"threshold_amount":        250,
@@ -2899,6 +2902,9 @@ func TestWorldCostAlertSettingsEndpoints(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"source":"db"`)) {
 		t.Fatalf("expected db source after upsert: %s", w.Body.String())
 	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"notify_cooldown_seconds":600`)) {
+		t.Fatalf("expected runtime scheduler cooldown mirror in upsert response: %s", w.Body.String())
+	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/cost-alert-settings", nil)
 	if w.Code != http.StatusOK {
@@ -2909,7 +2915,8 @@ func TestWorldCostAlertSettingsEndpoints(t *testing.T) {
 		!bytes.Contains(body, []byte(`"threshold_amount":250`)) ||
 		!bytes.Contains(body, []byte(`"top_users":7`)) ||
 		!bytes.Contains(body, []byte(`"scan_limit":333`)) ||
-		!bytes.Contains(body, []byte(`"notify_cooldown_seconds":120`)) {
+		!bytes.Contains(body, []byte(`"notify_cooldown_seconds":600`)) ||
+		!bytes.Contains(body, []byte(`"notify_cooldown_source":"compat"`)) {
 		t.Fatalf("expected saved settings in response: %s", w.Body.String())
 	}
 }
@@ -2930,8 +2937,8 @@ func TestWorldCostAlertSettingsUpsertNormalizesInvalidValues(t *testing.T) {
 	if !bytes.Contains(body, []byte(`"threshold_amount":100`)) ||
 		!bytes.Contains(body, []byte(`"top_users":10`)) ||
 		!bytes.Contains(body, []byte(`"scan_limit":500`)) ||
-		!bytes.Contains(body, []byte(`"notify_cooldown_seconds":30`)) {
-		t.Fatalf("expected normalized defaults in upsert response: %s", w.Body.String())
+		!bytes.Contains(body, []byte(`"notify_cooldown_seconds":600`)) {
+		t.Fatalf("expected runtime scheduler cooldown in upsert response: %s", w.Body.String())
 	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/cost-alert-settings", nil)
@@ -2942,8 +2949,195 @@ func TestWorldCostAlertSettingsUpsertNormalizesInvalidValues(t *testing.T) {
 	if !bytes.Contains(body, []byte(`"threshold_amount":100`)) ||
 		!bytes.Contains(body, []byte(`"top_users":10`)) ||
 		!bytes.Contains(body, []byte(`"scan_limit":500`)) ||
-		!bytes.Contains(body, []byte(`"notify_cooldown_seconds":30`)) {
-		t.Fatalf("expected normalized defaults persisted: %s", w.Body.String())
+		!bytes.Contains(body, []byte(`"notify_cooldown_seconds":600`)) {
+		t.Fatalf("expected runtime scheduler cooldown in read response: %s", w.Body.String())
+	}
+}
+
+func TestRuntimeSchedulerSettingsCompatPathIsCached(t *testing.T) {
+	srv := newTestServer()
+	item, source, updatedAt := srv.getRuntimeSchedulerSettings(context.Background())
+	if source != "compat" {
+		t.Fatalf("runtime scheduler source = %q, want compat", source)
+	}
+	if updatedAt.IsZero() == false {
+		t.Fatalf("compat updated_at should be zero, got=%s", updatedAt)
+	}
+	if item.CostAlertNotifyCooldownSeconds != 600 {
+		t.Fatalf("default cost cooldown = %d, want 600", item.CostAlertNotifyCooldownSeconds)
+	}
+	cached, cacheSource, _, ok := srv.getRuntimeSchedulerCache(time.Now().UTC())
+	if !ok {
+		t.Fatalf("expected compat runtime scheduler cache hit")
+	}
+	if cacheSource != "compat" {
+		t.Fatalf("cache source = %q, want compat", cacheSource)
+	}
+	if cached.CostAlertNotifyCooldownSeconds != 600 {
+		t.Fatalf("cached cost cooldown = %d, want 600", cached.CostAlertNotifyCooldownSeconds)
+	}
+}
+
+func TestRuntimeSchedulerSettingsEndpoints(t *testing.T) {
+	srv := newTestServer()
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/runtime/scheduler-settings", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get runtime scheduler settings status=%d body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	if !bytes.Contains(body, []byte(`"source":"compat"`)) ||
+		!bytes.Contains(body, []byte(`"autonomy_reminder_interval_ticks":0`)) ||
+		!bytes.Contains(body, []byte(`"community_comm_reminder_interval_ticks":0`)) ||
+		!bytes.Contains(body, []byte(`"kb_enrollment_reminder_interval_ticks":0`)) ||
+		!bytes.Contains(body, []byte(`"kb_voting_reminder_interval_ticks":0`)) ||
+		!bytes.Contains(body, []byte(`"cost_alert_notify_cooldown_seconds":600`)) ||
+		!bytes.Contains(body, []byte(`"low_token_alert_cooldown_seconds":0`)) ||
+		!bytes.Contains(body, []byte(`"agent_heartbeat_every":"0m"`)) {
+		t.Fatalf("unexpected runtime scheduler defaults: %s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/runtime/scheduler-settings/upsert", map[string]any{
+		"autonomy_reminder_interval_ticks":       240,
+		"community_comm_reminder_interval_ticks": 480,
+		"kb_enrollment_reminder_interval_ticks":  480,
+		"kb_voting_reminder_interval_ticks":      120,
+		"cost_alert_notify_cooldown_seconds":     7200,
+		"low_token_alert_cooldown_seconds":       900,
+		"agent_heartbeat_every":                  "10m",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("upsert runtime scheduler settings status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := srv.bots.OpenClawHeartbeatEvery(); got != "10m" {
+		t.Fatalf("manager heartbeat = %q, want 10m", got)
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/runtime/scheduler-settings", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get runtime scheduler settings after upsert status=%d body=%s", w.Code, w.Body.String())
+	}
+	body = w.Body.Bytes()
+	if !bytes.Contains(body, []byte(`"source":"db"`)) ||
+		!bytes.Contains(body, []byte(`"autonomy_reminder_interval_ticks":240`)) ||
+		!bytes.Contains(body, []byte(`"community_comm_reminder_interval_ticks":480`)) ||
+		!bytes.Contains(body, []byte(`"kb_enrollment_reminder_interval_ticks":480`)) ||
+		!bytes.Contains(body, []byte(`"kb_voting_reminder_interval_ticks":120`)) ||
+		!bytes.Contains(body, []byte(`"cost_alert_notify_cooldown_seconds":7200`)) ||
+		!bytes.Contains(body, []byte(`"low_token_alert_cooldown_seconds":900`)) ||
+		!bytes.Contains(body, []byte(`"agent_heartbeat_every":"10m"`)) {
+		t.Fatalf("expected persisted runtime scheduler settings: %s", w.Body.String())
+	}
+}
+
+func TestRuntimeSchedulerSettingsPartialDBPayloadFallsBackMissingFields(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.AutonomyReminderIntervalTicks = 240
+	ctx := context.Background()
+	if _, err := srv.store.UpsertWorldSetting(ctx, store.WorldSetting{
+		Key: runtimeSchedulerSettingsKey,
+		Value: `{
+			"community_comm_reminder_interval_ticks": 480,
+			"agent_heartbeat_every": "600s"
+		}`,
+	}); err != nil {
+		t.Fatalf("upsert runtime scheduler partial payload: %v", err)
+	}
+	srv.runtimeSchedulerMu.Lock()
+	srv.runtimeSchedulerTS = time.Time{}
+	srv.runtimeSchedulerSrc = ""
+	srv.runtimeSchedulerMu.Unlock()
+
+	item, source, _ := srv.getRuntimeSchedulerSettings(ctx)
+	if source != "db" {
+		t.Fatalf("runtime scheduler source = %q, want db", source)
+	}
+	if item.AutonomyReminderIntervalTicks != 240 {
+		t.Fatalf("autonomy interval fallback = %d, want 240", item.AutonomyReminderIntervalTicks)
+	}
+	if item.CommunityCommReminderIntervalTicks != 480 {
+		t.Fatalf("community interval = %d, want 480", item.CommunityCommReminderIntervalTicks)
+	}
+	if item.CostAlertNotifyCooldownSeconds != 600 {
+		t.Fatalf("cost cooldown fallback = %d, want 600", item.CostAlertNotifyCooldownSeconds)
+	}
+	if item.AgentHeartbeatEvery != "10m" {
+		t.Fatalf("heartbeat normalization = %q, want 10m", item.AgentHeartbeatEvery)
+	}
+}
+
+func TestRuntimeSchedulerSettingsUpsertRejectsInvalidInput(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/runtime/scheduler-settings/upsert", map[string]any{
+		"autonomy_reminder_interval_ticks":       -1,
+		"community_comm_reminder_interval_ticks": 480,
+		"kb_enrollment_reminder_interval_ticks":  480,
+		"kb_voting_reminder_interval_ticks":      120,
+		"cost_alert_notify_cooldown_seconds":     10,
+		"low_token_alert_cooldown_seconds":       10,
+		"agent_heartbeat_every":                  "bad",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid runtime scheduler settings status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("autonomy_reminder_interval_ticks")) {
+		t.Fatalf("expected invalid field hint in error body: %s", w.Body.String())
+	}
+}
+
+func TestLowTokenAlertCooldownFromRuntimeSchedulerSettings(t *testing.T) {
+	srv := newTestServer()
+	userID := seedActiveUser(t, srv)
+	if _, err := srv.store.Consume(context.Background(), userID, 850); err != nil {
+		t.Fatalf("consume token: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/runtime/scheduler-settings/upsert", map[string]any{
+		"autonomy_reminder_interval_ticks":       0,
+		"community_comm_reminder_interval_ticks": 0,
+		"kb_enrollment_reminder_interval_ticks":  0,
+		"kb_voting_reminder_interval_ticks":      0,
+		"cost_alert_notify_cooldown_seconds":     600,
+		"low_token_alert_cooldown_seconds":       3600,
+		"agent_heartbeat_every":                  "0m",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("upsert runtime scheduler settings status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	if err := srv.runLowEnergyAlertTick(context.Background(), 1); err != nil {
+		t.Fatalf("low energy tick1: %v", err)
+	}
+	if err := srv.runLowEnergyAlertTick(context.Background(), 2); err != nil {
+		t.Fatalf("low energy tick2: %v", err)
+	}
+	inbox, err := srv.store.ListMailbox(context.Background(), userID, "inbox", "", "[LOW-TOKEN]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list low-token inbox: %v", err)
+	}
+	if len(inbox) != 1 {
+		t.Fatalf("expected cooldown to suppress repeated low-token alerts, got=%d", len(inbox))
+	}
+}
+
+func TestLowTokenAlertShouldSendDoesNotMarkUntilMailSent(t *testing.T) {
+	srv := newTestServer()
+	now := time.Now().UTC()
+	userID := "u-low-token"
+	cooldown := time.Hour
+
+	if !srv.shouldSendLowTokenAlert(userID, cooldown, now) {
+		t.Fatalf("first low-token decision should allow send")
+	}
+	if !srv.shouldSendLowTokenAlert(userID, cooldown, now) {
+		t.Fatalf("decision should remain true before mark")
+	}
+	srv.markLowTokenAlertSent(userID, now)
+	if srv.shouldSendLowTokenAlert(userID, cooldown, now.Add(5*time.Minute)) {
+		t.Fatalf("decision should be blocked after mark and before cooldown")
+	}
+	if !srv.shouldSendLowTokenAlert(userID, cooldown, now.Add(cooldown+time.Minute)) {
+		t.Fatalf("decision should recover after cooldown")
 	}
 }
 

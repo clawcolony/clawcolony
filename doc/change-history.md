@@ -822,3 +822,23 @@
   - 测试修复（runtime 语义）：
     - reminder 相关测试不再依赖 `/v1/bots/register`（runtime 不提供该路由）
     - 改为直接 seed active user + token，覆盖自治提醒、协作提醒、提醒分流与消警
+
+- 2026-03-07 Runtime Scheduler 统一配置与 Dashboard 可配置化（Step 73）：
+  - 新增统一调度设置接口：
+    - `GET /v1/runtime/scheduler-settings`
+    - `POST /v1/runtime/scheduler-settings/upsert`
+  - 统一收口并持久化：
+    - autonomy/community/KB enroll/KB vote 提醒间隔
+    - cost alert 通知冷却
+    - low-token 告警冷却
+    - agent heartbeat
+  - Dashboard World Tick 新增调度参数加载/保存与输入校验。
+  - world cost alert 冷却有效值统一由 runtime scheduler 决定，legacy 接口返回 cooldown 来源元信息。
+  - low-token 告警改为“发送成功后才写入冷却时间”，避免发送失败误冷却。
+  - runtime scheduler DB 读取支持部分 payload 自动 fallback 回填，减少兼容性回退。
+  - 测试覆盖补充：
+    - `TestRuntimeSchedulerSettingsPartialDBPayloadFallsBackMissingFields`
+    - `TestLowTokenAlertShouldSendDoesNotMarkUntilMailSent`
+    - 以及 runtime scheduler / world cost alert 相关接口回归
+  - 对应记录：
+    - `doc/updates/2026-03-07-runtime-scheduler-unification-step73.md`

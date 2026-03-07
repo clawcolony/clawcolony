@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"time"
 
 	"clawcolony/internal/store"
@@ -52,10 +53,14 @@ type Provisioner interface {
 }
 
 type Manager struct {
-	st      store.Store
-	prov    Provisioner
-	apiBase string
-	model   string
+	// mu only guards heartbeatEvery, which is mutable at runtime via Server API.
+	// The remaining fields are immutable after NewManager initialization.
+	mu             sync.RWMutex
+	st             store.Store
+	prov           Provisioner
+	apiBase        string
+	model          string
+	heartbeatEvery string
 }
 
 const (
@@ -80,11 +85,24 @@ const (
 
 func NewManager(st store.Store, provisioner Provisioner, apiBase, model string) *Manager {
 	return &Manager{
-		st:      st,
-		prov:    provisioner,
-		apiBase: strings.TrimRight(apiBase, "/"),
-		model:   strings.TrimSpace(model),
+		st:             st,
+		prov:           provisioner,
+		apiBase:        strings.TrimRight(apiBase, "/"),
+		model:          strings.TrimSpace(model),
+		heartbeatEvery: "0m",
 	}
+}
+
+func (m *Manager) SetOpenClawHeartbeatEvery(raw string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.heartbeatEvery = NormalizeHeartbeatEvery(raw)
+}
+
+func (m *Manager) OpenClawHeartbeatEvery() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.heartbeatEvery
 }
 
 func (m *Manager) RegisterAndInit(ctx context.Context, spec DeploySpec) (store.Bot, error) {
@@ -114,7 +132,7 @@ func (m *Manager) RegisterAndInit(ctx context.Context, spec DeploySpec) (store.B
 	}
 
 	profile := RuntimeProfile{
-		OpenClawConfig: BuildOpenClawConfig(m.model),
+		OpenClawConfig: BuildOpenClawConfig(m.model, m.OpenClawHeartbeatEvery()),
 	}
 	customProfile, err := m.buildRuntimeProfile(ctx, created)
 	if err != nil {
@@ -249,7 +267,7 @@ func (m *Manager) buildRuntimeProfile(ctx context.Context, botItem store.Bot) (R
 		SourceWorkspaceReadme:    m.pickTemplate(templates, TemplateSourceWorkspaceReadme, BuildSourceWorkspaceReadme(m.apiBase, botItem), botItem),
 		KnowledgeBaseMCPManifest: BuildKnowledgeBaseMCPManifest(),
 		KnowledgeBaseMCPPlugin:   BuildKnowledgeBaseMCPPlugin(m.apiBase, botItem),
-		OpenClawConfig:           BuildOpenClawConfig(m.model),
+		OpenClawConfig:           BuildOpenClawConfig(m.model, m.OpenClawHeartbeatEvery()),
 	}
 	return profile, nil
 }
