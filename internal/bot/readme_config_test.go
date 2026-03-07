@@ -2,6 +2,7 @@ package bot
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -53,7 +54,7 @@ func TestBuildOpenClawConfigNonOpenAIDoesNotInjectOpenAIModelsBlock(t *testing.T
 }
 
 func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
-	raw := BuildOpenClawConfig("openai/gpt-5.1-codex", "0m")
+	raw := BuildOpenClawConfig("openai/gpt-5.4", "0m")
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		t.Fatalf("unmarshal config: %v", err)
@@ -95,7 +96,7 @@ func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
 }
 
 func TestBuildOpenClawConfigHeartbeatEveryFromInput(t *testing.T) {
-	raw := BuildOpenClawConfig("openai/gpt-5.1-codex", "10m")
+	raw := BuildOpenClawConfig("openai/gpt-5.4", "10m")
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		t.Fatalf("unmarshal config: %v", err)
@@ -109,7 +110,7 @@ func TestBuildOpenClawConfigHeartbeatEveryFromInput(t *testing.T) {
 }
 
 func TestBuildOpenClawConfigHeartbeatFallsBackWhenInvalid(t *testing.T) {
-	raw := BuildOpenClawConfig("openai/gpt-5.1-codex", "invalid")
+	raw := BuildOpenClawConfig("openai/gpt-5.4", "invalid")
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		t.Fatalf("unmarshal config: %v", err)
@@ -119,5 +120,43 @@ func TestBuildOpenClawConfigHeartbeatFallsBackWhenInvalid(t *testing.T) {
 	heartbeat := defaults["heartbeat"].(map[string]any)
 	if got := heartbeat["every"]; got != "0m" {
 		t.Fatalf("heartbeat every = %v, want 0m", got)
+	}
+}
+
+func TestBuildOpenClawConfigDefaultsToGPT54WhenModelEmpty(t *testing.T) {
+	raw := BuildOpenClawConfig("", "10m")
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	agents := cfg["agents"].(map[string]any)
+	defaults := agents["defaults"].(map[string]any)
+	model := defaults["model"].(map[string]any)
+	if got := model["primary"]; got != "openai/gpt-5.4" {
+		t.Fatalf("primary model = %v, want openai/gpt-5.4", got)
+	}
+	models := cfg["models"].(map[string]any)
+	providers := models["providers"].(map[string]any)
+	openai := providers["openai"].(map[string]any)
+	entries := openai["models"].([]any)
+	first := entries[0].(map[string]any)
+	if got := first["id"]; got != "gpt-5.4" {
+		t.Fatalf("model id = %v, want gpt-5.4", got)
+	}
+}
+
+func TestBuildKnowledgeBaseMCPPluginUsesRegisteredKBProposalRoutes(t *testing.T) {
+	plugin := BuildKnowledgeBaseMCPPlugin("http://clawcolony.local:8080", sampleBot())
+	if !strings.Contains(plugin, `getJSON("/v1/kb/proposals",`) {
+		t.Fatalf("plugin must use /v1/kb/proposals list route")
+	}
+	if !strings.Contains(plugin, `postJSON("/v1/kb/proposals",`) {
+		t.Fatalf("plugin must use /v1/kb/proposals create route")
+	}
+	if strings.Contains(plugin, "/v1/kb/proposals/list") {
+		t.Fatalf("plugin must not use removed /v1/kb/proposals/list route")
+	}
+	if strings.Contains(plugin, "/v1/kb/proposals/create") {
+		t.Fatalf("plugin must not use removed /v1/kb/proposals/create route")
 	}
 }

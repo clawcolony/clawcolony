@@ -3,6 +3,20 @@
 > 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
 > 本文件仅保留 runtime 侧里程碑摘要与索引信息。
 
+## 2026-03-07
+
+- 修正 agent 下发 `mcp-knowledgebase` 插件错误 KB 路由：
+  - `mcp-knowledgebase_proposals_list` 改为 `GET /v1/kb/proposals`
+  - `mcp-knowledgebase_proposals_create` 改为 `POST /v1/kb/proposals`
+- OpenClaw 默认模型统一切换为 `openai/gpt-5.4`：
+  - `BuildOpenClawConfig` 默认回退模型
+  - `BOT_OPENCLAW_MODEL` 配置默认值
+  - k8s runtime 部署清单默认值
+- 新增测试覆盖：
+  - 空模型输入回退到 `openai/gpt-5.4`
+  - `mcp-knowledgebase` 插件不再引用 `/v1/kb/proposals/list`、`/v1/kb/proposals/create`
+- 详细变更记录：`doc/updates/2026-03-07-kb-mcp-route-and-model-default-step75.md`
+
 ## 2026-03-06
 
 - `upgrade-clawcolony` 技能提示词补充强约束：

@@ -6,7 +6,7 @@ import (
 )
 
 func TestPickTemplateEnforceGenesisCoverageProtocol(t *testing.T) {
-	m := &Manager{apiBase: "http://clawcolony.local:8080", model: "openai/gpt-5.1-codex"}
+	m := &Manager{apiBase: "http://clawcolony.local:8080", model: "openai/gpt-5.4"}
 	b := sampleBot()
 	templates := map[string]string{
 		TemplateProtocolReadme: "# custom\nidentity:\n- user_id: {{user_id}}\nruntime_interface:\n- 本系统以 Skills + MCP tools 为主接口，不在本卡片中暴露 host/base_url/HTTP 路径。\n- 你必须优先使用 MCP 工具（尤其 knowledgebase），不要在这里硬编码 API。",
@@ -34,7 +34,7 @@ func TestPickTemplateEnforceGenesisCoverageProtocol(t *testing.T) {
 }
 
 func TestPickTemplateEnforceGenesisCoverageAgents(t *testing.T) {
-	m := &Manager{apiBase: "http://clawcolony.local:8080", model: "openai/gpt-5.1-codex"}
+	m := &Manager{apiBase: "http://clawcolony.local:8080", model: "openai/gpt-5.4"}
 	b := sampleBot()
 	templates := map[string]string{
 		TemplateAgentsDoc: "execution_rules:\n- keep alive",
@@ -53,7 +53,7 @@ func TestPickTemplateEnforceGenesisCoverageAgents(t *testing.T) {
 }
 
 func TestPickTemplateEnforceGenesisCoverageSoul(t *testing.T) {
-	m := &Manager{apiBase: "http://clawcolony.local:8080", model: "openai/gpt-5.1-codex"}
+	m := &Manager{apiBase: "http://clawcolony.local:8080", model: "openai/gpt-5.4"}
 	b := sampleBot()
 	templates := map[string]string{
 		TemplateSoulDoc: "soul_contract:\n- be useful",
@@ -75,7 +75,7 @@ func TestPickTemplateEnforceGenesisCoverageSoul(t *testing.T) {
 }
 
 func TestPickTemplateNormalizesLegacyGenesisNarrative(t *testing.T) {
-	m := &Manager{apiBase: "http://clawcolony.local:8080", model: "openai/gpt-5.1-codex"}
+	m := &Manager{apiBase: "http://clawcolony.local:8080", model: "openai/gpt-5.4"}
 	b := sampleBot()
 	templates := map[string]string{
 		TemplateProtocolReadme: "genesis_objective:\n- 创世纪核心命题\n- GET /v1/genesis/state",
