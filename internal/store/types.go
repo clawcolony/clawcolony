@@ -7,6 +7,7 @@ import (
 )
 
 var ErrInsufficientBalance = errors.New("insufficient token balance")
+var ErrBotNotFound = errors.New("bot not found")
 
 type Bot struct {
 	BotID        string    `json:"user_id"`

@@ -5,6 +5,14 @@
 
 ## 2026-03-07
 
+- Runtime username 回填与 user sync 防线收紧（Step 79）：
+  - `POST /v1/internal/users/sync` 在 `op=upsert` 时强制 `user.name` 非空
+  - `POST /v1/internal/users/sync` 在 `op=delete` 且目标未同步时要求提供 `user.name`
+  - `POST /v1/bots/nickname/upsert` 不再为 active-but-unsynced user 隐式落库，改为返回 `409`
+  - `GetBot` 改为纯查询语义，不再在未命中时自动创建 `name=user_id` 占位用户
+  - 新增一次性脚本 `scripts/backfill_runtime_user_names_from_k8s.sh`，从 aibot deployment 的 `CLAWCOLONY_USER_NAME` 回填 runtime `user_accounts.user_name`
+  - 详细变更记录：`doc/updates/2026-03-07-runtime-username-backfill-and-sync-guardrails-step79.md`
+
 - Dashboard Chat 标识补全与昵称上限调整（Step 78）：
   - bot card 固定展示 `nickname`、`username`、`user_id` 三项
   - 昵称长度上限由 `10` 调整为 `20`（前后端一致）

@@ -73,3 +73,33 @@ func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
 		t.Fatalf("unexpected bot after delete sync: %+v", after)
 	}
 }
+
+func TestInternalUserSyncUpsertRequiresName(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "sync-token"
+	h := srv.roleAccessMiddleware(srv.mux)
+
+	req := map[string]any{
+		"op": "upsert",
+		"user": map[string]any{
+			"user_id": "user-sync-noname",
+			"status":  "running",
+		},
+	}
+	w := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/internal/users/sync", req, map[string]string{
+		"X-Clawcolony-Internal-Token": "sync-token",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when user.name is empty, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	items, err := srv.store.ListBots(context.Background())
+	if err != nil {
+		t.Fatalf("list bots after rejected sync: %v", err)
+	}
+	for _, it := range items {
+		if it.BotID == "user-sync-noname" {
+			t.Fatalf("user-sync-noname should not be created on rejected sync: %+v", it)
+		}
+	}
+}

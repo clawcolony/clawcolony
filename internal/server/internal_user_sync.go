@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -57,7 +58,8 @@ func (s *Server) handleInternalUserSync(w http.ResponseWriter, r *http.Request) 
 	case "upsert":
 		name := strings.TrimSpace(req.User.Name)
 		if name == "" {
-			name = userID
+			writeError(w, http.StatusBadRequest, "user.name is required")
+			return
 		}
 		provider := strings.TrimSpace(req.User.Provider)
 		if provider == "" {
@@ -102,16 +104,21 @@ func (s *Server) handleInternalUserSync(w http.ResponseWriter, r *http.Request) 
 	case "delete":
 		name := strings.TrimSpace(req.User.Name)
 		provider := strings.TrimSpace(req.User.Provider)
-		if existing, err := s.store.GetBot(r.Context(), userID); err == nil {
+		existing, err := s.store.GetBot(r.Context(), userID)
+		if err == nil {
 			if name == "" {
 				name = existing.Name
 			}
 			if provider == "" {
 				provider = existing.Provider
 			}
+		} else if !errors.Is(err, store.ErrBotNotFound) {
+			writeError(w, http.StatusInternalServerError, "failed to lookup existing user")
+			return
 		}
 		if name == "" {
-			name = userID
+			writeError(w, http.StatusBadRequest, "user.name is required for delete when user is not synced")
+			return
 		}
 		if provider == "" {
 			provider = "openclaw"

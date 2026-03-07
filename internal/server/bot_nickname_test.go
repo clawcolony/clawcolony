@@ -151,6 +151,33 @@ func TestBotNicknameUpsertValidation(t *testing.T) {
 	}
 }
 
+func TestBotNicknameUpsertUnknownUserDoesNotCreateRuntimeUser(t *testing.T) {
+	srv := newTestServer()
+	userID := "user-unknown-no-create"
+
+	before, err := srv.store.ListBots(context.Background())
+	if err != nil {
+		t.Fatalf("list bots before nickname upsert: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
+		"user_id":  userID,
+		"nickname": "不存在",
+	})
+	// newTestServer has no kube client, so unknown user follows the not-found path.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected not found for unknown user, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	after, err := srv.store.ListBots(context.Background())
+	if err != nil {
+		t.Fatalf("list bots after nickname upsert: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("nickname upsert should not create runtime user, before=%d after=%d", len(before), len(after))
+	}
+}
+
 func TestBotNicknamePreservedWhenUpsertWithoutNickname(t *testing.T) {
 	srv := newTestServer()
 	userID := seedActiveUser(t, srv)

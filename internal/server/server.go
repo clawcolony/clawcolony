@@ -2811,36 +2811,19 @@ func (s *Server) handleBotNicknameUpsert(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	items, err := s.store.ListBots(r.Context())
+	item, err := s.store.UpdateBotNickname(r.Context(), req.UserID, nickname)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	item, found := findBotByUserID(items, req.UserID)
-	if !found {
-		active, activeOK := s.activeBotIDsInNamespace(r.Context())
-		if !activeOK {
+		if errors.Is(err, store.ErrBotNotFound) {
+			active, activeOK := s.activeBotIDsInNamespace(r.Context())
+			if activeOK {
+				if _, ok := active[req.UserID]; ok {
+					writeError(w, http.StatusConflict, "user_id exists in cluster but is not synced to runtime yet")
+					return
+				}
+			}
 			writeError(w, http.StatusNotFound, "user_id not found")
 			return
 		}
-		if _, ok := active[req.UserID]; !ok {
-			writeError(w, http.StatusNotFound, "user_id not found")
-			return
-		}
-		item = syntheticActiveBot(req.UserID)
-	}
-	if _, err = s.store.UpsertBot(r.Context(), store.BotUpsertInput{
-		BotID:       item.BotID,
-		Name:        item.Name,
-		Provider:    item.Provider,
-		Status:      item.Status,
-		Initialized: item.Initialized,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	item, err = s.store.UpdateBotNickname(r.Context(), req.UserID, nickname)
-	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -2855,19 +2838,6 @@ func syntheticActiveBot(userID string) store.Bot {
 		Status:      "running",
 		Initialized: true,
 	}
-}
-
-func findBotByUserID(items []store.Bot, userID string) (store.Bot, bool) {
-	for _, item := range items {
-		if strings.TrimSpace(item.BotID) == userID {
-			item.BotID = userID
-			if strings.TrimSpace(item.Name) == "" {
-				item.Name = userID
-			}
-			return item, true
-		}
-	}
-	return store.Bot{}, false
 }
 
 func mergeMissingActiveBots(items []store.Bot, active map[string]struct{}) []store.Bot {
@@ -3119,6 +3089,10 @@ func (s *Server) handleBotProfileReadme(w http.ResponseWriter, r *http.Request) 
 	}
 	botItem, err := s.store.GetBot(r.Context(), botID)
 	if err != nil {
+		if errors.Is(err, store.ErrBotNotFound) {
+			writeError(w, http.StatusNotFound, "user_id not found")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

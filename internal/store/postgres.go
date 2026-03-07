@@ -605,13 +605,7 @@ func (s *PostgresStore) GetBot(ctx context.Context, botID string) (Bot, error) {
 		FROM user_accounts WHERE user_id = $1
 	`, botID).Scan(&b.BotID, &b.Name, &b.Nickname, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return s.UpsertBot(ctx, BotUpsertInput{
-			BotID:       botID,
-			Name:        botID,
-			Provider:    "system",
-			Status:      "active",
-			Initialized: true,
-		})
+		return Bot{}, fmt.Errorf("%w: %s", ErrBotNotFound, botID)
 	}
 	if err != nil {
 		return Bot{}, err
@@ -665,7 +659,7 @@ func (s *PostgresStore) UpdateBotNickname(ctx context.Context, botID, nickname s
 		&b.BotID, &b.Name, &b.Nickname, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return Bot{}, fmt.Errorf("bot not found: %s", uid)
+		return Bot{}, fmt.Errorf("%w: %s", ErrBotNotFound, uid)
 	}
 	if err != nil {
 		return Bot{}, err

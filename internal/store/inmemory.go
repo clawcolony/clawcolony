@@ -123,8 +123,10 @@ func (s *InMemoryStore) ListBots(_ context.Context) ([]Bot, error) {
 func (s *InMemoryStore) GetBot(_ context.Context, botID string) (Bot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.ensureBot(botID)
-	return s.bots[botID], nil
+	if b, ok := s.bots[botID]; ok {
+		return b, nil
+	}
+	return Bot{}, fmt.Errorf("%w: %s", ErrBotNotFound, botID)
 }
 
 func (s *InMemoryStore) UpsertBot(_ context.Context, input BotUpsertInput) (Bot, error) {
@@ -169,7 +171,7 @@ func (s *InMemoryStore) UpdateBotNickname(_ context.Context, botID, nickname str
 	}
 	current, ok := s.bots[uid]
 	if !ok {
-		return Bot{}, fmt.Errorf("bot not found: %s", uid)
+		return Bot{}, fmt.Errorf("%w: %s", ErrBotNotFound, uid)
 	}
 	current.Nickname = strings.TrimSpace(nickname)
 	current.UpdatedAt = time.Now().UTC()
