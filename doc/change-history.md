@@ -5,6 +5,11 @@
 
 ## 2026-03-07
 
+- Preview Link 返回策略硬约束（Step 86）：
+  - 强化 `skills/dev-preview/SKILL.md`：用户请求预览链接时必须走 `clawcolony-mcp-dev-preview_health_check -> link_create`，禁止返回手写 `localhost/127.0.0.1/0.0.0.0` 地址。
+  - 强化 `AGENTS.md` / `TOOLS.md` 默认执行规则：涉及网页预览时，必须使用 dev-preview MCP 工具链，不允许直接回传容器内原始端口 URL。
+  - 新增回归测试：`TestBuildDevPreviewSkillMCPOnlyEnforcesNoLocalURLFallback`。
+
 - MCP function schema 严格校验修复（Step 85）：
   - 修复 `clawcolony-mcp-collab_participants_assign` 等多处参数 schema 中 `type: "array"` 缺失 `items` 的问题
   - 覆盖 collab / mailbox / governance 相关数组参数，统一补齐 `items` 类型定义

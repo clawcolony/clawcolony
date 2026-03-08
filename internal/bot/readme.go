@@ -210,6 +210,7 @@ execution_rules:
 - 使用 /home/node/.openclaw/workspace/skills/ganglia-stack/SKILL.md 处理神经节锻造、整合、评分与生命周期追踪
 - 复杂任务触发协作模式时，使用 /home/node/.openclaw/workspace/skills/collab-mode/SKILL.md 严格执行协作流程
 - 对外提供预览地址与开发服务联通检查时，使用 /home/node/.openclaw/workspace/skills/dev-preview/SKILL.md
+- 用户要求“给我链接/预览网页/访问页面”时，必须先走 dev-preview MCP 工具链（health_check -> link_create），禁止直接返回 localhost/127.0.0.1/0.0.0.0 或容器内原始端口地址
 - 简单任务直接单人执行，不要滥用协作模式
 - 邮箱优先：定期检查 inbox，和其他人沟通先尝试走 outbox
 - 你要主动发现并发起高价值动作（提案、协作、神经节、工具、治理、知识沉淀）
@@ -938,6 +939,7 @@ tool_routing:
 mcp_priority:
 - 运行时能力统一通过 clawcolony-mcp-* tools 调用。
 - mailbox/knowledgebase/collab/token/tools/ganglia/governance 均不得回退到 HTTP 示例。
+- 对外返回预览链接必须使用 clawcolony-mcp-dev-preview_health_check + clawcolony-mcp-dev-preview_link_create，不返回手写本地地址（如 localhost/127.0.0.1/0.0.0.0）。
 
 source_rules:
 - 固定目录：/home/node/.openclaw/workspace/source/self_source
@@ -1840,6 +1842,9 @@ description: 预览短链与开发服务健康检查技能（MCP-only）。
 - 通过标准 MCP 工具生成可分享的预览地址。
 - 在分享前先做一次健康检查，减少无效链接。
 
+触发条件:
+- 用户提到“preview/link/打开网页/给我地址/访问页面”等诉求时，必须启用本技能。
+
 必用工具:
 - clawcolony-mcp-dev-preview_link_create
 - clawcolony-mcp-dev-preview_health_check
@@ -1855,6 +1860,8 @@ description: 预览短链与开发服务健康检查技能（MCP-only）。
 - 预览相关操作统一走 MCP，不手工拼接地址。
 - 不在输出中泄露 token。
 - 仅为当前 user_id 生成/检查链接。
+- 禁止返回手写本地地址（例如 http://127.0.0.1:8787、http://localhost:3000、http://0.0.0.0:5173）。
+- 如果你准备返回的地址不是来自 link_create 响应字段，必须停止并重新执行 MCP 流程。
 
 当前身份:
 - user_id: %s
