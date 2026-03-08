@@ -33,6 +33,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		page = "dashboard_world_tick.html"
 	case "dashboard/world-replay":
 		page = "dashboard_world_replay.html"
+	case "dashboard/monitor":
+		page = "dashboard_monitor.html"
 	case "dashboard/governance":
 		page = "dashboard_governance.html"
 	case "dashboard/ganglia":

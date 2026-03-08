@@ -21,6 +21,7 @@ func TestDashboardTopTabsConsistent(t *testing.T) {
 		"/dashboard/system-logs",
 		"/dashboard/world-tick",
 		"/dashboard/world-replay",
+		"/dashboard/monitor",
 		"/dashboard/prompts",
 	}
 
@@ -40,6 +41,7 @@ func TestDashboardTopTabsConsistent(t *testing.T) {
 		{file: "web/dashboard_system_logs.html", activeHref: "/dashboard/system-logs"},
 		{file: "web/dashboard_world_tick.html", activeHref: "/dashboard/world-tick"},
 		{file: "web/dashboard_world_replay.html", activeHref: "/dashboard/world-replay"},
+		{file: "web/dashboard_monitor.html", activeHref: "/dashboard/monitor"},
 		{file: "web/dashboard_prompts.html", activeHref: "/dashboard/prompts"},
 	}
 

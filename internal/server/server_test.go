@@ -429,6 +429,235 @@ func TestNotFoundIncludesAPICatalog(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte(`/api/colony/status`)) {
 		t.Fatalf("catalog missing /api colony endpoint: %s", w.Body.String())
 	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`/v1/monitor/agents/overview`)) {
+		t.Fatalf("catalog missing monitor overview endpoint: %s", w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`/v1/monitor/meta`)) {
+		t.Fatalf("catalog missing monitor meta endpoint: %s", w.Body.String())
+	}
+}
+
+func TestMonitorOverviewTimelineAndMeta(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	userID := seedActiveUser(t, srv)
+	base := time.Now().UTC().Add(-20 * time.Second)
+
+	if _, err := srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:    userID,
+		CostType:  "tool.runtime.monitor",
+		Amount:    7,
+		Units:     3,
+		MetaJSON:  `{"tool_id":"mail.send","result_ok":true}`,
+		CreatedAt: base.Add(1 * time.Second),
+	}); err != nil {
+		t.Fatalf("append tool cost event: %v", err)
+	}
+	if _, err := srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:    userID,
+		CostType:  "think.plan",
+		Amount:    5,
+		Units:     2,
+		MetaJSON:  `{"input_units":12,"output_units":6}`,
+		CreatedAt: base.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatalf("append think cost event: %v", err)
+	}
+	if _, err := srv.store.SendMail(ctx, userID, []string{clawWorldSystemID}, "monitor-smoke", "runtime monitor smoke body"); err != nil {
+		t.Fatalf("send mail: %v", err)
+	}
+	if _, err := srv.store.AppendChatMessage(ctx, store.ChatMessage{
+		UserID: userID,
+		From:   clawWorldSystemID,
+		To:     userID,
+		Body:   "monitor chat smoke",
+		SentAt: base.Add(3 * time.Second),
+	}); err != nil {
+		t.Fatalf("append chat message: %v", err)
+	}
+	if _, err := srv.store.AppendRequestLog(ctx, store.RequestLog{
+		Time:       base.Add(4 * time.Second),
+		Method:     http.MethodPost,
+		Path:       "/v1/tools/invoke",
+		UserID:     userID,
+		StatusCode: http.StatusOK,
+		DurationMS: 111,
+	}); err != nil {
+		t.Fatalf("append request log: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/agents/overview?include_inactive=1&limit=20&event_limit=50&since_seconds=86400", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor overview status=%d body=%s", w.Code, w.Body.String())
+	}
+	var overview struct {
+		Count int `json:"count"`
+		Items []struct {
+			UserID           string         `json:"user_id"`
+			CurrentState     string         `json:"current_state"`
+			LastActivityType string         `json:"last_activity_type"`
+			ChatPipeline     map[string]any `json:"chat_pipeline"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &overview); err != nil {
+		t.Fatalf("unmarshal monitor overview response: %v", err)
+	}
+	if overview.Count == 0 || len(overview.Items) == 0 {
+		t.Fatalf("monitor overview should return users: %s", w.Body.String())
+	}
+	foundUser := false
+	for _, it := range overview.Items {
+		if it.UserID != userID {
+			continue
+		}
+		foundUser = true
+		if strings.TrimSpace(it.CurrentState) == "" {
+			t.Fatalf("monitor overview current_state should not be empty: %+v", it)
+		}
+		if it.ChatPipeline == nil {
+			t.Fatalf("monitor overview should include chat pipeline: %+v", it)
+		}
+	}
+	if !foundUser {
+		t.Fatalf("monitor overview missing seeded user %s: %s", userID, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/agents/timeline?user_id="+userID+"&limit=80&event_limit=80&since_seconds=86400", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor timeline status=%d body=%s", w.Code, w.Body.String())
+	}
+	var timeline struct {
+		Count int `json:"count"`
+		Items []struct {
+			UserID   string `json:"user_id"`
+			Category string `json:"category"`
+			Action   string `json:"action"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &timeline); err != nil {
+		t.Fatalf("unmarshal monitor timeline response: %v", err)
+	}
+	if timeline.Count == 0 || len(timeline.Items) == 0 {
+		t.Fatalf("monitor timeline should return events: %s", w.Body.String())
+	}
+	hasTool := false
+	hasThink := false
+	for _, it := range timeline.Items {
+		if it.UserID != userID {
+			t.Fatalf("timeline event user mismatch got=%q want=%q", it.UserID, userID)
+		}
+		switch it.Category {
+		case "tool":
+			hasTool = true
+		case "think":
+			hasThink = true
+		}
+	}
+	if !hasTool {
+		t.Fatalf("monitor timeline missing tool category event: %s", w.Body.String())
+	}
+	if !hasThink {
+		t.Fatalf("monitor timeline missing think category event: %s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/agents/timeline?user_id="+userID+"&limit=1&event_limit=80&since_seconds=86400", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor timeline page1 status=%d body=%s", w.Code, w.Body.String())
+	}
+	var timelinePage1 struct {
+		Count      int    `json:"count"`
+		NextCursor string `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &timelinePage1); err != nil {
+		t.Fatalf("unmarshal monitor timeline page1 response: %v", err)
+	}
+	if timelinePage1.Count != 1 {
+		t.Fatalf("monitor timeline page1 count should be 1: %s", w.Body.String())
+	}
+	if strings.TrimSpace(timelinePage1.NextCursor) == "" {
+		t.Fatalf("monitor timeline page1 should return next_cursor: %s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/agents/timeline?user_id="+userID+"&limit=1&event_limit=80&since_seconds=86400&cursor="+timelinePage1.NextCursor, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor timeline page2 status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/agents/timeline?user_id="+userID+"&limit=1&event_limit=80&since_seconds=86400&cursor=invalid", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("monitor timeline invalid cursor format should fail, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/agents/timeline/all?include_inactive=1&user_limit=20&event_limit=80&limit=80&since_seconds=86400", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor timeline all status=%d body=%s", w.Code, w.Body.String())
+	}
+	var timelineAll struct {
+		Count         int      `json:"count"`
+		PartialErrors int      `json:"partial_errors"`
+		SkippedUsers  []string `json:"skipped_users"`
+		Items         []struct {
+			UserID string `json:"user_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &timelineAll); err != nil {
+		t.Fatalf("unmarshal monitor timeline all response: %v", err)
+	}
+	if timelineAll.Count == 0 || len(timelineAll.Items) == 0 {
+		t.Fatalf("monitor timeline all should return events: %s", w.Body.String())
+	}
+	seenUserInAll := false
+	for _, it := range timelineAll.Items {
+		if it.UserID == userID {
+			seenUserInAll = true
+			break
+		}
+	}
+	if !seenUserInAll {
+		t.Fatalf("monitor timeline all missing seeded user %s: %s", userID, w.Body.String())
+	}
+	if timelineAll.PartialErrors != 0 {
+		t.Fatalf("monitor timeline all should not have partial errors in unit tests: %s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/agents/timeline", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("monitor timeline without user_id should fail, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/meta", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor meta status=%d body=%s", w.Code, w.Body.String())
+	}
+	var meta struct {
+		Sources map[string]struct {
+			Status string `json:"status"`
+		} `json:"sources"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &meta); err != nil {
+		t.Fatalf("unmarshal monitor meta response: %v", err)
+	}
+	if meta.Sources["bots"].Status != "ok" {
+		t.Fatalf("monitor meta bots source should be ok: %s", w.Body.String())
+	}
+	if meta.Sources["openclaw_status"].Status != "unavailable" {
+		t.Fatalf("monitor meta openclaw_status should be unavailable in unit tests: %s", w.Body.String())
+	}
+}
+
+func TestDashboardMonitorPage(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/dashboard/monitor", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("dashboard monitor page status=%d body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	if !bytes.Contains(body, []byte("Agent Overview")) {
+		t.Fatalf("dashboard monitor page missing Agent Overview section: %s", w.Body.String())
+	}
+	if !bytes.Contains(body, []byte(`/v1/monitor/agents/overview`)) {
+		t.Fatalf("dashboard monitor page missing monitor API binding: %s", w.Body.String())
+	}
 }
 
 func TestAPICompatibilityRoutes(t *testing.T) {
