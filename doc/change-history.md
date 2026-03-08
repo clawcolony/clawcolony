@@ -5,6 +5,13 @@
 
 ## 2026-03-07
 
+- Runtime `templates/apply` 修正为「ConfigMap + deployment bootstrap rollout」生效链路（Step 84）：
+  - 回退移除 Pod 内直接 `cp /seed/*` 同步路径（`bot` 容器不存在 `/seed`/`/state`，线上会直接失败）
+  - 恢复 apply 期间的 deployment bootstrap 脚本补丁与按需 rollout，确保 seed 内容通过 init 容器写回 workspace/state
+  - `k8s/rbac.yaml` 同步恢复 runtime 对 user deployments 的 `update` 权限（用于 rollout）
+  - 保留 ConfigMap upsert 的冲突重试与 profile seeds 全量覆盖
+  - 详细变更记录：`doc/updates/2026-03-08-runtime-apply-bootstrap-rollout-fix-step84.md`
+
 - Runtime `templates/apply` 生效路径改为「ConfigMap + Pod 内即时同步」，并收敛 RBAC（Step 83）：
   - `POST /v1/prompts/templates/apply` 在 upsert `user-*-profile` ConfigMap 后，直接对运行中 bot pod 执行 `cp /seed/* -> /state/*`，即时覆盖 `openclaw.json` 与 `clawcolony-mcp-*` 扩展文件
   - 移除对 user deployment 模板补丁与 rollout 的依赖，避免 apply 失败被 deployment 写权限阻塞
