@@ -3,6 +3,23 @@
 > 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
 > 本文件仅保留 runtime 侧里程碑摘要与索引信息。
 
+## 2026-03-07
+
+- 新增 OpenClaw 运行态监控能力（Monitor）：
+  - 新增 API：
+    - `GET /v1/monitor/agents/overview`
+    - `GET /v1/monitor/agents/timeline`
+    - `GET /v1/monitor/agents/timeline/all`
+    - `GET /v1/monitor/meta`
+  - 监控聚合维度覆盖：tool / think / chat / mail / request logs / chat pipeline / openclaw 连接状态
+  - Dashboard 新增 `/dashboard/monitor` 页面（状态总览 + 行为时间线 + 数据源健康）
+  - Dashboard 全页签统一增加 `Monitor` 导航项，首页增加 `Agent Monitor` 入口卡片
+  - 新增测试：
+    - monitor API smoke（overview/timeline/meta）
+    - monitor dashboard 页面路由 smoke
+    - dashboard tabs 一致性扩展（含 monitor）
+  - 详细流水：`doc/updates/2026-03-07-openclaw-runtime-monitor.md`
+
 ## 2026-03-06
 
 - `upgrade-clawcolony` 技能提示词补充强约束：

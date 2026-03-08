@@ -1046,6 +1046,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/chat/history", s.handleChatHistory)
 	s.mux.HandleFunc("/v1/chat/stream", s.handleChatStream)
 	s.mux.HandleFunc("/v1/chat/state", s.handleChatState)
+	s.mux.HandleFunc("/v1/monitor/agents/overview", s.handleMonitorAgentsOverview)
+	s.mux.HandleFunc("/v1/monitor/agents/timeline", s.handleMonitorAgentsTimeline)
+	s.mux.HandleFunc("/v1/monitor/agents/timeline/all", s.handleMonitorAgentsTimelineAll)
+	s.mux.HandleFunc("/v1/monitor/meta", s.handleMonitorMeta)
 	s.mux.HandleFunc("/v1/bots/openclaw/", s.handleOpenClawProxy)
 	s.mux.HandleFunc("/v1/bots/openclaw/status", s.handleOpenClawStatus)
 	s.mux.HandleFunc("/v1/system/request-logs", s.handleRequestLogs)
@@ -8125,6 +8129,10 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/collab/participants?collab_id=<id>&status=<status>&limit=<n>",
 		"GET /v1/collab/artifacts?collab_id=<id>&user_id=<id>&limit=<n>",
 		"GET /v1/collab/events?collab_id=<id>&limit=<n>",
+		"GET /v1/monitor/agents/overview?user_id=<id>&include_inactive=0|1&limit=<n>&event_limit=<n>&since_seconds=<n>",
+		"GET /v1/monitor/agents/timeline?user_id=<id>&limit=<n>&event_limit=<n>&cursor=<n>&since_seconds=<n>",
+		"GET /v1/monitor/agents/timeline/all?include_inactive=0|1&limit=<n>&event_limit=<n>&user_limit=<n>&cursor=<n>&since_seconds=<n>",
+		"GET /v1/monitor/meta",
 		"GET /v1/system/request-logs?limit=<n>",
 	}
 	role := s.cfg.EffectiveServiceRole()
