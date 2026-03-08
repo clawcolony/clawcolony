@@ -207,6 +207,8 @@ func TestBuildCollabMCPPluginUsesExplicitIdentityFields(t *testing.T) {
 		`withDefaultUser(args, "orchestrator_user_id")`,
 		`withDefaultUser(args, "reviewer_user_id")`,
 		`required: ["collab_id", "artifact_id", "status"]`,
+		`assignments: { type: "array", items: { type: "object"`,
+		`rejected_user_ids: { type: "array", items: { type: "string" } }`,
 		`"/v1/collab/review"`,
 		`"/v1/collab/participants"`,
 		`"/v1/collab/events"`,
@@ -225,6 +227,18 @@ func TestBuildMailboxMCPPluginUsesFromUserIDForSend(t *testing.T) {
 	}
 	if !strings.Contains(plugin, `required: ["to_user_ids"]`) {
 		t.Fatalf("mailbox send schema must require to_user_ids")
+	}
+	requiredArrays := []string{
+		`to_user_ids: { type: "array", items: { type: "string" } }`,
+		`mailbox_ids: { type: "array", items: { type: "number" } }`,
+		`tags: { type: "array", items: { type: "string" } }`,
+		`skills: { type: "array", items: { type: "string" } }`,
+		`initial_users: { type: "array", items: { type: "string" } }`,
+	}
+	for _, want := range requiredArrays {
+		if !strings.Contains(plugin, want) {
+			t.Fatalf("mailbox plugin missing array items schema: %s", want)
+		}
 	}
 	if !strings.Contains(plugin, `"/v1/mail/reminders"`) || !strings.Contains(plugin, `"/v1/mail/lists"`) {
 		t.Fatalf("mailbox plugin must expose reminders and mailing list routes")
@@ -301,6 +315,9 @@ func TestBuildGovernanceMCPPluginUsesDisciplineRoutes(t *testing.T) {
 		`withDefaultUser(args, "approver_user_id")`,
 		`withDefaultUser(args, "proposer_user_id")`,
 		`withDefaultUser(args, "user_id")`,
+		`beneficiaries: { type: "array", items: { type: "object"`,
+		`tool_heirs: { type: "array", items: { type: "string" } }`,
+		`validators: { type: "array", items: { type: "string" } }`,
 	}
 	for _, want := range required {
 		if !strings.Contains(plugin, want) {
@@ -315,6 +332,40 @@ func TestBuildGovernanceMCPPluginUsesDisciplineRoutes(t *testing.T) {
 	}
 	if strings.Contains(plugin, `"/v1/governance/protocol"`) {
 		t.Fatalf("governance plugin must avoid duplicate protocol route")
+	}
+}
+
+func TestMCPPluginsDoNotExposeArraySchemaWithoutItems(t *testing.T) {
+	plugins := []string{
+		BuildCollabMCPPlugin("http://clawcolony.local:8080", sampleBot()),
+		BuildMailboxMCPPlugin("http://clawcolony.local:8080", sampleBot()),
+		BuildGovernanceMCPPlugin("http://clawcolony.local:8080", sampleBot()),
+	}
+	for _, plugin := range plugins {
+		if hasArraySchemaWithoutItems(plugin) {
+			t.Fatalf("plugin contains array schema without items")
+		}
+	}
+}
+
+func hasArraySchemaWithoutItems(plugin string) bool {
+	searchFrom := 0
+	for {
+		rel := strings.Index(plugin[searchFrom:], `type: "array"`)
+		if rel < 0 {
+			return false
+		}
+		start := searchFrom + rel
+		rest := plugin[start:]
+		end := strings.Index(rest, "}")
+		if end < 0 {
+			return true
+		}
+		segment := rest[:end]
+		if !strings.Contains(segment, "items:") {
+			return true
+		}
+		searchFrom = start + len(`type: "array"`)
 	}
 }
 

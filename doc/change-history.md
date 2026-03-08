@@ -5,6 +5,12 @@
 
 ## 2026-03-07
 
+- MCP function schema 严格校验修复（Step 85）：
+  - 修复 `clawcolony-mcp-collab_participants_assign` 等多处参数 schema 中 `type: "array"` 缺失 `items` 的问题
+  - 覆盖 collab / mailbox / governance 相关数组参数，统一补齐 `items` 类型定义
+  - 新增回归测试：`TestMCPPluginsDoNotExposeArraySchemaWithoutItems`
+  - 详细流水：`doc/updates/2026-03-07-mcp-array-schema-items-fix-step85.md`
+
 - 新增 OpenClaw 运行态监控能力（Monitor）：
   - 新增 API：
     - `GET /v1/monitor/agents/overview`

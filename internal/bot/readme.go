@@ -1092,7 +1092,7 @@ func BuildCollabMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/collab/assign",
 			UserIDField: "orchestrator_user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id", "assignments"], properties: { collab_id: { type: "string" }, orchestrator_user_id: { type: "string" }, assignments: { type: "array" }, rejected_user_ids: { type: "array" }, status_or_summary_note: { type: "string" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["collab_id", "assignments"], properties: { collab_id: { type: "string" }, orchestrator_user_id: { type: "string" }, assignments: { type: "array", items: { type: "object", additionalProperties: false, required: ["user_id", "role"], properties: { user_id: { type: "string" }, role: { type: "string" } } } }, rejected_user_ids: { type: "array", items: { type: "string" } }, status_or_summary_note: { type: "string" } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-collab_sessions_start",
@@ -1198,7 +1198,7 @@ func BuildMailboxMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/mail/send",
 			UserIDField: "from_user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["to_user_ids"], properties: { from_user_id: { type: "string" }, to_user_ids: { type: "array" }, subject: { type: "string" }, body: { type: "string" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["to_user_ids"], properties: { from_user_id: { type: "string" }, to_user_ids: { type: "array", items: { type: "string" } }, subject: { type: "string" }, body: { type: "string" } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-mailbox_mark_read",
@@ -1207,7 +1207,7 @@ func BuildMailboxMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/mail/mark-read",
 			UserIDField: "user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["mailbox_ids"], properties: { user_id: { type: "string" }, mailbox_ids: { type: "array" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["mailbox_ids"], properties: { user_id: { type: "string" }, mailbox_ids: { type: "array", items: { type: "number" } } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-mailbox_mark_read_query",
@@ -1234,7 +1234,7 @@ func BuildMailboxMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/mail/reminders/resolve",
 			UserIDField: "user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, kind: { type: "string" }, action: { type: "string" }, mailbox_ids: { type: "array" }, subject_like: { type: "string" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, kind: { type: "string" }, action: { type: "string" }, mailbox_ids: { type: "array", items: { type: "number" } }, subject_like: { type: "string" } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-mailbox_contacts_list",
@@ -1252,7 +1252,7 @@ func BuildMailboxMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/mail/contacts/upsert",
 			UserIDField: "user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["contact_user_id"], properties: { user_id: { type: "string" }, contact_user_id: { type: "string" }, display_name: { type: "string" }, tags: { type: "array" }, role: { type: "string" }, skills: { type: "array" }, current_project: { type: "string" }, availability: { type: "string" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["contact_user_id"], properties: { user_id: { type: "string" }, contact_user_id: { type: "string" }, display_name: { type: "string" }, tags: { type: "array", items: { type: "string" } }, role: { type: "string" }, skills: { type: "array", items: { type: "string" } }, current_project: { type: "string" }, availability: { type: "string" } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-mailbox_lists_list",
@@ -1270,7 +1270,7 @@ func BuildMailboxMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/mail/lists/create",
 			UserIDField: "owner_user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["name"], properties: { owner_user_id: { type: "string" }, name: { type: "string" }, description: { type: "string" }, initial_users: { type: "array" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["name"], properties: { owner_user_id: { type: "string" }, name: { type: "string" }, description: { type: "string" }, initial_users: { type: "array", items: { type: "string" } } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-mailbox_lists_join",
@@ -1665,7 +1665,7 @@ func BuildGovernanceMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/life/set-will",
 			UserIDField: "user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["beneficiaries"], properties: { user_id: { type: "string" }, note: { type: "string" }, beneficiaries: { type: "array" }, tool_heirs: { type: "array" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["beneficiaries"], properties: { user_id: { type: "string" }, note: { type: "string" }, beneficiaries: { type: "array", items: { type: "object", additionalProperties: false, required: ["user_id", "ratio"], properties: { user_id: { type: "string" }, ratio: { type: "number", minimum: 1 } } } }, tool_heirs: { type: "array", items: { type: "string" } } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-governance_life_will_get",
@@ -1752,7 +1752,7 @@ func BuildGovernanceMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/metabolism/supersede",
 			UserIDField: "user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["new_id", "old_id", "relationship"], properties: { user_id: { type: "string" }, new_id: { type: "string" }, old_id: { type: "string" }, relationship: { type: "string" }, validators: { type: "array" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["new_id", "old_id", "relationship"], properties: { user_id: { type: "string" }, new_id: { type: "string" }, old_id: { type: "string" }, relationship: { type: "string" }, validators: { type: "array", items: { type: "string" } } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-governance_metabolism_dispute",
