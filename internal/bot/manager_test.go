@@ -115,6 +115,9 @@ func TestBuildRuntimeProfileIncludesAllMCPArtifacts(t *testing.T) {
 		"ganglia plugin":         profile.GangliaMCPPlugin,
 		"governance manifest":    profile.GovernanceMCPManifest,
 		"governance plugin":      profile.GovernanceMCPPlugin,
+		"dev preview skill":      profile.DevPreviewSkill,
+		"dev preview manifest":   profile.DevPreviewMCPManifest,
+		"dev preview plugin":     profile.DevPreviewMCPPlugin,
 	}
 	for name, got := range checks {
 		if strings.TrimSpace(got) == "" {

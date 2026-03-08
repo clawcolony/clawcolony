@@ -94,6 +94,9 @@ func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
 	if !seen["clawcolony-mcp-governance"] {
 		t.Fatalf("plugins.allow missing clawcolony-mcp-governance")
 	}
+	if !seen["clawcolony-mcp-dev-preview"] {
+		t.Fatalf("plugins.allow missing clawcolony-mcp-dev-preview")
+	}
 	if !seen["acpx"] {
 		t.Fatalf("plugins.allow missing acpx")
 	}
@@ -121,6 +124,9 @@ func TestBuildOpenClawConfigIncludesPluginAllowlist(t *testing.T) {
 	}
 	if _, ok := entries["clawcolony-mcp-governance"]; !ok {
 		t.Fatalf("plugins.entries.clawcolony-mcp-governance missing")
+	}
+	if _, ok := entries["clawcolony-mcp-dev-preview"]; !ok {
+		t.Fatalf("plugins.entries.clawcolony-mcp-dev-preview missing")
 	}
 	if _, ok := entries["acpx"]; !ok {
 		t.Fatalf("plugins.entries.acpx missing")
@@ -335,11 +341,49 @@ func TestBuildGovernanceMCPPluginUsesDisciplineRoutes(t *testing.T) {
 	}
 }
 
+func TestBuildDevPreviewMCPPluginUsesRuntimeDevRoutes(t *testing.T) {
+	plugin := BuildDevPreviewMCPPlugin("http://clawcolony.local:8080", sampleBot())
+	required := []string{
+		`"clawcolony-mcp-dev-preview"`,
+		`"clawcolony-mcp-dev-preview_link_create"`,
+		`"clawcolony-mcp-dev-preview_health_check"`,
+		`"/v1/bots/dev/link"`,
+		`"/v1/bots/dev/health"`,
+		`withDefaultUser(args, "user_id")`,
+		`required: ["gateway_token", "port"]`,
+		`required: ["token", "port"]`,
+	}
+	for _, want := range required {
+		if !strings.Contains(plugin, want) {
+			t.Fatalf("dev preview plugin missing expected fragment: %s", want)
+		}
+	}
+}
+
+func TestBuildDevPreviewSkillMCPOnlyEnforcesNoLocalURLFallback(t *testing.T) {
+	skill := BuildDevPreviewSkillMCPOnly("http://clawcolony.local:8080", sampleBot())
+	required := []string{
+		`clawcolony-mcp-dev-preview_link_create`,
+		`clawcolony-mcp-dev-preview_health_check`,
+		`触发条件:`,
+		`禁止返回手写本地地址`,
+		`localhost`,
+		`127.0.0.1`,
+		`如果你准备返回的地址不是来自 link_create 响应字段`,
+	}
+	for _, want := range required {
+		if !strings.Contains(skill, want) {
+			t.Fatalf("dev preview skill missing expected fragment: %s", want)
+		}
+	}
+}
+
 func TestMCPPluginsDoNotExposeArraySchemaWithoutItems(t *testing.T) {
 	plugins := []string{
 		BuildCollabMCPPlugin("http://clawcolony.local:8080", sampleBot()),
 		BuildMailboxMCPPlugin("http://clawcolony.local:8080", sampleBot()),
 		BuildGovernanceMCPPlugin("http://clawcolony.local:8080", sampleBot()),
+		BuildDevPreviewMCPPlugin("http://clawcolony.local:8080", sampleBot()),
 	}
 	for _, plugin := range plugins {
 		if hasArraySchemaWithoutItems(plugin) {

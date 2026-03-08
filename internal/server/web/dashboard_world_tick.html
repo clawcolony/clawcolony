@@ -187,6 +187,9 @@
       <label>heartbeat:
         <input id="schedHeartbeatEvery" value="10m" style="width:120px" />
       </label>
+      <label>preview ttl(days):
+        <input id="schedPreviewLinkTTLDays" value="30" style="width:130px" />
+      </label>
       <label>evolution window(min):
         <input id="evoWindowMin" value="60" style="width:140px" />
       </label>
@@ -439,6 +442,8 @@
       const MAX_SCHEDULER_INTERVAL_TICKS = 10080;
       const MIN_SCHEDULER_COOLDOWN_SECONDS = 30;
       const MAX_SCHEDULER_COOLDOWN_SECONDS = 86400;
+      const MIN_PREVIEW_LINK_TTL_DAYS = 1;
+      const MAX_PREVIEW_LINK_TTL_DAYS = 90;
       function parseIntervalTicksInput(id, name){
         return parseIntInput(id, name, 0, MAX_SCHEDULER_INTERVAL_TICKS, true);
       }
@@ -472,6 +477,7 @@
           document.getElementById("schedLowTokenCooldownSec").value = String(it.low_token_alert_cooldown_seconds ?? 0);
           document.getElementById("alertCooldownSec").value = String(it.cost_alert_notify_cooldown_seconds ?? 600);
           document.getElementById("schedHeartbeatEvery").value = String(it.agent_heartbeat_every || "10m");
+          document.getElementById("schedPreviewLinkTTLDays").value = String(it.preview_link_ttl_days ?? 30);
           state.textContent = `scheduler source=${d.source || "compat"} updated_at=${d.updated_at || ""}`;
         }catch(e){
           state.textContent = "scheduler load failed: " + (e.message || e);
@@ -502,6 +508,7 @@
             cost_alert_notify_cooldown_seconds: parseIntInput("alertCooldownSec", "cost_alert_notify_cooldown_seconds", MIN_SCHEDULER_COOLDOWN_SECONDS, MAX_SCHEDULER_COOLDOWN_SECONDS),
             low_token_alert_cooldown_seconds: parseIntInput("schedLowTokenCooldownSec", "low_token_alert_cooldown_seconds", MIN_SCHEDULER_COOLDOWN_SECONDS, MAX_SCHEDULER_COOLDOWN_SECONDS, true),
             agent_heartbeat_every: parseHeartbeatInput("schedHeartbeatEvery"),
+            preview_link_ttl_days: parseIntInput("schedPreviewLinkTTLDays", "preview_link_ttl_days", MIN_PREVIEW_LINK_TTL_DAYS, MAX_PREVIEW_LINK_TTL_DAYS),
           };
           const r = await fetch("/v1/runtime/scheduler-settings/upsert", {
             method: "POST",
