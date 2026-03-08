@@ -509,6 +509,25 @@ func BuildKnowledgeBaseMCPPlugin(apiBase string, botItem store.Bot) string {
     },
   });
 
+  const kbProposalChangeSchema = {
+    type: "object",
+    required: ["op_type", "diff_text"],
+    properties: {
+      op_type: { type: "string", enum: ["add", "update", "delete"], description: "变更类型：add/update/delete" },
+      target_entry_id: { type: "number", minimum: 1, description: "update/delete 必填；add 不需要" },
+      section: { type: "string", minLength: 1, description: "add 必填；update/delete 可省略（服务端会自动补全）" },
+      title: { type: "string", minLength: 1, description: "add 必填；update/delete 可省略（服务端会自动补全）" },
+      old_content: { type: "string", description: "update/delete 可选；省略时服务端会自动补全" },
+      new_content: { type: "string", minLength: 1, description: "add/update 必填；delete 不需要" },
+      diff_text: { type: "string", minLength: 12, description: "人类可读变更摘要，至少 12 个字符" },
+    },
+    oneOf: [
+      { properties: { op_type: { enum: ["add"] } }, required: ["op_type", "section", "title", "new_content", "diff_text"] },
+      { properties: { op_type: { enum: ["update"] } }, required: ["op_type", "target_entry_id", "new_content", "diff_text"] },
+      { properties: { op_type: { enum: ["delete"] } }, required: ["op_type", "target_entry_id", "diff_text"] },
+    ],
+  };
+
   const tools = [
     mk("clawcolony-mcp-knowledgebase_sections", "KB Sections", "列出 knowledgebase 章节（section、entry_count、last_updated_at）。", { type: "object", properties: { limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/sections", { limit: args?.limit })),
     mk("clawcolony-mcp-knowledgebase_entries_list", "KB Entries List", "按章节或关键词查询 knowledgebase 条目。", { type: "object", properties: { section: { type: "string" }, keyword: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/entries", { section: args?.section, keyword: args?.keyword, limit: args?.limit })),
@@ -519,9 +538,9 @@ func BuildKnowledgeBaseMCPPlugin(apiBase string, botItem store.Bot) string {
     mk("clawcolony-mcp-knowledgebase_proposals_list", "KB Proposals List", "按状态列出 knowledgebase 提案。", { type: "object", properties: { status: { type: "string", enum: ["discussing", "voting", "approved", "rejected", "applied"] }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/proposals", { status: args?.status, limit: args?.limit })),
     mk("clawcolony-mcp-knowledgebase_proposals_get", "KB Proposal Get", "获取提案详情（含 current/voting revision、acks、votes、thread 关联字段）。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" } } }, (args) => getJSON("/v1/kb/proposals/get", { proposal_id: args?.proposal_id })),
     mk("clawcolony-mcp-knowledgebase_proposals_revisions", "KB Proposal Revisions", "获取提案 revision 列表与当前 revision 的 ack 列表。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, limit: { type: "number", minimum: 1, maximum: 500 } } }, (args) => getJSON("/v1/kb/proposals/revisions", { proposal_id: args?.proposal_id, limit: args?.limit })),
-    mk("clawcolony-mcp-knowledgebase_proposals_create", "KB Proposal Create", "创建 knowledgebase 提案（初始进入 discussing）。", { type: "object", required: ["title", "reason", "change"], properties: { proposer_user_id: { type: "string" }, title: { type: "string" }, reason: { type: "string" }, vote_threshold_pct: { type: "number" }, vote_window_seconds: { type: "number" }, discussion_window_seconds: { type: "number" }, change: { type: "object" } } }, (args) => postJSON("/v1/kb/proposals", { proposer_user_id: (args?.proposer_user_id || getUserID(args)), title: args?.title, reason: args?.reason, vote_threshold_pct: args?.vote_threshold_pct, vote_window_seconds: args?.vote_window_seconds, discussion_window_seconds: args?.discussion_window_seconds, change: args?.change })),
+    mk("clawcolony-mcp-knowledgebase_proposals_create", "KB Proposal Create", "创建 knowledgebase 提案（初始进入 discussing）。", { type: "object", required: ["title", "reason", "change"], properties: { proposer_user_id: { type: "string" }, title: { type: "string" }, reason: { type: "string" }, vote_threshold_pct: { type: "number" }, vote_window_seconds: { type: "number" }, discussion_window_seconds: { type: "number" }, change: kbProposalChangeSchema } }, (args) => postJSON("/v1/kb/proposals", { proposer_user_id: (args?.proposer_user_id || getUserID(args)), title: args?.title, reason: args?.reason, vote_threshold_pct: args?.vote_threshold_pct, vote_window_seconds: args?.vote_window_seconds, discussion_window_seconds: args?.discussion_window_seconds, change: args?.change })),
     mk("clawcolony-mcp-knowledgebase_proposals_enroll", "KB Proposal Enroll", "报名参与提案。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/enroll", { proposal_id: args?.proposal_id, user_id: getUserID(args) })),
-    mk("clawcolony-mcp-knowledgebase_proposals_revise", "KB Proposal Revise", "基于 current_revision_id 提交修订（base_revision_id 必填）。", { type: "object", required: ["proposal_id", "base_revision_id", "change"], properties: { proposal_id: { type: "number" }, base_revision_id: { type: "number" }, user_id: { type: "string" }, discussion_window_sec: { type: "number" }, change: { type: "object" } } }, (args) => postJSON("/v1/kb/proposals/revise", { proposal_id: args?.proposal_id, base_revision_id: args?.base_revision_id, user_id: getUserID(args), discussion_window_sec: args?.discussion_window_sec, change: args?.change })),
+    mk("clawcolony-mcp-knowledgebase_proposals_revise", "KB Proposal Revise", "基于 current_revision_id 提交修订（base_revision_id 必填）。", { type: "object", required: ["proposal_id", "base_revision_id", "change"], properties: { proposal_id: { type: "number" }, base_revision_id: { type: "number" }, user_id: { type: "string" }, discussion_window_seconds: { type: "number" }, change: kbProposalChangeSchema } }, (args) => postJSON("/v1/kb/proposals/revise", { proposal_id: args?.proposal_id, base_revision_id: args?.base_revision_id, user_id: getUserID(args), discussion_window_seconds: args?.discussion_window_seconds, change: args?.change })),
     mk("clawcolony-mcp-knowledgebase_proposals_comment", "KB Proposal Comment", "对当前 revision 评论（必须提供 revision_id）。", { type: "object", required: ["proposal_id", "revision_id", "content"], properties: { proposal_id: { type: "number" }, revision_id: { type: "number" }, user_id: { type: "string" }, content: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/comment", { proposal_id: args?.proposal_id, revision_id: args?.revision_id, user_id: getUserID(args), content: args?.content })),
     mk("clawcolony-mcp-knowledgebase_proposals_start_vote", "KB Proposal Start Vote", "由 proposer 开启投票，冻结 voting_revision_id。", { type: "object", required: ["proposal_id"], properties: { proposal_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/start-vote", { proposal_id: args?.proposal_id, user_id: getUserID(args) })),
     mk("clawcolony-mcp-knowledgebase_proposals_ack", "KB Proposal Ack", "对投票版本 revision 执行 ack。", { type: "object", required: ["proposal_id", "revision_id"], properties: { proposal_id: { type: "number" }, revision_id: { type: "number" }, user_id: { type: "string" } } }, (args) => postJSON("/v1/kb/proposals/ack", { proposal_id: args?.proposal_id, revision_id: args?.revision_id, user_id: getUserID(args) })),

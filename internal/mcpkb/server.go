@@ -166,7 +166,7 @@ func (s *Server) tools() []map[string]any {
 				"vote_threshold_pct":        map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
 				"vote_window_seconds":       map[string]any{"type": "integer", "minimum": 30},
 				"discussion_window_seconds": map[string]any{"type": "integer", "minimum": 1},
-				"change":                    map[string]any{"type": "object"},
+				"change":                    kbProposalChangeInputSchema(),
 			},
 		}),
 		s.toolDef("mcp-knowledgebase.proposals.enroll", "报名参与提案。", map[string]any{
@@ -189,7 +189,7 @@ func (s *Server) tools() []map[string]any {
 				"base_revision_id":          map[string]any{"type": "integer", "minimum": 1},
 				"user_id":                   map[string]any{"type": "string", "description": "可省略，省略时使用默认 user_id"},
 				"discussion_window_seconds": map[string]any{"type": "integer", "minimum": 30},
-				"change":                    map[string]any{"type": "object"},
+				"change":                    kbProposalChangeInputSchema(),
 			},
 		}),
 		s.toolDef("mcp-knowledgebase.proposals.comment", "对当前 revision 评论（必须提供 revision_id）。", map[string]any{
@@ -274,6 +274,89 @@ func (s *Server) toolDef(name, description string, schema map[string]any) map[st
 		"name":        name,
 		"description": description,
 		"inputSchema": schema,
+	}
+}
+
+func kbProposalChangeInputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"required": []string{
+			"op_type", "diff_text",
+		},
+		"properties": map[string]any{
+			"op_type": map[string]any{
+				"type":        "string",
+				"enum":        []string{"add", "update", "delete"},
+				"description": "变更类型：add/update/delete",
+			},
+			"target_entry_id": map[string]any{
+				"type":        "integer",
+				"minimum":     1,
+				"description": "update/delete 必填；add 不需要",
+			},
+			"section": map[string]any{
+				"type":        "string",
+				"minLength":   1,
+				"description": "add 必填；update/delete 可省略（服务端会从目标条目补全）",
+			},
+			"title": map[string]any{
+				"type":        "string",
+				"minLength":   1,
+				"description": "add 必填；update/delete 可省略（服务端会从目标条目补全）",
+			},
+			"old_content": map[string]any{
+				"type":        "string",
+				"description": "update/delete 可选；省略时服务端会从目标条目补全",
+			},
+			"new_content": map[string]any{
+				"type":        "string",
+				"minLength":   1,
+				"description": "add/update 必填；delete 不需要",
+			},
+			"diff_text": map[string]any{
+				"type":        "string",
+				"minLength":   12,
+				"description": "人类可读变更摘要，至少 12 个字符",
+			},
+		},
+		"oneOf": []any{
+			map[string]any{
+				"description": "add: 新增知识条目",
+				"required":    []string{"op_type", "section", "title", "new_content", "diff_text"},
+				"properties": map[string]any{
+					"op_type": map[string]any{"enum": []string{"add"}},
+				},
+			},
+			map[string]any{
+				"description": "update: 修改已有条目",
+				"required":    []string{"op_type", "target_entry_id", "new_content", "diff_text"},
+				"properties": map[string]any{
+					"op_type": map[string]any{"enum": []string{"update"}},
+				},
+			},
+			map[string]any{
+				"description": "delete: 删除已有条目",
+				"required":    []string{"op_type", "target_entry_id", "diff_text"},
+				"properties": map[string]any{
+					"op_type": map[string]any{"enum": []string{"delete"}},
+				},
+			},
+		},
+		"examples": []any{
+			map[string]any{
+				"op_type":     "add",
+				"section":     "governance",
+				"title":       "制度示例",
+				"new_content": "条目正文……",
+				"diff_text":   "新增 governance 条目，补充制度草案。",
+			},
+			map[string]any{
+				"op_type":         "update",
+				"target_entry_id": 123,
+				"new_content":     "更新后的正文……",
+				"diff_text":       "修订投票规则阈值定义并补充示例。",
+			},
+		},
 	}
 }
 

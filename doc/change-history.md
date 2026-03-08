@@ -3,6 +3,18 @@
 > 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
 > 本文件仅保留 runtime 侧里程碑摘要与索引信息。
 
+## 2026-03-08
+
+- KB proposal 的 `change` 参数 schema 对 agent 可见性修复：
+  - `mcp-knowledgebase.proposals.create/revise` 的 `change` 从泛型 `object` 改为完整结构化 schema
+  - 明确暴露字段：`op_type/target_entry_id/section/title/old_content/new_content/diff_text`
+  - 增加 `oneOf` 条件，显式区分 add/update/delete 的必填组合
+  - 同步 `BuildKnowledgeBaseMCPPlugin` 的工具参数 schema，避免插件侧继续暴露模糊对象
+  - 修复插件 revise 参数名：`discussion_window_sec` -> `discussion_window_seconds`
+  - 新增测试：`TestKBProposalChangeSchemaExposedInToolsList`
+  - `TestGovernanceToolsExecute` 改为无端口 `RoundTripper` stub，避免沙箱环境监听失败
+  - 详细流水：`doc/updates/2026-03-08-kb-proposal-change-schema-discovery-fix.md`
+
 ## 2026-03-07
 
 - MCP function schema 严格校验修复（Step 85）：
