@@ -1120,6 +1120,98 @@ func TestPromptTemplateCRUDAndApply(t *testing.T) {
 	}
 }
 
+func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
+	profile := bot.RuntimeProfile{
+		ProtocolReadme:           "protocol",
+		AgentsDoc:                "agents",
+		OpenClawConfig:           "{\"plugins\":{}}",
+		CollabModeSkill:          "collab-skill",
+		KnowledgeBaseMCPManifest: "kb-manifest",
+		KnowledgeBaseMCPPlugin:   "kb-plugin",
+		CollabMCPManifest:        "collab-manifest",
+		CollabMCPPlugin:          "collab-plugin",
+		MailboxMCPManifest:       "mail-manifest",
+		MailboxMCPPlugin:         "mail-plugin",
+		TokenMCPManifest:         "token-manifest",
+		TokenMCPPlugin:           "token-plugin",
+		ToolsMCPManifest:         "tools-manifest",
+		ToolsMCPPlugin:           "tools-plugin",
+		GangliaMCPManifest:       "ganglia-manifest",
+		GangliaMCPPlugin:         "ganglia-plugin",
+		GovernanceMCPManifest:    "gov-manifest",
+		GovernanceMCPPlugin:      "gov-plugin",
+	}
+	data := runtimeProfileSeedData(profile)
+	expect := map[string]string{
+		"PROTOCOL_README.md":                "protocol",
+		"AGENTS_DOC.md":                     "agents",
+		"openclaw.json":                     "{\"plugins\":{}}",
+		"COLLAB_MODE_SKILL":                 "collab-skill",
+		"KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST": "kb-manifest",
+		"KNOWLEDGEBASE_MCP_PLUGIN_JS":       "kb-plugin",
+		"COLLAB_MCP_PLUGIN_MANIFEST":        "collab-manifest",
+		"COLLAB_MCP_PLUGIN_JS":              "collab-plugin",
+		"MAILBOX_MCP_PLUGIN_MANIFEST":       "mail-manifest",
+		"MAILBOX_MCP_PLUGIN_JS":             "mail-plugin",
+		"TOKEN_MCP_PLUGIN_MANIFEST":         "token-manifest",
+		"TOKEN_MCP_PLUGIN_JS":               "token-plugin",
+		"TOOLS_MCP_PLUGIN_MANIFEST":         "tools-manifest",
+		"TOOLS_MCP_PLUGIN_JS":               "tools-plugin",
+		"GANGLIA_MCP_PLUGIN_MANIFEST":       "ganglia-manifest",
+		"GANGLIA_MCP_PLUGIN_JS":             "ganglia-plugin",
+		"GOVERNANCE_MCP_PLUGIN_MANIFEST":    "gov-manifest",
+		"GOVERNANCE_MCP_PLUGIN_JS":          "gov-plugin",
+	}
+	for key, want := range expect {
+		if got := data[key]; got != want {
+			t.Fatalf("seed data %s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestPatchWorkspaceBootstrapScriptForMCP(t *testing.T) {
+	raw := strings.Join([]string{
+		"set -e",
+		"[ -f /state/openclaw/openclaw.json ] || cp /seed/openclaw.json /state/openclaw/openclaw.json",
+		"mkdir -p /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase",
+		"cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/openclaw.plugin.json",
+		"cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/index.js",
+		"          rm -f /state/openclaw/workspace/HEARTBEAT.md",
+	}, "\n")
+
+	patched, changed := patchWorkspaceBootstrapScriptForMCP(raw)
+	if !changed {
+		t.Fatalf("patchWorkspaceBootstrapScriptForMCP should report changed=true")
+	}
+	if strings.Contains(patched, "[ -f /state/openclaw/openclaw.json ]") {
+		t.Fatalf("guarded openclaw.json copy should be removed: %s", patched)
+	}
+	if !strings.Contains(patched, "cp /seed/openclaw.json /state/openclaw/openclaw.json") {
+		t.Fatalf("openclaw.json should be copied unconditionally: %s", patched)
+	}
+	for _, marker := range []string{
+		"clawcolony-mcp-knowledgebase",
+		"clawcolony-mcp-collab",
+		"clawcolony-mcp-mailbox",
+		"clawcolony-mcp-token",
+		"clawcolony-mcp-tools",
+		"clawcolony-mcp-ganglia",
+		"clawcolony-mcp-governance",
+	} {
+		if !strings.Contains(patched, marker) {
+			t.Fatalf("patched script missing marker %q", marker)
+		}
+	}
+
+	patchedAgain, changedAgain := patchWorkspaceBootstrapScriptForMCP(patched)
+	if changedAgain {
+		t.Fatalf("patched script should be idempotent")
+	}
+	if patchedAgain != patched {
+		t.Fatalf("patched script should stay stable across repeated patching")
+	}
+}
+
 func TestPromptTemplateUpsertCanonicalizesPreviewUser(t *testing.T) {
 	srv := newTestServer()
 

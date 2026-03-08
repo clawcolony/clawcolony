@@ -194,6 +194,10 @@ func (m *Manager) BuildProtocolReadme(ctx context.Context, botItem store.Bot) (s
 	return m.pickTemplate(templates, TemplateProtocolReadme, defaultDoc, botItem), nil
 }
 
+func (m *Manager) BuildRuntimeProfile(ctx context.Context, botItem store.Bot) (RuntimeProfile, error) {
+	return m.buildRuntimeProfile(ctx, botItem)
+}
+
 func (m *Manager) ApplyRuntimeProfile(ctx context.Context, userID, image string) error {
 	item, err := m.st.GetBot(ctx, userID)
 	if err != nil {
