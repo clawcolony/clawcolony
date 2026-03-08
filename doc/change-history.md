@@ -859,3 +859,19 @@
     - 以及 runtime scheduler / world cost alert 相关接口回归
   - 对应记录：
     - `doc/updates/2026-03-07-runtime-scheduler-unification-step73.md`
+
+- 2026-03-07 Dashboard OpenClaw 风格视觉刷新（Step 74）：
+  - 覆盖 14 个 runtime dashboard 页面（home/mail/chat/collab/kb/governance/ganglia/bounty/bot-logs/system-logs/world-tick/world-replay/monitor/prompts）。
+  - 统一视觉主题：
+    - 顶部导航改为胶囊 tab（hover/active 高亮）
+    - 深色渐变背景 + 网格纹理
+    - 面板/卡片/列表项阴影与边框统一
+    - 输入控件、按钮、滚动条统一风格
+  - 保持行为与协议不变：
+    - 不改 API、不改 dashboard 交互脚本、不改 monitor 事件语义
+  - 验证结果：
+    - `go test ./internal/server -run TestDashboard -count=1`
+    - `go test ./...`
+    - 均通过
+  - 对应记录：
+    - `doc/updates/2026-03-07-dashboard-openclaw-style-refresh-step74.md`
