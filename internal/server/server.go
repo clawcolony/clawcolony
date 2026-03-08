@@ -35,12 +35,14 @@ import (
 	"clawcolony/internal/store"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/retry"
 )
 
 type Server struct {
@@ -3326,6 +3328,25 @@ func (s *Server) handlePromptTemplateApply(w http.ResponseWriter, r *http.Reques
 			})
 			continue
 		}
+		profile, err := s.bots.BuildRuntimeProfile(r.Context(), t)
+		if err != nil {
+			results = append(results, result{
+				UserID: t.BotID,
+				Image:  image,
+				Status: "failed",
+				Error:  fmt.Sprintf("build runtime profile: %v", err),
+			})
+			continue
+		}
+		if err := s.syncRuntimeProfileToKube(r.Context(), t.BotID, profile); err != nil {
+			results = append(results, result{
+				UserID: t.BotID,
+				Image:  image,
+				Status: "failed",
+				Error:  fmt.Sprintf("sync runtime profile to kube: %v", err),
+			})
+			continue
+		}
 		if err := s.bots.ApplyRuntimeProfile(r.Context(), t.BotID, image); err != nil {
 			results = append(results, result{
 				UserID: t.BotID,
@@ -3351,6 +3372,216 @@ func (s *Server) handlePromptTemplateApply(w http.ResponseWriter, r *http.Reques
 		"ok_count":  okCount,
 		"all_count": len(results),
 	})
+}
+
+func runtimeProfileSeedData(profile bot.RuntimeProfile) map[string]string {
+	return map[string]string{
+		"PROTOCOL_README.md":                profile.ProtocolReadme,
+		"IDENTITY_DOC.md":                   profile.IdentityDoc,
+		"AGENTS_DOC.md":                     profile.AgentsDoc,
+		"SOUL_DOC.md":                       profile.SoulDoc,
+		"BOOTSTRAP_DOC.md":                  profile.BootstrapDoc,
+		"TOOLS_DOC.md":                      profile.ToolsDoc,
+		"SKILL_AUTONOMY_POLICY":             profile.SkillAutonomyPolicy,
+		"MAILBOX_NETWORK_SKILL":             profile.ClawWorldSkill,
+		"COLONY_CORE_SKILL":                 profile.ColonyCoreSkill,
+		"COLONY_TOOLS_SKILL":                profile.ColonyToolsSkill,
+		"KNOWLEDGE_BASE_SKILL":              profile.KnowledgeBaseSkill,
+		"GANGLIA_STACK_SKILL":               profile.GangliaStackSkill,
+		"COLLAB_MODE_SKILL":                 profile.CollabModeSkill,
+		"SELF_CORE_UPGRADE_SKILL":           profile.SelfCoreUpgradeSkill,
+		"UPGRADE_CLAWCOLONY_SKILL":          profile.UpgradeClawcolonySkill,
+		"SELF_SOURCE_README":                profile.SelfSourceReadme,
+		"SOURCE_WORKSPACE_README":           profile.SourceWorkspaceReadme,
+		"openclaw.json":                     profile.OpenClawConfig,
+		"KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST": profile.KnowledgeBaseMCPManifest,
+		"KNOWLEDGEBASE_MCP_PLUGIN_JS":       profile.KnowledgeBaseMCPPlugin,
+		"COLLAB_MCP_PLUGIN_MANIFEST":        profile.CollabMCPManifest,
+		"COLLAB_MCP_PLUGIN_JS":              profile.CollabMCPPlugin,
+		"MAILBOX_MCP_PLUGIN_MANIFEST":       profile.MailboxMCPManifest,
+		"MAILBOX_MCP_PLUGIN_JS":             profile.MailboxMCPPlugin,
+		"TOKEN_MCP_PLUGIN_MANIFEST":         profile.TokenMCPManifest,
+		"TOKEN_MCP_PLUGIN_JS":               profile.TokenMCPPlugin,
+		"TOOLS_MCP_PLUGIN_MANIFEST":         profile.ToolsMCPManifest,
+		"TOOLS_MCP_PLUGIN_JS":               profile.ToolsMCPPlugin,
+		"GANGLIA_MCP_PLUGIN_MANIFEST":       profile.GangliaMCPManifest,
+		"GANGLIA_MCP_PLUGIN_JS":             profile.GangliaMCPPlugin,
+		"GOVERNANCE_MCP_PLUGIN_MANIFEST":    profile.GovernanceMCPManifest,
+		"GOVERNANCE_MCP_PLUGIN_JS":          profile.GovernanceMCPPlugin,
+	}
+}
+
+var errBotPodNotFound = errors.New("bot pod not found")
+
+type runtimeMCPPluginSeedSpec struct {
+	Dir             string
+	ManifestSeedKey string
+	JSSeedKey       string
+}
+
+var runtimeMCPPluginSeedSpecs = []runtimeMCPPluginSeedSpec{
+	{Dir: "clawcolony-mcp-knowledgebase", ManifestSeedKey: "KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST", JSSeedKey: "KNOWLEDGEBASE_MCP_PLUGIN_JS"},
+	{Dir: "clawcolony-mcp-collab", ManifestSeedKey: "COLLAB_MCP_PLUGIN_MANIFEST", JSSeedKey: "COLLAB_MCP_PLUGIN_JS"},
+	{Dir: "clawcolony-mcp-mailbox", ManifestSeedKey: "MAILBOX_MCP_PLUGIN_MANIFEST", JSSeedKey: "MAILBOX_MCP_PLUGIN_JS"},
+	{Dir: "clawcolony-mcp-token", ManifestSeedKey: "TOKEN_MCP_PLUGIN_MANIFEST", JSSeedKey: "TOKEN_MCP_PLUGIN_JS"},
+	{Dir: "clawcolony-mcp-tools", ManifestSeedKey: "TOOLS_MCP_PLUGIN_MANIFEST", JSSeedKey: "TOOLS_MCP_PLUGIN_JS"},
+	{Dir: "clawcolony-mcp-ganglia", ManifestSeedKey: "GANGLIA_MCP_PLUGIN_MANIFEST", JSSeedKey: "GANGLIA_MCP_PLUGIN_JS"},
+	{Dir: "clawcolony-mcp-governance", ManifestSeedKey: "GOVERNANCE_MCP_PLUGIN_MANIFEST", JSSeedKey: "GOVERNANCE_MCP_PLUGIN_JS"},
+}
+
+const runtimeProfileSyncExecTimeout = 2 * time.Minute
+
+func (s *Server) syncRuntimeProfileToKube(ctx context.Context, userID string, profile bot.RuntimeProfile) error {
+	if s.kubeClient == nil {
+		return nil
+	}
+	workload := bot.WorkloadName(userID)
+	if strings.TrimSpace(workload) == "" {
+		return fmt.Errorf("invalid workload name for user_id=%s", userID)
+	}
+	cmName := bot.ProfileConfigMapName(workload)
+	if err := s.upsertRuntimeProfileConfigMap(ctx, cmName, profile); err != nil {
+		return err
+	}
+	if err := s.syncRuntimeProfileToRunningPod(ctx, userID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) syncRuntimeProfileToRunningPod(ctx context.Context, userID string) error {
+	pod, err := s.latestBotPod(ctx, userID)
+	if err != nil {
+		if errors.Is(err, errBotPodNotFound) {
+			return nil
+		}
+		return err
+	}
+	execCtx, cancel := context.WithTimeout(ctx, runtimeProfileSyncExecTimeout)
+	defer cancel()
+	_, stderr, execErr := s.execInBotPod(execCtx, pod.Name, runtimeProfileSeedSyncCommand())
+	if execErr != nil {
+		msg := strings.TrimSpace(stderr)
+		if msg != "" {
+			return fmt.Errorf("sync runtime profile files in pod %s: %w: %s", pod.Name, execErr, msg)
+		}
+		return fmt.Errorf("sync runtime profile files in pod %s: %w", pod.Name, execErr)
+	}
+	return nil
+}
+
+func runtimeProfileSeedSyncCommand() []string {
+	const (
+		extensionsRoot = "/state/openclaw/workspace/.openclaw/extensions"
+		tmpRoot        = "/state/openclaw/workspace/.openclaw/extensions.clawcolony-sync-tmp"
+		backupRoot     = "/state/openclaw/workspace/.openclaw/extensions.clawcolony-sync-backup"
+		targetConfig   = "/state/openclaw/openclaw.json"
+		tmpConfig      = "/state/openclaw/openclaw.json.clawcolony-sync-tmp"
+		backupConfig   = "/state/openclaw/openclaw.json.clawcolony-sync-backup"
+	)
+
+	var b strings.Builder
+	b.WriteString("set -eu\n")
+	b.WriteString("cleanup() {\n")
+	b.WriteString("  status=$?\n")
+	b.WriteString("  if [ \"$status\" -ne 0 ]; then\n")
+	b.WriteString(fmt.Sprintf("    if [ ! -d %s ] && [ -d %s ]; then\n", shellSingleQuote(extensionsRoot), shellSingleQuote(backupRoot)))
+	b.WriteString(fmt.Sprintf("      mv %s %s || true\n", shellSingleQuote(backupRoot), shellSingleQuote(extensionsRoot)))
+	b.WriteString("    fi\n")
+	b.WriteString(fmt.Sprintf("    if [ -f %s ]; then\n", shellSingleQuote(backupConfig)))
+	b.WriteString(fmt.Sprintf("      mv %s %s || true\n", shellSingleQuote(backupConfig), shellSingleQuote(targetConfig)))
+	b.WriteString("    fi\n")
+	b.WriteString("  fi\n")
+	b.WriteString(fmt.Sprintf("  rm -rf %s\n", shellSingleQuote(tmpRoot)))
+	b.WriteString(fmt.Sprintf("  rm -f %s\n", shellSingleQuote(tmpConfig)))
+	b.WriteString("  exit \"$status\"\n")
+	b.WriteString("}\n")
+	b.WriteString("trap cleanup EXIT\n")
+	b.WriteString(fmt.Sprintf("rm -rf %s %s\n", shellSingleQuote(tmpRoot), shellSingleQuote(backupRoot)))
+	b.WriteString(fmt.Sprintf("rm -f %s\n", shellSingleQuote(backupConfig)))
+	b.WriteString(fmt.Sprintf("mkdir -p %s\n", shellSingleQuote(tmpRoot)))
+	b.WriteString(fmt.Sprintf("if [ -d %s ]; then cp -a %s/. %s/; fi\n", shellSingleQuote(extensionsRoot), shellSingleQuote(extensionsRoot), shellSingleQuote(tmpRoot)))
+	for _, spec := range runtimeMCPPluginSeedSpecs {
+		targetDir := tmpRoot + "/" + spec.Dir
+		b.WriteString(fmt.Sprintf("mkdir -p %s\n", shellSingleQuote(targetDir)))
+		b.WriteString(fmt.Sprintf("cp %s %s\n", shellSingleQuote("/seed/"+spec.ManifestSeedKey), shellSingleQuote(targetDir+"/openclaw.plugin.json")))
+		b.WriteString(fmt.Sprintf("cp %s %s\n", shellSingleQuote("/seed/"+spec.JSSeedKey), shellSingleQuote(targetDir+"/index.js")))
+	}
+	b.WriteString(fmt.Sprintf("cp %s %s\n", shellSingleQuote("/seed/openclaw.json"), shellSingleQuote(tmpConfig)))
+	b.WriteString(fmt.Sprintf("if [ -d %s ]; then mv %s %s; fi\n", shellSingleQuote(extensionsRoot), shellSingleQuote(extensionsRoot), shellSingleQuote(backupRoot)))
+	b.WriteString(fmt.Sprintf("mv %s %s\n", shellSingleQuote(tmpRoot), shellSingleQuote(extensionsRoot)))
+	b.WriteString(fmt.Sprintf("if [ -f %s ]; then mv %s %s; fi\n", shellSingleQuote(targetConfig), shellSingleQuote(targetConfig), shellSingleQuote(backupConfig)))
+	b.WriteString(fmt.Sprintf("mv %s %s\n", shellSingleQuote(tmpConfig), shellSingleQuote(targetConfig)))
+	b.WriteString(fmt.Sprintf("rm -rf %s\n", shellSingleQuote(backupRoot)))
+	b.WriteString(fmt.Sprintf("rm -f %s\n", shellSingleQuote(backupConfig)))
+	b.WriteString("trap - EXIT\n")
+	return []string{"sh", "-c", b.String()}
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func (s *Server) upsertRuntimeProfileConfigMap(ctx context.Context, configMapName string, profile bot.RuntimeProfile) error {
+	client := s.kubeClient.CoreV1().ConfigMaps(s.cfg.BotNamespace)
+	seedData := runtimeProfileSeedData(profile)
+	err := retry.OnError(retry.DefaultRetry, func(err error) bool {
+		return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
+	}, func() error {
+		cm, err := client.Get(ctx, configMapName, metav1.GetOptions{})
+		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return err
+			}
+			data := make(map[string]string, len(seedData))
+			for key, value := range seedData {
+				value = strings.TrimSpace(value)
+				if value == "" {
+					continue
+				}
+				data[key] = value
+			}
+			if len(data) == 0 {
+				return nil
+			}
+			_, createErr := client.Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: s.cfg.BotNamespace,
+				},
+				Data: data,
+			}, metav1.CreateOptions{})
+			if createErr != nil {
+				return createErr
+			}
+			return nil
+		}
+		if cm.Data == nil {
+			cm.Data = map[string]string{}
+		}
+		localChanged := false
+		for key, value := range seedData {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if cm.Data[key] != value {
+				cm.Data[key] = value
+				localChanged = true
+			}
+		}
+		if !localChanged {
+			return nil
+		}
+		if _, err := client.Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Server) handleTokenAccounts(w http.ResponseWriter, r *http.Request) {
@@ -7118,7 +7349,10 @@ func (s *Server) sendChatToOpenClaw(ctx context.Context, userID, message string)
 	}
 	podName, err = s.latestBotPodName(ctx, userID)
 	if err != nil {
-		return "", "", "", err
+		if errors.Is(err, errBotPodNotFound) {
+			return "", "", "", fmt.Errorf("no running bot pod for user_id=%s: %w", userID, errBotPodNotFound)
+		}
+		return "", "", "", fmt.Errorf("resolve latest bot pod for user_id=%s: %w", userID, err)
 	}
 	sessionID = s.currentOrDefaultChatSessionID(userID)
 
@@ -7451,7 +7685,7 @@ func (s *Server) latestBotPod(ctx context.Context, userID string) (*corev1.Pod, 
 	}
 	pods.Items = filtered
 	if len(pods.Items) == 0 {
-		return nil, fmt.Errorf("bot pod not found")
+		return nil, errBotPodNotFound
 	}
 	sort.Slice(pods.Items, func(i, j int) bool {
 		si := podHealthRank(&pods.Items[i])

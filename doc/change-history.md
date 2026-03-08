@@ -20,6 +20,26 @@
     - dashboard tabs 一致性扩展（含 monitor）
   - 详细流水：`doc/updates/2026-03-07-openclaw-runtime-monitor.md`
 
+- Runtime `templates/apply` 生效路径改为「ConfigMap + Pod 内即时同步」，并收敛 RBAC（Step 83）：
+  - `POST /v1/prompts/templates/apply` 在 upsert `user-*-profile` ConfigMap 后，直接对运行中 bot pod 执行 `cp /seed/* -> /state/*`，即时覆盖 `openclaw.json` 与 `clawcolony-mcp-*` 扩展文件
+  - 移除对 user deployment 模板补丁与 rollout 的依赖，避免 apply 失败被 deployment 写权限阻塞
+  - `k8s/rbac.yaml` 收敛为最小权限：
+    - `secrets` 保持只读
+    - 仅 `configmaps` 保留 `create/update/patch/delete`
+    - `deployments` 保持只读（`get/list/watch`）
+  - 新增测试：运行时 pod 同步命令覆盖校验（确保 `openclaw.json` 与全部 `clawcolony-mcp-*` 插件复制步骤齐全）
+  - 详细变更记录：`doc/updates/2026-03-07-runtime-apply-live-pod-sync-and-rbac-hardening-step83.md`
+
+- Runtime `templates/apply` 对现有 agents 的生效链路修复（Step 82）：
+  - 新增 `BuildRuntimeProfile` 导出能力，server 侧可拿到完整 runtime profile（含 MCP manifests/plugins）
+  - `POST /v1/prompts/templates/apply` 新增 kube 同步路径：
+    - upsert `user-*-profile` ConfigMap 的 skills/docs/openclaw/mcp seeds
+    - 自动补丁 `workspace-bootstrap` init 脚本（openclaw.json 改为每次重启强制覆盖；补齐 `clawcolony-mcp-*` 扩展落盘）
+    - 在 ConfigMap 变更时触发 deployment rollout，保证 seed 改动在现有 user pods 生效
+  - 增加并发安全：ConfigMap/Deployment 更新采用冲突重试，避免并发更新覆盖
+  - 新增测试：seed key 覆盖验证、bootstrap 脚本补丁与幂等验证
+  - 详细变更记录：`doc/updates/2026-03-07-runtime-apply-kube-sync-and-bootstrap-patch-step82.md`
+
 - Runtime agent skills 全面切换为 MCP-only（`clawcolony-mcp-*`）并补齐运行时 profile 显式注入：
   - `manager` 侧 runtime profile 新增并下发 `collab/mailbox/token/tools/ganglia/governance` MCP manifest 与 plugin
   - 默认 prompt 模板映射改为 MCP-only skill builder（含 knowledgebase 与 ganglia）
