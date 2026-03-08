@@ -1169,46 +1169,31 @@ func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
 	}
 }
 
-func TestPatchWorkspaceBootstrapScriptForMCP(t *testing.T) {
-	raw := strings.Join([]string{
-		"set -e",
-		"[ -f /state/openclaw/openclaw.json ] || cp /seed/openclaw.json /state/openclaw/openclaw.json",
-		"mkdir -p /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase",
-		"cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/openclaw.plugin.json",
-		"cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/index.js",
-		"          rm -f /state/openclaw/workspace/HEARTBEAT.md",
-	}, "\n")
-
-	patched, changed := patchWorkspaceBootstrapScriptForMCP(raw)
-	if !changed {
-		t.Fatalf("patchWorkspaceBootstrapScriptForMCP should report changed=true")
+func TestRuntimeProfileSeedSyncCommandIncludesMCPPlugins(t *testing.T) {
+	cmd := runtimeProfileSeedSyncCommand()
+	if len(cmd) != 3 {
+		t.Fatalf("command len = %d, want 3", len(cmd))
 	}
-	if strings.Contains(patched, "[ -f /state/openclaw/openclaw.json ]") {
-		t.Fatalf("guarded openclaw.json copy should be removed: %s", patched)
+	if cmd[0] != "sh" || cmd[1] != "-c" {
+		t.Fatalf("command prefix = %q %q, want sh -c", cmd[0], cmd[1])
 	}
-	if !strings.Contains(patched, "cp /seed/openclaw.json /state/openclaw/openclaw.json") {
-		t.Fatalf("openclaw.json should be copied unconditionally: %s", patched)
+	script := cmd[2]
+	if !strings.Contains(script, "trap cleanup EXIT") {
+		t.Fatalf("sync script should install cleanup trap: %s", script)
 	}
-	for _, marker := range []string{
-		"clawcolony-mcp-knowledgebase",
-		"clawcolony-mcp-collab",
-		"clawcolony-mcp-mailbox",
-		"clawcolony-mcp-token",
-		"clawcolony-mcp-tools",
-		"clawcolony-mcp-ganglia",
-		"clawcolony-mcp-governance",
-	} {
-		if !strings.Contains(patched, marker) {
-			t.Fatalf("patched script missing marker %q", marker)
+	if !strings.Contains(script, "cp "+shellSingleQuote("/seed/openclaw.json")+" "+shellSingleQuote("/state/openclaw/openclaw.json.clawcolony-sync-tmp")) {
+		t.Fatalf("script missing staged openclaw.json copy: %s", script)
+	}
+	for _, spec := range runtimeMCPPluginSeedSpecs {
+		baseDir := "/state/openclaw/workspace/.openclaw/extensions.clawcolony-sync-tmp/" + spec.Dir
+		wantManifest := "cp " + shellSingleQuote("/seed/"+spec.ManifestSeedKey) + " " + shellSingleQuote(baseDir+"/openclaw.plugin.json")
+		if !strings.Contains(script, wantManifest) {
+			t.Fatalf("script missing manifest copy for %q: %s", spec.Dir, wantManifest)
 		}
-	}
-
-	patchedAgain, changedAgain := patchWorkspaceBootstrapScriptForMCP(patched)
-	if changedAgain {
-		t.Fatalf("patched script should be idempotent")
-	}
-	if patchedAgain != patched {
-		t.Fatalf("patched script should stay stable across repeated patching")
+		wantJS := "cp " + shellSingleQuote("/seed/"+spec.JSSeedKey) + " " + shellSingleQuote(baseDir+"/index.js")
+		if !strings.Contains(script, wantJS) {
+			t.Fatalf("script missing js copy for %q: %s", spec.Dir, wantJS)
+		}
 	}
 }
 
