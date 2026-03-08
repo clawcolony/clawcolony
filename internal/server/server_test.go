@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -169,6 +170,7 @@ func TestDefaultPromptTemplateMapIncludesMCPOnlySkillTemplates(t *testing.T) {
 		bot.TemplateKnowledgeBaseSkill,
 		bot.TemplateGangliaStackSkill,
 		bot.TemplateCollabModeSkill,
+		bot.TemplateDevPreviewSkill,
 	}
 	for _, key := range requiredKeys {
 		if strings.TrimSpace(defaults[key]) == "" {
@@ -312,6 +314,474 @@ func TestDashboardAdminProxyAllDispatchesLocal(t *testing.T) {
 	w := doJSONRequest(t, h, http.MethodGet, "/v1/dashboard-admin/openclaw/admin/github/health", nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("runtime repo should not expose dashboard-admin path even in all mode, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBotDevLinkProxyCreatesSignedRuntimeLink(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "runtime-sync-token"
+	srv.cfg.PreviewAllowedPorts = "3000,5173"
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-1",
+		Name:        "user-dev-1",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-1",
+		GatewayToken: "gw-dev-1",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/dev/link", map[string]any{
+		"user_id":       "user-dev-1",
+		"port":          5173,
+		"path":          "/preview?x=1",
+		"gateway_token": "gw-dev-1",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		Item struct {
+			UserID      string `json:"user_id"`
+			Port        int    `json:"port"`
+			Path        string `json:"path"`
+			RelativeURL string `json:"relative_url"`
+			TTLDays     int64  `json:"ttl_days"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Item.UserID != "user-dev-1" || payload.Item.Port != 5173 || payload.Item.Path != "/preview" {
+		t.Fatalf("unexpected item: %+v", payload.Item)
+	}
+	if !strings.Contains(payload.Item.RelativeURL, "/v1/bots/dev/user-dev-1/p/5173/preview?") {
+		t.Fatalf("unexpected relative url: %s", payload.Item.RelativeURL)
+	}
+	linkURL, err := neturl.Parse(payload.Item.RelativeURL)
+	if err != nil {
+		t.Fatalf("parse relative url: %v", err)
+	}
+	values := linkURL.Query()
+	if got := values.Get("x"); got != "1" {
+		t.Fatalf("query x=%q, want 1", got)
+	}
+	expRaw := values.Get(devProxySignedParamExp)
+	nonce := values.Get(devProxySignedParamNonce)
+	sig := values.Get(devProxySignedParamSig)
+	if expRaw == "" || nonce == "" || sig == "" {
+		t.Fatalf("signed params missing: %s", payload.Item.RelativeURL)
+	}
+	exp, err := strconv.ParseInt(expRaw, 10, 64)
+	if err != nil {
+		t.Fatalf("parse exp: %v", err)
+	}
+	expectSig := runtimeDevProxyComputeSignature(
+		srv.cfg.InternalSyncToken,
+		"user-dev-1",
+		5173,
+		"/preview",
+		neturl.Values{"x": []string{"1"}}.Encode(),
+		exp,
+		nonce,
+	)
+	if sig != expectSig {
+		t.Fatalf("sig mismatch: got=%s want=%s", sig, expectSig)
+	}
+	if payload.Item.TTLDays != runtimeSchedulerDefaultPreviewLinkTTLDays {
+		t.Fatalf("ttl_days=%d, want=%d", payload.Item.TTLDays, runtimeSchedulerDefaultPreviewLinkTTLDays)
+	}
+}
+
+func TestBotDevLinkProxyValidationAndMethod(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/dev/link", map[string]any{
+		"path": "/",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing user_id should be 400, got=%d body=%s", w.Code, w.Body.String())
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots/dev/link", nil)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET should be 405, got=%d body=%s", w.Code, w.Body.String())
+	}
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-auth",
+		Name:        "user-dev-auth",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-auth",
+		GatewayToken: "gw-auth",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/dev/link", map[string]any{
+		"user_id":       "user-dev-auth",
+		"port":          3000,
+		"path":          "/",
+		"gateway_token": "wrong",
+	})
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid token should be 401, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBotDevLinkProxyRejectsDisallowedPort(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "runtime-sync-token"
+	srv.cfg.PreviewAllowedPorts = "3000"
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-port",
+		Name:        "user-dev-port",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-port",
+		GatewayToken: "gw-port",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/dev/link", map[string]any{
+		"user_id":       "user-dev-port",
+		"port":          5173,
+		"path":          "/",
+		"gateway_token": "gw-port",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("disallowed port should be 400, got=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("port is not allowed")) {
+		t.Fatalf("unexpected error body: %s", w.Body.String())
+	}
+}
+
+func TestBotDevProxyForwardPassThrough(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.PreviewAllowedPorts = "3000,5173"
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-2",
+		Name:        "user-dev-2",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-2",
+		GatewayToken: "gw-dev-2",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user-dev-2/5173/preview" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if r.URL.RawQuery != "x=1" {
+			t.Fatalf("query=%s", r.URL.RawQuery)
+		}
+		if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "" {
+			t.Fatalf("authorization header should be stripped, got=%q", got)
+		}
+		if got := strings.TrimSpace(r.Header.Get("X-Clawcolony-Gateway-Token")); got != "" {
+			t.Fatalf("x-clawcolony-gateway-token should be stripped, got=%q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok-dev-proxy"))
+	}))
+	defer up.Close()
+	srv.cfg.PreviewUpstreamTemplate = up.URL + "/{{user_id}}/{{port}}"
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/bots/dev/user-dev-2/p/5173/preview?x=1&token=gw-dev-2", nil)
+	req.Header.Set("Authorization", "Bearer gw-dev-2")
+	req.Header.Set("X-Clawcolony-Gateway-Token", "gw-dev-2")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.TrimSpace(w.Body.String()) != "ok-dev-proxy" {
+		t.Fatalf("body=%q", w.Body.String())
+	}
+}
+
+func TestBotDevProxyForwardLegacyPathDefaultsTo3000(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.PreviewAllowedPorts = "3000"
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-legacy",
+		Name:        "user-dev-legacy",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-legacy",
+		GatewayToken: "gw-dev-legacy",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user-dev-legacy/3000/preview" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer up.Close()
+	srv.cfg.PreviewUpstreamTemplate = up.URL + "/{{user_id}}/{{port}}"
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots/dev/user-dev-legacy/preview?token=gw-dev-legacy", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy path should pass with default port 3000, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBotDevProxyForwardRejectsInvalidPathAndMethod(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots/dev/unknown-user/preview", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown user should be 404, got=%d body=%s", w.Code, w.Body.String())
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/dev/user-x/preview", nil)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST should be 405, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBotDevProxyForwardRejectsMissingAuth(t *testing.T) {
+	srv := newTestServer()
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-3",
+		Name:        "user-dev-3",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-3",
+		GatewayToken: "gw-dev-3",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots/dev/user-dev-3/preview", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("missing auth should be 401, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBotDevProxyForwardAllowsValidSignedQuery(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "runtime-sync-token"
+	srv.cfg.PreviewAllowedPorts = "5173"
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-signed",
+		Name:        "user-dev-signed",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-signed",
+		GatewayToken: "gw-signed",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "x=1" {
+			t.Fatalf("query=%s", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok-signed"))
+	}))
+	defer up.Close()
+	srv.cfg.PreviewUpstreamTemplate = up.URL
+
+	exp := time.Now().UTC().Add(30 * time.Minute).Unix()
+	nonce := "n-1"
+	targetPath := "/preview"
+	targetQuery := neturl.Values{"x": []string{"1"}}.Encode()
+	sig := runtimeDevProxyComputeSignature(srv.cfg.InternalSyncToken, "user-dev-signed", 5173, targetPath, targetQuery, exp, nonce)
+	reqURL := fmt.Sprintf("/v1/bots/dev/user-dev-signed/p/5173/preview?x=1&exp=%d&nonce=%s&sig=%s", exp, nonce, sig)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, reqURL, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("signed query should pass, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBotDevProxyForwardRejectsInvalidSignedQuery(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "runtime-sync-token"
+	srv.cfg.PreviewAllowedPorts = "5173"
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-signed-bad",
+		Name:        "user-dev-signed-bad",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-signed-bad",
+		GatewayToken: "gw-signed-bad",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots/dev/user-dev-signed-bad/p/5173/preview?x=1&exp=1&nonce=n&sig=fake", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid signed query should be 401, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBotDevProxyForwardRejectsExpiredSignedQuery(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "runtime-sync-token"
+	srv.cfg.PreviewAllowedPorts = "5173"
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-signed-expired",
+		Name:        "user-dev-signed-expired",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-signed-expired",
+		GatewayToken: "gw-signed-expired",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+	exp := time.Now().UTC().Add(-1 * time.Minute).Unix()
+	nonce := "n-expired"
+	targetPath := "/preview"
+	targetQuery := neturl.Values{"x": []string{"1"}}.Encode()
+	sig := runtimeDevProxyComputeSignature(srv.cfg.InternalSyncToken, "user-dev-signed-expired", 5173, targetPath, targetQuery, exp, nonce)
+	reqURL := fmt.Sprintf("/v1/bots/dev/user-dev-signed-expired/p/5173/preview?x=1&exp=%d&nonce=%s&sig=%s", exp, nonce, sig)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, reqURL, nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expired signed query should be 401, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBotDevHealthUsesGatewayToken(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.PreviewAllowedPorts = "3000,5173"
+	userID := seedActiveUser(t, srv)
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       userID,
+		GatewayToken: "gw-health-token",
+	}); err != nil {
+		t.Fatalf("upsert credentials: %v", err)
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wantPath := "/" + userID + "/5173/"
+		if r.URL.Path != wantPath {
+			t.Fatalf("path=%s, want=%s", r.URL.Path, wantPath)
+		}
+		if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "" {
+			t.Fatalf("authorization header should be empty, got=%q", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer up.Close()
+	srv.cfg.PreviewUpstreamTemplate = up.URL + "/{{user_id}}/{{port}}"
+
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodGet, "/v1/bots/dev/health?user_id="+neturl.QueryEscape(userID)+"&port=5173", nil, map[string]string{
+		"Authorization": "Bearer gw-health-token",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"ok":true`)) {
+		t.Fatalf("health should be ok=true: %s", w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"status_code":204`)) {
+		t.Fatalf("health should include status_code 204: %s", w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"port":5173`)) {
+		t.Fatalf("health should include port: %s", w.Body.String())
+	}
+}
+
+func TestBotDevHealthRejectsPathTraversal(t *testing.T) {
+	srv := newTestServer()
+	userID := seedActiveUser(t, srv)
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       userID,
+		GatewayToken: "gw-traversal",
+	}); err != nil {
+		t.Fatalf("upsert credentials: %v", err)
+	}
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodGet, "/v1/bots/dev/health?user_id="+neturl.QueryEscape(userID)+"&path=/../../admin", nil, map[string]string{
+		"Authorization": "Bearer gw-traversal",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("path traversal should be 400, got=%d body=%s", w.Code, w.Body.String())
+	}
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodGet, "/v1/bots/dev/health?user_id="+neturl.QueryEscape(userID)+"&path=/%252e%252e/%252e%252e/admin", nil, map[string]string{
+		"Authorization": "Bearer gw-traversal",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("double-encoded path traversal should be 400, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBotDevHealthDoesNotLeakUpstreamBody(t *testing.T) {
+	srv := newTestServer()
+	userID := seedActiveUser(t, srv)
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       userID,
+		GatewayToken: "gw-health-body",
+	}); err != nil {
+		t.Fatalf("upsert credentials: %v", err)
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("stacktrace: internal secret details"))
+	}))
+	defer up.Close()
+	srv.cfg.PreviewUpstreamTemplate = up.URL
+
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodGet, "/v1/bots/dev/health?user_id="+neturl.QueryEscape(userID)+"&port=3000", nil, map[string]string{
+		"Authorization": "Bearer gw-health-body",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"status_code":500`)) {
+		t.Fatalf("missing status_code in body=%s", w.Body.String())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte("internal secret")) {
+		t.Fatalf("health response leaked upstream body=%s", w.Body.String())
+	}
+}
+
+func TestBotDevHealthUnknownUserReturnsNotFound(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots/dev/health?user_id=unknown-user", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown user should be 404, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -1355,6 +1825,7 @@ func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
 		AgentsDoc:                "agents",
 		OpenClawConfig:           "{\"plugins\":{}}",
 		CollabModeSkill:          "collab-skill",
+		DevPreviewSkill:          "dev-preview-skill",
 		KnowledgeBaseMCPManifest: "kb-manifest",
 		KnowledgeBaseMCPPlugin:   "kb-plugin",
 		CollabMCPManifest:        "collab-manifest",
@@ -1369,6 +1840,8 @@ func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
 		GangliaMCPPlugin:         "ganglia-plugin",
 		GovernanceMCPManifest:    "gov-manifest",
 		GovernanceMCPPlugin:      "gov-plugin",
+		DevPreviewMCPManifest:    "dev-manifest",
+		DevPreviewMCPPlugin:      "dev-plugin",
 	}
 	data := runtimeProfileSeedData(profile)
 	expect := map[string]string{
@@ -1376,6 +1849,7 @@ func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
 		"AGENTS_DOC.md":                     "agents",
 		"openclaw.json":                     "{\"plugins\":{}}",
 		"COLLAB_MODE_SKILL":                 "collab-skill",
+		"DEV_PREVIEW_SKILL":                 "dev-preview-skill",
 		"KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST": "kb-manifest",
 		"KNOWLEDGEBASE_MCP_PLUGIN_JS":       "kb-plugin",
 		"COLLAB_MCP_PLUGIN_MANIFEST":        "collab-manifest",
@@ -1390,6 +1864,8 @@ func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
 		"GANGLIA_MCP_PLUGIN_JS":             "ganglia-plugin",
 		"GOVERNANCE_MCP_PLUGIN_MANIFEST":    "gov-manifest",
 		"GOVERNANCE_MCP_PLUGIN_JS":          "gov-plugin",
+		"DEV_PREVIEW_MCP_PLUGIN_MANIFEST":   "dev-manifest",
+		"DEV_PREVIEW_MCP_PLUGIN_JS":         "dev-plugin",
 	}
 	for key, want := range expect {
 		if got := data[key]; got != want {
@@ -1426,10 +1902,14 @@ func TestPatchWorkspaceBootstrapScriptForMCP(t *testing.T) {
 		"clawcolony-mcp-tools",
 		"clawcolony-mcp-ganglia",
 		"clawcolony-mcp-governance",
+		"clawcolony-mcp-dev-preview",
 	} {
 		if !strings.Contains(patched, marker) {
 			t.Fatalf("patched script missing marker %q", marker)
 		}
+	}
+	if !strings.Contains(patched, "/skills/dev-preview/SKILL.md") {
+		t.Fatalf("patched script missing dev-preview skill copy block")
 	}
 	insertPos := strings.Index(patched, "clawcolony-mcp-knowledgebase")
 	heartbeatPos := strings.Index(patched, "rm -f /state/openclaw/workspace/HEARTBEAT.md")
@@ -3383,6 +3863,9 @@ func TestRuntimeSchedulerSettingsCompatPathIsCached(t *testing.T) {
 	if item.CostAlertNotifyCooldownSeconds != 600 {
 		t.Fatalf("default cost cooldown = %d, want 600", item.CostAlertNotifyCooldownSeconds)
 	}
+	if item.PreviewLinkTTLDays != 30 {
+		t.Fatalf("default preview link ttl = %d, want 30", item.PreviewLinkTTLDays)
+	}
 	cached, cacheSource, _, ok := srv.getRuntimeSchedulerCache(time.Now().UTC())
 	if !ok {
 		t.Fatalf("expected compat runtime scheduler cache hit")
@@ -3392,6 +3875,9 @@ func TestRuntimeSchedulerSettingsCompatPathIsCached(t *testing.T) {
 	}
 	if cached.CostAlertNotifyCooldownSeconds != 600 {
 		t.Fatalf("cached cost cooldown = %d, want 600", cached.CostAlertNotifyCooldownSeconds)
+	}
+	if cached.PreviewLinkTTLDays != 30 {
+		t.Fatalf("cached preview link ttl = %d, want 30", cached.PreviewLinkTTLDays)
 	}
 }
 
@@ -3410,7 +3896,8 @@ func TestRuntimeSchedulerSettingsEndpoints(t *testing.T) {
 		!bytes.Contains(body, []byte(`"kb_voting_reminder_interval_ticks":0`)) ||
 		!bytes.Contains(body, []byte(`"cost_alert_notify_cooldown_seconds":600`)) ||
 		!bytes.Contains(body, []byte(`"low_token_alert_cooldown_seconds":0`)) ||
-		!bytes.Contains(body, []byte(`"agent_heartbeat_every":"10m"`)) {
+		!bytes.Contains(body, []byte(`"agent_heartbeat_every":"10m"`)) ||
+		!bytes.Contains(body, []byte(`"preview_link_ttl_days":30`)) {
 		t.Fatalf("unexpected runtime scheduler defaults: %s", w.Body.String())
 	}
 
@@ -3422,6 +3909,7 @@ func TestRuntimeSchedulerSettingsEndpoints(t *testing.T) {
 		"cost_alert_notify_cooldown_seconds":     7200,
 		"low_token_alert_cooldown_seconds":       900,
 		"agent_heartbeat_every":                  "10m",
+		"preview_link_ttl_days":                  45,
 	})
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("upsert runtime scheduler settings status=%d body=%s", w.Code, w.Body.String())
@@ -3442,8 +3930,28 @@ func TestRuntimeSchedulerSettingsEndpoints(t *testing.T) {
 		!bytes.Contains(body, []byte(`"kb_voting_reminder_interval_ticks":120`)) ||
 		!bytes.Contains(body, []byte(`"cost_alert_notify_cooldown_seconds":7200`)) ||
 		!bytes.Contains(body, []byte(`"low_token_alert_cooldown_seconds":900`)) ||
-		!bytes.Contains(body, []byte(`"agent_heartbeat_every":"10m"`)) {
+		!bytes.Contains(body, []byte(`"agent_heartbeat_every":"10m"`)) ||
+		!bytes.Contains(body, []byte(`"preview_link_ttl_days":45`)) {
 		t.Fatalf("expected persisted runtime scheduler settings: %s", w.Body.String())
+	}
+}
+
+func TestRuntimeSchedulerSettingsUpsertMissingPreviewTTLDaysDefaultsTo30(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/runtime/scheduler-settings/upsert", map[string]any{
+		"autonomy_reminder_interval_ticks":       240,
+		"community_comm_reminder_interval_ticks": 480,
+		"kb_enrollment_reminder_interval_ticks":  480,
+		"kb_voting_reminder_interval_ticks":      120,
+		"cost_alert_notify_cooldown_seconds":     7200,
+		"low_token_alert_cooldown_seconds":       900,
+		"agent_heartbeat_every":                  "10m",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("upsert missing preview_link_ttl_days status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"preview_link_ttl_days":30`)) {
+		t.Fatalf("expected default preview_link_ttl_days=30 in response: %s", w.Body.String())
 	}
 }
 
@@ -3481,6 +3989,9 @@ func TestRuntimeSchedulerSettingsPartialDBPayloadFallsBackMissingFields(t *testi
 	if item.AgentHeartbeatEvery != "10m" {
 		t.Fatalf("heartbeat normalization = %q, want 10m", item.AgentHeartbeatEvery)
 	}
+	if item.PreviewLinkTTLDays != 30 {
+		t.Fatalf("preview link ttl fallback = %d, want 30", item.PreviewLinkTTLDays)
+	}
 }
 
 func TestRuntimeSchedulerSettingsUpsertRejectsInvalidInput(t *testing.T) {
@@ -3493,6 +4004,7 @@ func TestRuntimeSchedulerSettingsUpsertRejectsInvalidInput(t *testing.T) {
 		"cost_alert_notify_cooldown_seconds":     10,
 		"low_token_alert_cooldown_seconds":       10,
 		"agent_heartbeat_every":                  "bad",
+		"preview_link_ttl_days":                  0,
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid runtime scheduler settings status=%d body=%s", w.Code, w.Body.String())
@@ -3517,6 +4029,7 @@ func TestLowTokenAlertCooldownFromRuntimeSchedulerSettings(t *testing.T) {
 		"cost_alert_notify_cooldown_seconds":     600,
 		"low_token_alert_cooldown_seconds":       3600,
 		"agent_heartbeat_every":                  "0m",
+		"preview_link_ttl_days":                  30,
 	})
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("upsert runtime scheduler settings status=%d body=%s", w.Code, w.Body.String())

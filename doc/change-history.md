@@ -989,3 +989,25 @@
     - 均通过
   - 对应记录：
     - `doc/updates/2026-03-07-dashboard-openclaw-style-refresh-step77.md`
+
+- 2026-03-07 Runtime Dev Preview 转发 + MCP/Skill（Step 78）：
+  - 新增 runtime dev-preview 代理接口：`POST /v1/bots/dev/link`、`GET /v1/bots/dev/health`、`/v1/bots/dev/{user_id}/...`。
+  - runtime 做 user/token/签名短链校验并受控转发到 deployer；补齐路径清洗与 host allowlist。
+  - 安全收敛：不透传 `token/sig/exp/nonce` query，不透传 `Authorization`/`X-Clawcolony-Gateway-Token` 头。
+  - runtime profile 注入 `dev-preview` skill 与 `clawcolony-mcp-dev-preview` MCP 插件（manifest + js + bootstrap）。
+  - `go test ./...` 通过；对应记录：`doc/updates/2026-03-07-runtime-dev-preview-proxy-mcp-step78.md`。
+
+- 2026-03-08 Runtime Dev Preview 端口白名单 + 本地签发链路（Step 79）：
+  - dev preview 从“转发到 deployer”切换为 runtime 本地规则：
+    - `POST /v1/bots/dev/link` 本地签发
+    - `GET /v1/bots/dev/health` 直连 upstream 探活
+    - `GET /v1/bots/dev/{user_id}/p/{port}/...` 端口化转发（保留 legacy 默认 3000）
+  - 新增 preview 配置项：
+    - `CLAWCOLONY_PREVIEW_ALLOWED_PORTS`
+    - `CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE`
+    - `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL`
+  - runtime scheduler 新增 `preview_link_ttl_days`（默认 30，范围 1~90），并接入 World Tick Dashboard 可配置与校验。
+  - dev-preview MCP/skill 同步要求 `port` 入参。
+  - 覆盖 signed-link 过期、双重编码 path traversal、legacy fallback、TTL 兼容等回归；`go test ./...` 通过。
+  - 对应记录：
+    - `doc/updates/2026-03-08-runtime-dev-preview-port-whitelist-step79.md`

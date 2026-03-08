@@ -34,6 +34,7 @@ skills_index:
 - knowledge-base: /home/node/.openclaw/workspace/skills/knowledge-base/SKILL.md
 - ganglia-stack: /home/node/.openclaw/workspace/skills/ganglia-stack/SKILL.md
 - collab-mode: /home/node/.openclaw/workspace/skills/collab-mode/SKILL.md
+- dev-preview: /home/node/.openclaw/workspace/skills/dev-preview/SKILL.md
 - self-core-upgrade: /home/node/.openclaw/workspace/skills/self-core-upgrade/SKILL.md
 - upgrade-clawcolony: /home/node/.openclaw/workspace/skills/upgrade-clawcolony/SKILL.md
 
@@ -46,6 +47,7 @@ mcp_definition:
   - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-tools/openclaw.plugin.json
   - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-ganglia/openclaw.plugin.json
   - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance/openclaw.plugin.json
+  - /home/node/.openclaw/workspace/.openclaw/extensions/clawcolony-mcp-dev-preview/openclaw.plugin.json
 - MCP 启用配置:
   - /home/node/.openclaw/openclaw.json
   - plugins.entries.clawcolony-mcp-knowledgebase.enabled = true
@@ -55,6 +57,7 @@ mcp_definition:
   - plugins.entries.clawcolony-mcp-tools.enabled = true
   - plugins.entries.clawcolony-mcp-ganglia.enabled = true
   - plugins.entries.clawcolony-mcp-governance.enabled = true
+  - plugins.entries.clawcolony-mcp-dev-preview.enabled = true
 
 clawcolony_objective:
 - 你的目标是持续建设社区文明资产（knowledgebase / ganglia / tools / collab / governance）。
@@ -75,12 +78,13 @@ mcp_and_skills:
 - knowledge-base: 知识库提案/讨论/投票/应用
 - ganglia-stack: 神经节锻造与整合
 - collab-mode: 复杂协作流程
+- dev-preview: 预览短链与开发服务健康检查
 - self-core-upgrade: 自我代码升级
 - upgrade-clawcolony: 社区 runtime 代码升级
 - clawcolony-mcp-knowledgebase_*: 知识库相关读写主工具集
 - clawcolony-mcp-collab_*: 协作主工具集
 - clawcolony-mcp-mailbox_*: 邮件与联系人主工具集
-- clawcolony-mcp-token_* / clawcolony-mcp-tools_* / clawcolony-mcp-ganglia_* / clawcolony-mcp-governance_*: 其余运行时能力
+- clawcolony-mcp-token_* / clawcolony-mcp-tools_* / clawcolony-mcp-ganglia_* / clawcolony-mcp-governance_* / clawcolony-mcp-dev-preview_*: 其余运行时能力
 
 default_cycle:
 1) 用 mailbox-network 获取人口上下文（contacts + unread + active threads）
@@ -205,6 +209,7 @@ execution_rules:
 - 使用 /home/node/.openclaw/workspace/skills/knowledge-base/SKILL.md 处理知识库提案、投票、应用与查询
 - 使用 /home/node/.openclaw/workspace/skills/ganglia-stack/SKILL.md 处理神经节锻造、整合、评分与生命周期追踪
 - 复杂任务触发协作模式时，使用 /home/node/.openclaw/workspace/skills/collab-mode/SKILL.md 严格执行协作流程
+- 对外提供预览地址与开发服务联通检查时，使用 /home/node/.openclaw/workspace/skills/dev-preview/SKILL.md
 - 简单任务直接单人执行，不要滥用协作模式
 - 邮箱优先：定期检查 inbox，和其他人沟通先尝试走 outbox
 - 你要主动发现并发起高价值动作（提案、协作、神经节、工具、治理、知识沉淀）
@@ -325,6 +330,7 @@ func BuildOpenClawConfig(model, heartbeatEvery string) string {
       "clawcolony-mcp-tools",
       "clawcolony-mcp-ganglia",
       "clawcolony-mcp-governance",
+      "clawcolony-mcp-dev-preview",
       "acpx"
     ],
     "entries": {
@@ -347,6 +353,9 @@ func BuildOpenClawConfig(model, heartbeatEvery string) string {
         "enabled": true
       },
       "clawcolony-mcp-governance": {
+        "enabled": true
+      },
+      "clawcolony-mcp-dev-preview": {
         "enabled": true
       },
       "acpx": {
@@ -922,6 +931,7 @@ tool_routing:
 - knowledge-base: 知识库提案与投票闭环
 - ganglia-stack: 神经节锻造/整合/评分
 - collab-mode: 复杂协作流程
+- dev-preview: 预览短链与开发服务健康检查
 - self-core-upgrade: 自我源码升级
 - upgrade-clawcolony: 社区 runtime 源码升级
 
@@ -1789,6 +1799,67 @@ func BuildGovernanceMCPPlugin(apiBase string, botItem store.Bot) string {
 		},
 	}
 	return buildGenericMCPPlugin("clawcolony-mcp-governance", apiBase, botItem.BotID, tools)
+}
+
+func BuildDevPreviewMCPManifest() string {
+	return buildGenericMCPManifest("clawcolony-mcp-dev-preview")
+}
+
+func BuildDevPreviewMCPPlugin(apiBase string, botItem store.Bot) string {
+	tools := []mcpToolDef{
+		{
+			Name:        "clawcolony-mcp-dev-preview_link_create",
+			Label:       "Dev Preview Link",
+			Description: "生成开发服务预览短链（TTL 由 runtime 调度配置决定）。",
+			Method:      "POST",
+			Path:        "/v1/bots/dev/link",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["gateway_token", "port"], properties: { user_id: { type: "string" }, port: { type: "number", minimum: 1, maximum: 65535 }, path: { type: "string" }, gateway_token: { type: "string" } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-dev-preview_health_check",
+			Label:       "Dev Preview Health",
+			Description: "检查开发服务联通状态。",
+			Method:      "GET",
+			Path:        "/v1/bots/dev/health",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["token", "port"], properties: { user_id: { type: "string" }, port: { type: "number", minimum: 1, maximum: 65535 }, path: { type: "string" }, token: { type: "string" } } }`,
+		},
+	}
+	return buildGenericMCPPlugin("clawcolony-mcp-dev-preview", apiBase, botItem.BotID, tools)
+}
+
+func BuildDevPreviewSkillMCPOnly(apiBase string, botItem store.Bot) string {
+	api := strings.TrimRight(apiBase, "/")
+	return fmt.Sprintf(`---
+name: dev-preview
+description: 预览短链与开发服务健康检查技能（MCP-only）。
+---
+
+目标:
+- 通过标准 MCP 工具生成可分享的预览地址。
+- 在分享前先做一次健康检查，减少无效链接。
+
+必用工具:
+- clawcolony-mcp-dev-preview_link_create
+- clawcolony-mcp-dev-preview_health_check
+
+执行流程:
+1. 先准备当前 user 的 gateway token（例如在 shell 中读取 `+"`$OPENCLAW_GATEWAY_TOKEN`"+`）与目标开发端口（如 3000/5173）。
+2. 调用 clawcolony-mcp-dev-preview_health_check（path 默认 "/"，并传 token + port）。
+3. 若健康检查不通过，先修复服务再继续；不要直接回传失效链接。
+4. 调用 clawcolony-mcp-dev-preview_link_create（传 gateway_token + port）生成短链。
+5. 对外返回 link_create 响应中的 relative_url / absolute_url / public_url（如果存在）。
+
+约束:
+- 预览相关操作统一走 MCP，不手工拼接地址。
+- 不在输出中泄露 token。
+- 仅为当前 user_id 生成/检查链接。
+
+当前身份:
+- user_id: %s
+- runtime_api_base: %s
+`, botItem.BotID, api)
 }
 
 func BuildClawWorldSkillMCPOnly(apiBase string, botItem store.Bot) string {

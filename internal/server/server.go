@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	crand "crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -85,6 +88,7 @@ type Server struct {
 	mailNotifyMu         sync.Mutex
 	mailNotified         map[string]time.Time
 	openclawProxy        *http.Transport
+	previewHealthClient  *http.Client
 	alertNotifyMu        sync.Mutex
 	alertLastSent        map[string]time.Time
 	alertLastAmt         map[string]int64
@@ -164,6 +168,23 @@ type openClawConnStatus struct {
 	LastDisconnectReason string `json:"last_disconnect_reason,omitempty"`
 	LastDisconnectCode   int    `json:"last_disconnect_code,omitempty"`
 	Detail               string `json:"detail,omitempty"`
+}
+
+type botDevLinkRequest struct {
+	UserID       string `json:"user_id"`
+	Port         int    `json:"port,omitempty"`
+	Path         string `json:"path,omitempty"`
+	GatewayToken string `json:"gateway_token,omitempty"`
+}
+
+type botDevHealthItem struct {
+	UserID     string `json:"user_id"`
+	Port       int    `json:"port"`
+	Path       string `json:"path"`
+	OK         bool   `json:"ok"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Error      string `json:"error,omitempty"`
+	CheckedAt  string `json:"checked_at"`
 }
 
 type chatMessage struct {
@@ -287,6 +308,7 @@ type runtimeSchedulerSettings struct {
 	CostAlertNotifyCooldownSeconds     int64  `json:"cost_alert_notify_cooldown_seconds"`
 	LowTokenAlertCooldownSeconds       int64  `json:"low_token_alert_cooldown_seconds"`
 	AgentHeartbeatEvery                string `json:"agent_heartbeat_every"`
+	PreviewLinkTTLDays                 int64  `json:"preview_link_ttl_days"`
 }
 
 const piTaskClaimCooldown = time.Minute
@@ -301,8 +323,18 @@ const runtimeSchedulerMaxIntervalTicks int64 = 10080
 const runtimeSchedulerMinCooldownSeconds int64 = 30
 const runtimeSchedulerMaxCooldownSeconds int64 = 86400
 const runtimeSchedulerMaxHeartbeat = 24 * time.Hour
+const runtimeSchedulerDefaultPreviewLinkTTLDays int64 = 30
+const runtimeSchedulerMinPreviewLinkTTLDays int64 = 1
+const runtimeSchedulerMaxPreviewLinkTTLDays int64 = 90
 const defaultCostAlertCooldownSeconds int64 = int64((10 * time.Minute) / time.Second)
 const defaultAgentHeartbeatEvery = "10m"
+const defaultPreviewAllowedPorts = "3000,3001,4173,5173,8000,8080,8787"
+const defaultPreviewUpstreamTemplate = "http://{{user_id}}.preview.freewill.svc.cluster.local:{{port}}"
+const devProxyHealthTimeout = 12 * time.Second
+const devProxyParamToken = "token"
+const devProxySignedParamSig = "sig"
+const devProxySignedParamExp = "exp"
+const devProxySignedParamNonce = "nonce"
 
 var managementOnlyRouteSet = map[string]struct{}{}
 
@@ -389,6 +421,10 @@ func New(cfg config.Config, st store.Store, bots *bot.Manager) *Server {
 			ExpectContinueTimeout: 1 * time.Second,
 			ResponseHeaderTimeout: 20 * time.Second,
 		},
+	}
+	s.previewHealthClient = &http.Client{
+		Transport: s.openclawProxy,
+		Timeout:   devProxyHealthTimeout,
 	}
 	s.toolSandboxExec = s.execToolInSandbox
 	if rc, kc, err := newKubeClient(); err == nil {
@@ -1054,6 +1090,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/monitor/agents/timeline", s.handleMonitorAgentsTimeline)
 	s.mux.HandleFunc("/v1/monitor/agents/timeline/all", s.handleMonitorAgentsTimelineAll)
 	s.mux.HandleFunc("/v1/monitor/meta", s.handleMonitorMeta)
+	s.mux.HandleFunc("/v1/bots/dev/link", s.handleBotDevLinkProxy)
+	s.mux.HandleFunc("/v1/bots/dev/health", s.handleBotDevHealth)
+	s.mux.HandleFunc("/v1/bots/dev/", s.handleBotDevProxyForward)
 	s.mux.HandleFunc("/v1/bots/openclaw/", s.handleOpenClawProxy)
 	s.mux.HandleFunc("/v1/bots/openclaw/status", s.handleOpenClawStatus)
 	s.mux.HandleFunc("/v1/system/request-logs", s.handleRequestLogs)
@@ -1835,6 +1874,7 @@ func (s *Server) defaultRuntimeSchedulerSettings() runtimeSchedulerSettings {
 		CostAlertNotifyCooldownSeconds:     defaultCostAlertCooldownSeconds,
 		LowTokenAlertCooldownSeconds:       0,
 		AgentHeartbeatEvery:                defaultAgentHeartbeatEvery,
+		PreviewLinkTTLDays:                 runtimeSchedulerDefaultPreviewLinkTTLDays,
 	}
 }
 
@@ -1872,6 +1912,9 @@ func normalizeRuntimeSchedulerSettings(in, fallback runtimeSchedulerSettings) ru
 		if d, err := time.ParseDuration(hb); err == nil && d >= 0 && d <= runtimeSchedulerMaxHeartbeat {
 			out.AgentHeartbeatEvery = bot.NormalizeHeartbeatEvery(hb)
 		}
+	}
+	if in.PreviewLinkTTLDays > 0 {
+		out.PreviewLinkTTLDays = clampInt64(in.PreviewLinkTTLDays, runtimeSchedulerMinPreviewLinkTTLDays, runtimeSchedulerMaxPreviewLinkTTLDays)
 	}
 	return out
 }
@@ -1929,6 +1972,9 @@ func validateRuntimeSchedulerSettings(in runtimeSchedulerSettings) error {
 	if d < 0 || d > runtimeSchedulerMaxHeartbeat {
 		return fmt.Errorf("agent_heartbeat_every must be in [0, 24h]")
 	}
+	if in.PreviewLinkTTLDays != 0 && (in.PreviewLinkTTLDays < runtimeSchedulerMinPreviewLinkTTLDays || in.PreviewLinkTTLDays > runtimeSchedulerMaxPreviewLinkTTLDays) {
+		return fmt.Errorf("preview_link_ttl_days must be in [%d, %d]", runtimeSchedulerMinPreviewLinkTTLDays, runtimeSchedulerMaxPreviewLinkTTLDays)
+	}
 	return nil
 }
 
@@ -1982,6 +2028,10 @@ func (s *Server) handleRuntimeSchedulerSettingsUpsert(w http.ResponseWriter, r *
 		return
 	}
 	item.AgentHeartbeatEvery = strings.TrimSpace(item.AgentHeartbeatEvery)
+	// Backward compatibility: old clients may not send this newly added field.
+	if item.PreviewLinkTTLDays == 0 {
+		item.PreviewLinkTTLDays = runtimeSchedulerDefaultPreviewLinkTTLDays
+	}
 	if err := validateRuntimeSchedulerSettings(item); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -3389,6 +3439,7 @@ func runtimeProfileSeedData(profile bot.RuntimeProfile) map[string]string {
 		"KNOWLEDGE_BASE_SKILL":              profile.KnowledgeBaseSkill,
 		"GANGLIA_STACK_SKILL":               profile.GangliaStackSkill,
 		"COLLAB_MODE_SKILL":                 profile.CollabModeSkill,
+		"DEV_PREVIEW_SKILL":                 profile.DevPreviewSkill,
 		"SELF_CORE_UPGRADE_SKILL":           profile.SelfCoreUpgradeSkill,
 		"UPGRADE_CLAWCOLONY_SKILL":          profile.UpgradeClawcolonySkill,
 		"SELF_SOURCE_README":                profile.SelfSourceReadme,
@@ -3408,6 +3459,8 @@ func runtimeProfileSeedData(profile bot.RuntimeProfile) map[string]string {
 		"GANGLIA_MCP_PLUGIN_JS":             profile.GangliaMCPPlugin,
 		"GOVERNANCE_MCP_PLUGIN_MANIFEST":    profile.GovernanceMCPManifest,
 		"GOVERNANCE_MCP_PLUGIN_JS":          profile.GovernanceMCPPlugin,
+		"DEV_PREVIEW_MCP_PLUGIN_MANIFEST":   profile.DevPreviewMCPManifest,
+		"DEV_PREVIEW_MCP_PLUGIN_JS":         profile.DevPreviewMCPPlugin,
 	}
 }
 
@@ -3427,6 +3480,7 @@ var runtimeMCPPluginSeedSpecs = []runtimeMCPPluginSeedSpec{
 	{Dir: "clawcolony-mcp-tools", ManifestSeedKey: "TOOLS_MCP_PLUGIN_MANIFEST", JSSeedKey: "TOOLS_MCP_PLUGIN_JS"},
 	{Dir: "clawcolony-mcp-ganglia", ManifestSeedKey: "GANGLIA_MCP_PLUGIN_MANIFEST", JSSeedKey: "GANGLIA_MCP_PLUGIN_JS"},
 	{Dir: "clawcolony-mcp-governance", ManifestSeedKey: "GOVERNANCE_MCP_PLUGIN_MANIFEST", JSSeedKey: "GOVERNANCE_MCP_PLUGIN_JS"},
+	{Dir: "clawcolony-mcp-dev-preview", ManifestSeedKey: "DEV_PREVIEW_MCP_PLUGIN_MANIFEST", JSSeedKey: "DEV_PREVIEW_MCP_PLUGIN_JS"},
 }
 
 func (s *Server) syncRuntimeProfileToKube(ctx context.Context, userID string, profile bot.RuntimeProfile) error {
@@ -3593,6 +3647,33 @@ func patchWorkspaceBootstrapScriptForMCP(script string) (string, bool) {
           mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance
           cp /seed/GOVERNANCE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance/openclaw.plugin.json
           cp /seed/GOVERNANCE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance/index.js
+`, "\n")
+		if idx := strings.Index(out, marker); idx >= 0 {
+			out = out[:idx] + block + "\n" + out[idx:]
+		} else {
+			out = strings.TrimRight(out, "\n") + "\n" + block + "\n"
+		}
+		changed = true
+	}
+	if !strings.Contains(out, "clawcolony-mcp-dev-preview") {
+		const marker = "          rm -f /state/openclaw/workspace/HEARTBEAT.md"
+		block := strings.TrimPrefix(`
+          mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-dev-preview
+          cp /seed/DEV_PREVIEW_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-dev-preview/openclaw.plugin.json
+          cp /seed/DEV_PREVIEW_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-dev-preview/index.js
+`, "\n")
+		if idx := strings.Index(out, marker); idx >= 0 {
+			out = out[:idx] + block + "\n" + out[idx:]
+		} else {
+			out = strings.TrimRight(out, "\n") + "\n" + block + "\n"
+		}
+		changed = true
+	}
+	if !strings.Contains(out, "/skills/dev-preview/SKILL.md") {
+		const marker = "          rm -f /state/openclaw/workspace/HEARTBEAT.md"
+		block := strings.TrimPrefix(`
+          mkdir -p /state/openclaw/workspace/skills/dev-preview
+          cp /seed/DEV_PREVIEW_SKILL /state/openclaw/workspace/skills/dev-preview/SKILL.md
 `, "\n")
 		if idx := strings.Index(out, marker); idx >= 0 {
 			out = out[:idx] + block + "\n" + out[idx:]
@@ -7802,6 +7883,621 @@ func (s *Server) handleRequestLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
+func joinURLPath(basePath, nextPath string) string {
+	basePath = strings.TrimRight(strings.TrimSpace(basePath), "/")
+	nextPath = "/" + strings.TrimLeft(strings.TrimSpace(nextPath), "/")
+	if basePath == "" {
+		return nextPath
+	}
+	return basePath + nextPath
+}
+
+func sanitizeDevTargetPath(raw string) (string, error) {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return "/", nil
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	unescaped := p
+	for i := 0; i < 3; i++ {
+		next, err := neturl.PathUnescape(unescaped)
+		if err != nil {
+			return "", fmt.Errorf("invalid path")
+		}
+		if next == unescaped {
+			break
+		}
+		unescaped = next
+	}
+	for _, seg := range strings.Split(strings.ReplaceAll(unescaped, "\\", "/"), "/") {
+		if strings.TrimSpace(seg) == ".." {
+			return "", fmt.Errorf("path traversal is not allowed")
+		}
+	}
+	cleaned := path.Clean(unescaped)
+	if cleaned == "." || cleaned == "" {
+		cleaned = "/"
+	}
+	if !strings.HasPrefix(cleaned, "/") {
+		cleaned = "/" + cleaned
+	}
+	return cleaned, nil
+}
+
+func secureStringEqual(a, b string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func runtimeDevProxyTokenFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	token := strings.TrimSpace(r.URL.Query().Get(devProxyParamToken))
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	const bearer = "Bearer "
+	if len(auth) > len(bearer) && strings.EqualFold(auth[:len(bearer)], bearer) {
+		token = strings.TrimSpace(auth[len(bearer):])
+	}
+	if strings.TrimSpace(token) == "" {
+		token = strings.TrimSpace(r.Header.Get("X-Clawcolony-Gateway-Token"))
+	}
+	return strings.TrimSpace(token)
+}
+
+func hasValidRuntimeDevProxyToken(r *http.Request, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return false
+	}
+	return secureStringEqual(runtimeDevProxyTokenFromRequest(r), expected)
+}
+
+func runtimeDevProxySanitizedRawQuery(q neturl.Values) string {
+	if len(q) == 0 {
+		return ""
+	}
+	cp := neturl.Values{}
+	for key, values := range q {
+		k := strings.TrimSpace(key)
+		if k == "" {
+			continue
+		}
+		switch k {
+		case devProxyParamToken, devProxySignedParamSig, devProxySignedParamExp, devProxySignedParamNonce:
+			continue
+		}
+		for _, v := range values {
+			cp.Add(k, v)
+		}
+	}
+	return cp.Encode()
+}
+
+func normalizeDevLinkTarget(raw string) (string, string, error) {
+	src := strings.TrimSpace(raw)
+	if src == "" {
+		return "/", "", nil
+	}
+	lower := strings.ToLower(src)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return "", "", fmt.Errorf("path must be relative")
+	}
+	if !strings.HasPrefix(src, "/") {
+		src = "/" + src
+	}
+	u, err := neturl.ParseRequestURI(src)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	targetPath, err := sanitizeDevTargetPath(u.EscapedPath())
+	if err != nil {
+		return "", "", err
+	}
+	return targetPath, runtimeDevProxySanitizedRawQuery(u.Query()), nil
+}
+
+func parseDevPreviewAllowedPorts(raw string) []int {
+	parse := func(v string) []int {
+		out := []int{}
+		seen := map[int]struct{}{}
+		for _, part := range strings.Split(v, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil || n <= 0 || n > 65535 {
+				continue
+			}
+			if _, ok := seen[n]; ok {
+				continue
+			}
+			seen[n] = struct{}{}
+			out = append(out, n)
+		}
+		sort.Ints(out)
+		return out
+	}
+	out := parse(raw)
+	if len(out) > 0 {
+		return out
+	}
+	return parse(defaultPreviewAllowedPorts)
+}
+
+func (s *Server) devPreviewAllowedPorts() []int {
+	raw := strings.TrimSpace(s.cfg.PreviewAllowedPorts)
+	if raw == "" {
+		raw = defaultPreviewAllowedPorts
+	}
+	return parseDevPreviewAllowedPorts(raw)
+}
+
+func isPortAllowed(allowed []int, port int) bool {
+	for _, p := range allowed {
+		if p == port {
+			return true
+		}
+	}
+	return false
+}
+
+func allowedPortsText(allowed []int) string {
+	if len(allowed) == 0 {
+		return defaultPreviewAllowedPorts
+	}
+	parts := make([]string, 0, len(allowed))
+	for _, p := range allowed {
+		parts = append(parts, strconv.Itoa(p))
+	}
+	return strings.Join(parts, ",")
+}
+
+func parsePreviewPort(raw string, fallback int) (int, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return fallback, nil
+	}
+	port, err := strconv.Atoi(v)
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, fmt.Errorf("port must be an integer in [1, 65535]")
+	}
+	return port, nil
+}
+
+func runtimeDevProxyRoutePath(userID string, port int, targetPath string) string {
+	uid := neturl.PathEscape(strings.TrimSpace(userID))
+	base := fmt.Sprintf("/v1/bots/dev/%s/p/%d", uid, port)
+	if strings.TrimSpace(targetPath) == "" || targetPath == "/" {
+		return base + "/"
+	}
+	return base + "/" + strings.TrimPrefix(targetPath, "/")
+}
+
+func requestScheme(r *http.Request) string {
+	if r != nil && (r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")) {
+		return "https"
+	}
+	return "http"
+}
+
+func absoluteURLFromRequest(r *http.Request, relativePath string) string {
+	if r == nil || strings.TrimSpace(r.Host) == "" {
+		return relativePath
+	}
+	return fmt.Sprintf("%s://%s%s", requestScheme(r), r.Host, relativePath)
+}
+
+func resolvePublicURL(base, relativePath string) string {
+	trimmed := strings.TrimSpace(base)
+	if trimmed == "" {
+		return ""
+	}
+	baseURL, err := neturl.Parse(trimmed)
+	if err != nil || strings.TrimSpace(baseURL.Scheme) == "" || strings.TrimSpace(baseURL.Host) == "" {
+		return ""
+	}
+	relURL, err := neturl.Parse(relativePath)
+	if err != nil {
+		return ""
+	}
+	return baseURL.ResolveReference(relURL).String()
+}
+
+func isSafePreviewTemplateUserID(userID string) bool {
+	if strings.TrimSpace(userID) == "" {
+		return false
+	}
+	for _, r := range userID {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) previewUpstreamURL(userID string, port int) (*neturl.URL, error) {
+	uid := strings.TrimSpace(userID)
+	if !isSafePreviewTemplateUserID(uid) {
+		return nil, fmt.Errorf("invalid user_id for preview routing")
+	}
+	tpl := strings.TrimSpace(s.cfg.PreviewUpstreamTemplate)
+	if tpl == "" {
+		tpl = defaultPreviewUpstreamTemplate
+	}
+	raw := strings.ReplaceAll(tpl, "{{user_id}}", uid)
+	raw = strings.ReplaceAll(raw, "{{port}}", strconv.Itoa(port))
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid preview upstream template: %w", err)
+	}
+	if strings.TrimSpace(u.Scheme) == "" || strings.TrimSpace(u.Host) == "" {
+		return nil, fmt.Errorf("invalid preview upstream template: missing scheme/host")
+	}
+	return u, nil
+}
+
+func (s *Server) previewLinkTTLDays(ctx context.Context) int64 {
+	item, _, _ := s.getRuntimeSchedulerSettings(ctx)
+	if item.PreviewLinkTTLDays <= 0 {
+		return runtimeSchedulerDefaultPreviewLinkTTLDays
+	}
+	return clampInt64(item.PreviewLinkTTLDays, runtimeSchedulerMinPreviewLinkTTLDays, runtimeSchedulerMaxPreviewLinkTTLDays)
+}
+
+func randomRuntimeDevProxyNonce() (string, error) {
+	buf := make([]byte, 12)
+	if _, err := crand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func runtimeDevProxySignatureInput(userID string, port int, targetPath, targetQuery string, expUnix int64, nonce string) string {
+	parts := []string{
+		strings.TrimSpace(userID),
+		strconv.Itoa(port),
+		strings.TrimSpace(targetPath),
+		strings.TrimSpace(targetQuery),
+		strconv.FormatInt(expUnix, 10),
+		strings.TrimSpace(nonce),
+	}
+	return strings.Join(parts, "\n")
+}
+
+func runtimeDevProxyComputeSignature(signingKey, userID string, port int, targetPath, targetQuery string, expUnix int64, nonce string) string {
+	mac := hmac.New(sha256.New, []byte(strings.TrimSpace(signingKey)))
+	_, _ = mac.Write([]byte(runtimeDevProxySignatureInput(userID, port, targetPath, targetQuery, expUnix, nonce)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Server) hasValidRuntimeDevProxySignedLink(r *http.Request, userID string, port int, targetPath, targetQuery string) bool {
+	if r == nil {
+		return false
+	}
+	signingKey := strings.TrimSpace(s.cfg.InternalSyncToken)
+	if signingKey == "" {
+		return false
+	}
+	query := r.URL.Query()
+	sig := strings.TrimSpace(query.Get(devProxySignedParamSig))
+	expRaw := strings.TrimSpace(query.Get(devProxySignedParamExp))
+	nonce := strings.TrimSpace(query.Get(devProxySignedParamNonce))
+	if sig == "" || expRaw == "" || nonce == "" {
+		return false
+	}
+	expUnix, err := strconv.ParseInt(expRaw, 10, 64)
+	if err != nil || expUnix <= 0 {
+		return false
+	}
+	nowUnix := time.Now().UTC().Unix()
+	if expUnix < nowUnix {
+		return false
+	}
+	maxFuture := int64(runtimeSchedulerMaxPreviewLinkTTLDays*24*60*60) + 300
+	if expUnix > nowUnix+maxFuture {
+		return false
+	}
+	expectedSig := runtimeDevProxyComputeSignature(signingKey, userID, port, targetPath, targetQuery, expUnix, nonce)
+	return secureStringEqual(sig, expectedSig)
+}
+
+func (s *Server) handleBotDevLinkProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req botDevLinkRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	if req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if req.Port <= 0 {
+		req.Port = 3000
+	}
+	if req.Port > 65535 {
+		writeError(w, http.StatusBadRequest, "port must be an integer in [1, 65535]")
+		return
+	}
+	allowed := s.devPreviewAllowedPorts()
+	if !isPortAllowed(allowed, req.Port) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("port is not allowed, allowed ports: %s", allowedPortsText(allowed)))
+		return
+	}
+	if _, err := s.store.GetBot(r.Context(), req.UserID); err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	expectedToken := strings.TrimSpace(s.userGatewayToken(r.Context(), req.UserID))
+	if expectedToken == "" {
+		writeError(w, http.StatusServiceUnavailable, "gateway token is not available")
+		return
+	}
+	providedToken := strings.TrimSpace(req.GatewayToken)
+	if providedToken == "" {
+		providedToken = runtimeDevProxyTokenFromRequest(r)
+	}
+	if !secureStringEqual(providedToken, expectedToken) {
+		writeError(w, http.StatusUnauthorized, "invalid or missing gateway token")
+		return
+	}
+	targetPath, targetQuery, err := normalizeDevLinkTarget(req.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	signingKey := strings.TrimSpace(s.cfg.InternalSyncToken)
+	if signingKey == "" {
+		writeError(w, http.StatusServiceUnavailable, "dev link signing is not configured")
+		return
+	}
+	nonce, err := randomRuntimeDevProxyNonce()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate dev link nonce")
+		return
+	}
+	ttlDays := s.previewLinkTTLDays(r.Context())
+	expiresAt := time.Now().UTC().Add(time.Duration(ttlDays) * 24 * time.Hour)
+	expUnix := expiresAt.Unix()
+	sig := runtimeDevProxyComputeSignature(signingKey, req.UserID, req.Port, targetPath, targetQuery, expUnix, nonce)
+	values, err := neturl.ParseQuery(targetQuery)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid query in path")
+		return
+	}
+	values.Set(devProxySignedParamExp, strconv.FormatInt(expUnix, 10))
+	values.Set(devProxySignedParamNonce, nonce)
+	values.Set(devProxySignedParamSig, sig)
+	relative := runtimeDevProxyRoutePath(req.UserID, req.Port, targetPath)
+	if encoded := values.Encode(); encoded != "" {
+		relative += "?" + encoded
+	}
+	item := map[string]any{
+		"user_id":      req.UserID,
+		"port":         req.Port,
+		"path":         targetPath,
+		"relative_url": relative,
+		"absolute_url": absoluteURLFromRequest(r, relative),
+		"expires_at":   expiresAt.Format(time.RFC3339),
+		"ttl_days":     ttlDays,
+	}
+	if publicURL := resolvePublicURL(s.cfg.PreviewPublicBaseURL, relative); publicURL != "" {
+		item["public_url"] = publicURL
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"item": item})
+}
+
+func (s *Server) handleBotDevHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if _, err := s.store.GetBot(r.Context(), userID); err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	expectedToken := strings.TrimSpace(s.userGatewayToken(r.Context(), userID))
+	if expectedToken == "" {
+		writeError(w, http.StatusServiceUnavailable, "gateway token is not available")
+		return
+	}
+	if !hasValidRuntimeDevProxyToken(r, expectedToken) {
+		writeError(w, http.StatusUnauthorized, "invalid or missing gateway token")
+		return
+	}
+	port, err := parsePreviewPort(r.URL.Query().Get("port"), 3000)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	allowed := s.devPreviewAllowedPorts()
+	if !isPortAllowed(allowed, port) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("port is not allowed, allowed ports: %s", allowedPortsText(allowed)))
+		return
+	}
+	targetPath, err := sanitizeDevTargetPath(r.URL.Query().Get("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	backend, err := s.previewUpstreamURL(userID, port)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	checkAt := time.Now().UTC()
+	target := *backend
+	target.Path = joinURLPath(backend.Path, targetPath)
+	target.RawQuery = ""
+	ctx, cancel := context.WithTimeout(r.Context(), devProxyHealthTimeout)
+	defer cancel()
+	upReq, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	upReq.Header.Set("Accept", "*/*")
+	client := s.previewHealthClient
+	if client == nil {
+		client = &http.Client{Transport: s.openclawProxy, Timeout: devProxyHealthTimeout}
+	}
+	resp, err := client.Do(upReq)
+	if err != nil {
+		log.Printf("bot_dev_health_check_failed user_id=%s port=%d path=%s err=%v", userID, port, targetPath, err)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"item": botDevHealthItem{
+				UserID:    userID,
+				Port:      port,
+				Path:      targetPath,
+				OK:        false,
+				Error:     "preview upstream request failed",
+				CheckedAt: checkAt.Format(time.RFC3339),
+			},
+		})
+		return
+	}
+	defer resp.Body.Close()
+	ok := resp.StatusCode >= 200 && resp.StatusCode < 400
+	item := botDevHealthItem{
+		UserID:     userID,
+		Port:       port,
+		Path:       targetPath,
+		OK:         ok,
+		StatusCode: resp.StatusCode,
+		CheckedAt:  checkAt.Format(time.RFC3339),
+	}
+	if !ok {
+		item.Error = resp.Status
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"item": item})
+}
+
+func parseDevProxyForwardRoute(pathRaw string) (string, int, string, error) {
+	base := "/v1/bots/dev/"
+	if !strings.HasPrefix(pathRaw, base) {
+		return "", 0, "", fmt.Errorf("invalid path")
+	}
+	trimmed := strings.TrimPrefix(pathRaw, base)
+	parts := strings.SplitN(trimmed, "/", 2)
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return "", 0, "", fmt.Errorf("user_id is required in path")
+	}
+	userSeg, err := neturl.PathUnescape(parts[0])
+	if err != nil {
+		return "", 0, "", fmt.Errorf("invalid user_id in path")
+	}
+	userID := strings.TrimSpace(userSeg)
+	if userID == "" {
+		return "", 0, "", fmt.Errorf("user_id is required in path")
+	}
+	port := 3000
+	if len(parts) == 1 || strings.TrimSpace(parts[1]) == "" {
+		return userID, port, "/", nil
+	}
+	tail := strings.TrimSpace(parts[1])
+	if strings.HasPrefix(tail, "p/") {
+		rest := strings.TrimPrefix(tail, "p/")
+		pair := strings.SplitN(rest, "/", 2)
+		if strings.TrimSpace(pair[0]) == "" {
+			return "", 0, "", fmt.Errorf("port is required in path")
+		}
+		port, err = strconv.Atoi(strings.TrimSpace(pair[0]))
+		if err != nil || port <= 0 || port > 65535 {
+			return "", 0, "", fmt.Errorf("port must be an integer in [1, 65535]")
+		}
+		if len(pair) == 1 || strings.TrimSpace(pair[1]) == "" {
+			return userID, port, "/", nil
+		}
+		nextPath, err := sanitizeDevTargetPath(pair[1])
+		if err != nil {
+			return "", 0, "", err
+		}
+		return userID, port, nextPath, nil
+	}
+	nextPath, err := sanitizeDevTargetPath(tail)
+	if err != nil {
+		return "", 0, "", err
+	}
+	return userID, port, nextPath, nil
+}
+
+func (s *Server) handleBotDevProxyForward(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	userID, port, targetPath, err := parseDevProxyForwardRoute(r.URL.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	allowed := s.devPreviewAllowedPorts()
+	if !isPortAllowed(allowed, port) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("port is not allowed, allowed ports: %s", allowedPortsText(allowed)))
+		return
+	}
+	if _, err := s.store.GetBot(r.Context(), userID); err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	expectedToken := strings.TrimSpace(s.userGatewayToken(r.Context(), userID))
+	if expectedToken == "" {
+		writeError(w, http.StatusServiceUnavailable, "gateway token is not available")
+		return
+	}
+	targetQuery := runtimeDevProxySanitizedRawQuery(r.URL.Query())
+	if !s.hasValidRuntimeDevProxySignedLink(r, userID, port, targetPath, targetQuery) && !hasValidRuntimeDevProxyToken(r, expectedToken) {
+		writeError(w, http.StatusUnauthorized, "invalid or missing gateway token")
+		return
+	}
+	backend, err := s.previewUpstreamURL(userID, port)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(backend)
+	proxy.Transport = s.openclawProxy
+	proxy.FlushInterval = 100 * time.Millisecond
+	origDirector := proxy.Director
+	reqPath := joinURLPath(backend.Path, targetPath)
+	reqQuery := targetQuery
+	proxy.Director = func(req *http.Request) {
+		incomingHost := req.Host
+		origDirector(req)
+		req.URL.Scheme = backend.Scheme
+		req.URL.Host = backend.Host
+		req.URL.Path = reqPath
+		req.URL.RawQuery = reqQuery
+		req.Host = incomingHost
+		req.Header.Set("X-Forwarded-Host", incomingHost)
+		req.Header.Del("Authorization")
+		req.Header.Del("X-Clawcolony-Gateway-Token")
+	}
+	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, perr error) {
+		log.Printf("bot_dev_proxy_forward_error user_id=%s port=%d err=%v", userID, port, perr)
+		writeError(rw, http.StatusBadGateway, "preview upstream unavailable")
+	}
+	proxy.ServeHTTP(w, r)
+}
+
 func (s *Server) handleOpenClawProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -8022,6 +8718,7 @@ func (s *Server) defaultPromptTemplateMap(_ context.Context, user store.Bot) map
 		bot.TemplateKnowledgeBaseSkill:    bot.BuildKnowledgeBaseSkillMCPOnly(api, user),
 		bot.TemplateGangliaStackSkill:     bot.BuildGangliaStackSkillMCPOnly(api, user),
 		bot.TemplateCollabModeSkill:       bot.BuildCollabModeSkillMCPOnly(api, user),
+		bot.TemplateDevPreviewSkill:       bot.BuildDevPreviewSkillMCPOnly(api, user),
 		bot.TemplateSelfCoreUpgradeSkill:  bot.BuildSelfCoreUpgradeSkill(api, user),
 		bot.TemplateUpgradeClawcolony:     bot.BuildUpgradeClawcolonySkill(api, user),
 		bot.TemplateSelfSourceReadme:      bot.BuildSelfSourceReadme(api, user),
@@ -8405,6 +9102,9 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/bots/nickname/upsert",
 		"GET /v1/bots/logs?user_id=<id>&tail=<n>",
 		"GET /v1/bots/logs/all?tail=<n>&limit=<n>",
+		"POST /v1/bots/dev/link",
+		"GET /v1/bots/dev/health?user_id=<id>&port=<port>&path=/",
+		"GET /v1/bots/dev/<user_id>/p/<port>/",
 		"GET /v1/bots/openclaw/<user_id>/",
 		"GET /v1/bots/openclaw/status?user_id=<id>",
 		"GET /v1/tian-dao/law",

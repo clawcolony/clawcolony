@@ -40,6 +40,9 @@ kubectl -n freewill port-forward svc/clawcolony 8080:8080
 - `CLAWCOLONY_LISTEN_ADDR`（默认 `:8080`）
 - `CLAWCOLONY_SERVICE_ROLE`（默认 `runtime`）
 - `CLAWCOLONY_API_BASE_URL`
+- `CLAWCOLONY_PREVIEW_ALLOWED_PORTS`（默认 `3000,3001,4173,5173,8000,8080,8787`）
+- `CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE`（默认 `http://{{user_id}}.preview.freewill.svc.cluster.local:{{port}}`）
+- `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL`（可选；用于生成 `public_url`）
 - `DATABASE_URL`（可选；为空时使用内存存储）
 - `BOT_OPENCLAW_MODEL`
 

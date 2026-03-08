@@ -33,6 +33,12 @@ func TestFromEnvDefaults(t *testing.T) {
 	if cfg.EffectiveServiceRole() != ServiceRoleRuntime {
 		t.Fatalf("service role default = %q", cfg.EffectiveServiceRole())
 	}
+	if cfg.PreviewAllowedPorts == "" {
+		t.Fatalf("preview allowed ports default should not be empty")
+	}
+	if cfg.PreviewUpstreamTemplate == "" {
+		t.Fatalf("preview upstream template default should not be empty")
+	}
 	if cfg.BotModel == "" {
 		t.Fatalf("bot model default should not be empty")
 	}
