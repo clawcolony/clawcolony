@@ -3429,8 +3429,6 @@ var runtimeMCPPluginSeedSpecs = []runtimeMCPPluginSeedSpec{
 	{Dir: "clawcolony-mcp-governance", ManifestSeedKey: "GOVERNANCE_MCP_PLUGIN_MANIFEST", JSSeedKey: "GOVERNANCE_MCP_PLUGIN_JS"},
 }
 
-const runtimeProfileSyncExecTimeout = 2 * time.Minute
-
 func (s *Server) syncRuntimeProfileToKube(ctx context.Context, userID string, profile bot.RuntimeProfile) error {
 	if s.kubeClient == nil {
 		return nil
@@ -3440,91 +3438,20 @@ func (s *Server) syncRuntimeProfileToKube(ctx context.Context, userID string, pr
 		return fmt.Errorf("invalid workload name for user_id=%s", userID)
 	}
 	cmName := bot.ProfileConfigMapName(workload)
-	if err := s.upsertRuntimeProfileConfigMap(ctx, cmName, profile); err != nil {
-		return err
-	}
-	if err := s.syncRuntimeProfileToRunningPod(ctx, userID); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *Server) syncRuntimeProfileToRunningPod(ctx context.Context, userID string) error {
-	pod, err := s.latestBotPod(ctx, userID)
+	cmChanged, err := s.upsertRuntimeProfileConfigMap(ctx, cmName, profile)
 	if err != nil {
-		if errors.Is(err, errBotPodNotFound) {
-			return nil
-		}
 		return err
 	}
-	execCtx, cancel := context.WithTimeout(ctx, runtimeProfileSyncExecTimeout)
-	defer cancel()
-	_, stderr, execErr := s.execInBotPod(execCtx, pod.Name, runtimeProfileSeedSyncCommand())
-	if execErr != nil {
-		msg := strings.TrimSpace(stderr)
-		if msg != "" {
-			return fmt.Errorf("sync runtime profile files in pod %s: %w: %s", pod.Name, execErr, msg)
-		}
-		return fmt.Errorf("sync runtime profile files in pod %s: %w", pod.Name, execErr)
+	if err := s.patchWorkspaceBootstrapForProfileSync(ctx, workload, cmChanged); err != nil {
+		return err
 	}
 	return nil
 }
 
-func runtimeProfileSeedSyncCommand() []string {
-	const (
-		extensionsRoot = "/state/openclaw/workspace/.openclaw/extensions"
-		tmpRoot        = "/state/openclaw/workspace/.openclaw/extensions.clawcolony-sync-tmp"
-		backupRoot     = "/state/openclaw/workspace/.openclaw/extensions.clawcolony-sync-backup"
-		targetConfig   = "/state/openclaw/openclaw.json"
-		tmpConfig      = "/state/openclaw/openclaw.json.clawcolony-sync-tmp"
-		backupConfig   = "/state/openclaw/openclaw.json.clawcolony-sync-backup"
-	)
-
-	var b strings.Builder
-	b.WriteString("set -eu\n")
-	b.WriteString("cleanup() {\n")
-	b.WriteString("  status=$?\n")
-	b.WriteString("  if [ \"$status\" -ne 0 ]; then\n")
-	b.WriteString(fmt.Sprintf("    if [ ! -d %s ] && [ -d %s ]; then\n", shellSingleQuote(extensionsRoot), shellSingleQuote(backupRoot)))
-	b.WriteString(fmt.Sprintf("      mv %s %s || true\n", shellSingleQuote(backupRoot), shellSingleQuote(extensionsRoot)))
-	b.WriteString("    fi\n")
-	b.WriteString(fmt.Sprintf("    if [ -f %s ]; then\n", shellSingleQuote(backupConfig)))
-	b.WriteString(fmt.Sprintf("      mv %s %s || true\n", shellSingleQuote(backupConfig), shellSingleQuote(targetConfig)))
-	b.WriteString("    fi\n")
-	b.WriteString("  fi\n")
-	b.WriteString(fmt.Sprintf("  rm -rf %s\n", shellSingleQuote(tmpRoot)))
-	b.WriteString(fmt.Sprintf("  rm -f %s\n", shellSingleQuote(tmpConfig)))
-	b.WriteString("  exit \"$status\"\n")
-	b.WriteString("}\n")
-	b.WriteString("trap cleanup EXIT\n")
-	b.WriteString(fmt.Sprintf("rm -rf %s %s\n", shellSingleQuote(tmpRoot), shellSingleQuote(backupRoot)))
-	b.WriteString(fmt.Sprintf("rm -f %s\n", shellSingleQuote(backupConfig)))
-	b.WriteString(fmt.Sprintf("mkdir -p %s\n", shellSingleQuote(tmpRoot)))
-	b.WriteString(fmt.Sprintf("if [ -d %s ]; then cp -a %s/. %s/; fi\n", shellSingleQuote(extensionsRoot), shellSingleQuote(extensionsRoot), shellSingleQuote(tmpRoot)))
-	for _, spec := range runtimeMCPPluginSeedSpecs {
-		targetDir := tmpRoot + "/" + spec.Dir
-		b.WriteString(fmt.Sprintf("mkdir -p %s\n", shellSingleQuote(targetDir)))
-		b.WriteString(fmt.Sprintf("cp %s %s\n", shellSingleQuote("/seed/"+spec.ManifestSeedKey), shellSingleQuote(targetDir+"/openclaw.plugin.json")))
-		b.WriteString(fmt.Sprintf("cp %s %s\n", shellSingleQuote("/seed/"+spec.JSSeedKey), shellSingleQuote(targetDir+"/index.js")))
-	}
-	b.WriteString(fmt.Sprintf("cp %s %s\n", shellSingleQuote("/seed/openclaw.json"), shellSingleQuote(tmpConfig)))
-	b.WriteString(fmt.Sprintf("if [ -d %s ]; then mv %s %s; fi\n", shellSingleQuote(extensionsRoot), shellSingleQuote(extensionsRoot), shellSingleQuote(backupRoot)))
-	b.WriteString(fmt.Sprintf("mv %s %s\n", shellSingleQuote(tmpRoot), shellSingleQuote(extensionsRoot)))
-	b.WriteString(fmt.Sprintf("if [ -f %s ]; then mv %s %s; fi\n", shellSingleQuote(targetConfig), shellSingleQuote(targetConfig), shellSingleQuote(backupConfig)))
-	b.WriteString(fmt.Sprintf("mv %s %s\n", shellSingleQuote(tmpConfig), shellSingleQuote(targetConfig)))
-	b.WriteString(fmt.Sprintf("rm -rf %s\n", shellSingleQuote(backupRoot)))
-	b.WriteString(fmt.Sprintf("rm -f %s\n", shellSingleQuote(backupConfig)))
-	b.WriteString("trap - EXIT\n")
-	return []string{"sh", "-c", b.String()}
-}
-
-func shellSingleQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
-}
-
-func (s *Server) upsertRuntimeProfileConfigMap(ctx context.Context, configMapName string, profile bot.RuntimeProfile) error {
+func (s *Server) upsertRuntimeProfileConfigMap(ctx context.Context, configMapName string, profile bot.RuntimeProfile) (bool, error) {
 	client := s.kubeClient.CoreV1().ConfigMaps(s.cfg.BotNamespace)
 	seedData := runtimeProfileSeedData(profile)
+	changed := false
 	err := retry.OnError(retry.DefaultRetry, func(err error) bool {
 		return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
 	}, func() error {
@@ -3554,6 +3481,7 @@ func (s *Server) upsertRuntimeProfileConfigMap(ctx context.Context, configMapNam
 			if createErr != nil {
 				return createErr
 			}
+			changed = true
 			return nil
 		}
 		if cm.Data == nil {
@@ -3576,12 +3504,104 @@ func (s *Server) upsertRuntimeProfileConfigMap(ctx context.Context, configMapNam
 		if _, err := client.Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
 			return err
 		}
+		changed = true
 		return nil
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return changed, nil
+}
+
+func (s *Server) patchWorkspaceBootstrapForProfileSync(ctx context.Context, deployName string, forceRollout bool) error {
+	client := s.kubeClient.AppsV1().Deployments(s.cfg.BotNamespace)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		dep, err := client.Get(ctx, deployName, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				// Some users may not have a deployment yet; skip rollout patching in that case.
+				return nil
+			}
+			return err
+		}
+		scriptChanged := false
+		for i := range dep.Spec.Template.Spec.InitContainers {
+			c := &dep.Spec.Template.Spec.InitContainers[i]
+			if strings.TrimSpace(c.Name) != "workspace-bootstrap" {
+				continue
+			}
+			if len(c.Command) < 3 || strings.TrimSpace(c.Command[0]) != "sh" || strings.TrimSpace(c.Command[1]) != "-c" {
+				continue
+			}
+			nextScript, changed := patchWorkspaceBootstrapScriptForMCP(c.Command[2])
+			if changed {
+				c.Command[2] = nextScript
+				scriptChanged = true
+			}
+		}
+		if !scriptChanged && !forceRollout {
+			return nil
+		}
+		if dep.Spec.Template.Annotations == nil {
+			dep.Spec.Template.Annotations = map[string]string{}
+		}
+		if forceRollout && !scriptChanged {
+			// Force rollout so init container recopies seed files to workspace/state.
+			dep.Spec.Template.Annotations["clawcolony.runtime/profile-sync-at"] = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		_, err = client.Update(ctx, dep, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func patchWorkspaceBootstrapScriptForMCP(script string) (string, bool) {
+	src := strings.TrimSpace(script)
+	if src == "" {
+		return script, false
+	}
+	out := script
+	changed := false
+
+	const guardedOpenClawConfigCopy = "[ -f /state/openclaw/openclaw.json ] || cp /seed/openclaw.json /state/openclaw/openclaw.json"
+	const unconditionalOpenClawConfigCopy = "cp /seed/openclaw.json /state/openclaw/openclaw.json"
+	if strings.Contains(out, guardedOpenClawConfigCopy) {
+		out = strings.ReplaceAll(out, guardedOpenClawConfigCopy, unconditionalOpenClawConfigCopy)
+		changed = true
+	}
+
+	if !strings.Contains(out, "clawcolony-mcp-collab") {
+		const marker = "          rm -f /state/openclaw/workspace/HEARTBEAT.md"
+		block := strings.TrimPrefix(`
+          mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase
+          cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/openclaw.plugin.json
+          cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/index.js
+          mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab
+          cp /seed/COLLAB_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab/openclaw.plugin.json
+          cp /seed/COLLAB_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab/index.js
+          mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-mailbox
+          cp /seed/MAILBOX_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-mailbox/openclaw.plugin.json
+          cp /seed/MAILBOX_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-mailbox/index.js
+          mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-token
+          cp /seed/TOKEN_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-token/openclaw.plugin.json
+          cp /seed/TOKEN_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-token/index.js
+          mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-tools
+          cp /seed/TOOLS_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-tools/openclaw.plugin.json
+          cp /seed/TOOLS_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-tools/index.js
+          mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-ganglia
+          cp /seed/GANGLIA_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-ganglia/openclaw.plugin.json
+          cp /seed/GANGLIA_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-ganglia/index.js
+          mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance
+          cp /seed/GOVERNANCE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance/openclaw.plugin.json
+          cp /seed/GOVERNANCE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance/index.js
+`, "\n")
+		if idx := strings.Index(out, marker); idx >= 0 {
+			out = out[:idx] + block + "\n" + out[idx:]
+		} else {
+			out = strings.TrimRight(out, "\n") + "\n" + block + "\n"
+		}
+		changed = true
+	}
+	return out, changed
 }
 
 func (s *Server) handleTokenAccounts(w http.ResponseWriter, r *http.Request) {
