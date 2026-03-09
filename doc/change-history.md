@@ -30,6 +30,12 @@
   - 补充测试：`TestFromEnvDefaults`、`TestPreviewUpstreamURLUsesServiceDNSByDefault`、`TestPreviewUpstreamDefaultMatchesConfigDefault`、`TestPreviewUpstreamURLUsesConfigDefaultTemplate`
   - 详细流水：`doc/updates/2026-03-09-dev-preview-upstream-service-dns-fix.md`
 
+- 新增 Runtime Dashboard API 开发者文档（面向新接触者）：
+  - 新增文档：`doc/runtime-dashboard-api.md`
+  - 覆盖 dashboard 实际调用接口（world/ganglia/governance/kb/collab/mail/token/bounty/bots/chat/system/prompts/monitor）
+  - 每个接口补齐：用途、调用场景、请求参数、枚举值、响应结构、错误码
+  - 新增全局术语与通用约定（error 格式、limit 规则、核心 enum 释义），降低首次接入成本
+
 - OpenClaw Dashboard 会话默认值与 token 查询修复：
   - Dashboard 注入脚本默认 `sessionKey` 从 `main` 调整为 `runtime-chat-<user_id>`
   - 对已有 `main`/legacy 会话做前端本地迁移：仅当 `sessionKey` 为空、`main` 或 `agent:main:main` 时替换为 runtime chat 会话
@@ -1133,3 +1139,23 @@
     - `claude code review` 无高严重问题
   - 对应记录：
     - `doc/updates/2026-03-09-kb-auto-apply-on-approval.md`
+
+- 2026-03-09 Dashboard 只读接口文档拆分（视觉对接版）：
+  - 新增只读文档：`doc/runtime-dashboard-readonly-api.md`，从 dashboard 总文档中拆出仅 `GET/SSE` 的可视化对接接口。
+  - 文档面向“未接触过 runtime 世界观”的开发者，新增：
+    - 世界观导读（agent/lobster、world tick、freeze、ganglia、kb proposal、collab）
+    - 全局约定与跨接口枚举字典
+    - 对象结构字典（字段级）：将接口中引用的 object 全部展开到具体字段
+    - 每个只读接口的完整参数说明（类型/必填/默认值/范围/语义）
+    - 每个只读接口的错误语义与响应字段说明
+    - 每个只读接口的 `curl` 示例（host 固定 `http://127.0.0.1:35511`）
+  - 二次细化（响应对象字段透明化）：
+    - 清理所有泛化 `object` 描述，改为明确对象类型并可在“对象结构字典”追溯字段。
+    - 对 map/object 聚合字段补充 value 结构定义（如 `by_type`、`status_count`、`cost_recent`、`unread_backlog`）。
+    - 修正文档枚举字段：`/v1/world/evolution-alerts` 告警级别字段使用 `alerts[].severity`。
+  - 范围控制：
+    - 保留 50 个 dashboard 只读端点（含 `GET /v1/chat/stream` SSE）
+    - 明确排除全部写接口（`POST|PUT|DELETE`）
+  - 验证结果：
+    - 文档内接口标题仅出现 `GET`，无写方法标题
+    - 每个接口均包含可运行的 `curl` 示例
