@@ -2085,6 +2085,10 @@ func (s *PostgresStore) CreateKBProposal(ctx context.Context, proposal KBProposa
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC()
+	var discussionDeadlineArg any
+	if proposal.DiscussionDeadlineAt != nil {
+		discussionDeadlineArg = nullIfZeroTime(*proposal.DiscussionDeadlineAt)
+	}
 
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO kb_proposals(
@@ -2096,10 +2100,10 @@ func (s *PostgresStore) CreateKBProposal(ctx context.Context, proposal KBProposa
 			$1, $2, $3, $4, $5, $6,
 			0, 0,
 			0, 0, 0, 0, 0, '',
-			$7, $7, NULL, NULL, NULL, NULL
+			$7, $7, $8, NULL, NULL, NULL
 		)
 		RETURNING id, created_at, updated_at
-	`, proposal.ProposerUserID, proposal.Title, proposal.Reason, proposal.Status, proposal.VoteThresholdPct, proposal.VoteWindowSeconds, now).Scan(
+	`, proposal.ProposerUserID, proposal.Title, proposal.Reason, proposal.Status, proposal.VoteThresholdPct, proposal.VoteWindowSeconds, now, discussionDeadlineArg).Scan(
 		&proposal.ID, &proposal.CreatedAt, &proposal.UpdatedAt,
 	)
 	if err != nil {
@@ -2632,12 +2636,26 @@ func (s *PostgresStore) ApplyKBProposal(ctx context.Context, proposalID int64, a
 	}
 	defer tx.Rollback()
 
+	var proposalStatus string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status
+		FROM kb_proposals
+		WHERE id = $1
+		FOR UPDATE
+	`, proposalID).Scan(&proposalStatus); err != nil {
+		return KBEntry{}, KBProposal{}, err
+	}
+	if strings.ToLower(strings.TrimSpace(proposalStatus)) != "approved" {
+		return KBEntry{}, KBProposal{}, fmt.Errorf("proposal is not approved")
+	}
+
 	var change KBProposalChange
 	var target sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT id, proposal_id, op_type, target_entry_id, section, title, old_content, new_content, diff_text
 		FROM kb_proposal_changes
 		WHERE proposal_id = $1
+		FOR UPDATE
 	`, proposalID).Scan(
 		&change.ID, &change.ProposalID, &change.OpType, &target, &change.Section, &change.Title, &change.OldContent, &change.NewContent, &change.DiffText,
 	); err != nil {

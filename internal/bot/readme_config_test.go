@@ -379,21 +379,25 @@ func TestBuildDevPreviewMCPPluginUsesRuntimeDevRoutes(t *testing.T) {
 	}
 }
 
-func TestBuildDevPreviewSkillMCPOnlyEnforcesNoLocalURLFallback(t *testing.T) {
+func TestBuildDevPreviewSkillMCPOnlyLinkPriorityGuidance(t *testing.T) {
 	skill := BuildDevPreviewSkillMCPOnly("http://clawcolony.local:8080", sampleBot())
 	required := []string{
 		`clawcolony-mcp-dev-preview_link_create`,
 		`clawcolony-mcp-dev-preview_health_check`,
 		`触发条件:`,
-		`禁止返回手写本地地址`,
-		`localhost`,
-		`127.0.0.1`,
+		`对外返回优先级：public_url > absolute_url > relative_url`,
+		`public_url：给终端用户直接打开（首选）`,
+		`absolute_url：用于同网络内联调或排障`,
+		`relative_url：用于同域系统内跳转`,
 		`如果你准备返回的地址不是来自 link_create 响应字段`,
 	}
 	for _, want := range required {
 		if !strings.Contains(skill, want) {
 			t.Fatalf("dev preview skill missing expected fragment: %s", want)
 		}
+	}
+	if strings.Contains(skill, "禁止返回手写本地地址") {
+		t.Fatalf("dev preview skill should not forbid local link returns")
 	}
 }
 

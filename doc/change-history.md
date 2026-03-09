@@ -5,6 +5,19 @@
 
 ## 2026-03-09
 
+- Dev Preview skill 放宽本地地址返回约束：
+  - 移除 “禁止返回手写本地地址 / *.svc.cluster.local” 文案
+  - 保留 `public_url > absolute_url > relative_url` 返回优先级与字段用途说明
+  - 测试更新为 `TestBuildDevPreviewSkillMCPOnlyLinkPriorityGuidance`
+  - 详细流水：`doc/updates/2026-03-09-dev-preview-skill-remove-local-link-ban.md`
+
+- Dev Preview 链接对外返回优先级修复：
+  - agent 规则明确 `public_url > absolute_url > relative_url`
+  - 新增用途说明：`public_url` 面向终端用户，`absolute_url` 面向同网排障，`relative_url` 面向同域跳转
+  - 明确禁止向终端用户返回 `*.svc.cluster.local` 与本地环回地址
+  - 新增测试：`TestBotDevLinkProxyIncludesPublicURLWhenConfigured`
+  - 详细流水：`doc/updates/2026-03-09-dev-preview-public-url-priority.md`
+
 - Dev Preview upstream 默认域名修复（Service DNS）：
   - 默认模板从 `http://{{user_id}}.preview.freewill.svc.cluster.local:{{port}}` 调整为 `http://{{user_id}}.freewill.svc.cluster.local:{{port}}`
   - 同步更新 runtime config / server fallback / k8s deployment / README，避免配置漂移
@@ -1083,3 +1096,34 @@
     - `go test ./...` 通过
   - 对应记录：
     - `doc/updates/2026-03-08-world-freeze-rescue-dashboard-step80.md`
+
+- 2026-03-08 KB Proposal 截止时间持久化 + 旧数据自动收敛修复（Step 81）：
+  - 修复 Postgres `CreateKBProposal` 漏写 `discussion_deadline_at`（此前被写成 `NULL`）。
+  - `kbAutoProgressDiscussing` 对历史 `discussion_deadline_at=NULL` 提案不再跳过，改为自动收敛：
+    - 有报名则自动进入投票；
+    - 无报名则自动拒绝。
+  - 新增每 tick 批量保护（legacy nil-deadline 最多处理 20 条）并输出处理/延后日志。
+  - 新增回归测试：
+    - `TestKBAutoProgressDiscussingLegacyNilDeadlineStartsVote`
+  - 验证结果：
+    - `go test ./...` 通过
+    - `claude code review` 无高严重问题
+  - 对应记录：
+    - `doc/updates/2026-03-08-kb-proposal-deadline-persistence-and-legacy-autoprogress-fix.md`
+
+- 2026-03-09 KB Proposal 通过后自动 Apply（Step 82）：
+  - 自动化补齐 `approved -> applied`：
+    - 在投票收敛逻辑 `closeKBProposalByStats` 中，`approved` 结果会立即自动调用 apply 并广播更新。
+    - 覆盖“全员投票提前收敛”与“投票截止定时收敛”两条路径。
+  - `POST /v1/kb/proposals/apply` 改为幂等：
+    - 已 `applied` 的提案返回 `202` + `already_applied=true`，避免自动 apply 后手动补调报错。
+  - 自动 apply 失败补偿：
+    - 给 proposer 发送 `[ACTION:APPLY]` 提醒，引导手动 apply。
+  - 测试覆盖：
+    - 更新 `TestKBProposalApproveAndApply`（验证自动 apply 与接口幂等）
+    - 新增 `TestKBAutoApplyAfterVotingDeadlineFinalize`（验证截止收敛自动 apply）
+  - 验证结果：
+    - `go test ./...` 通过
+    - `claude code review` 无高严重问题
+  - 对应记录：
+    - `doc/updates/2026-03-09-kb-auto-apply-on-approval.md`

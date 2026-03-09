@@ -417,6 +417,59 @@ func TestBotDevLinkProxyCreatesSignedRuntimeLink(t *testing.T) {
 	}
 }
 
+func TestBotDevLinkProxyIncludesPublicURLWhenConfigured(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "runtime-sync-token"
+	srv.cfg.PreviewAllowedPorts = "3000"
+	srv.cfg.PreviewPublicBaseURL = "https://preview.example.com"
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-public",
+		Name:        "user-dev-public",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-public",
+		GatewayToken: "gw-dev-public",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/dev/link", map[string]any{
+		"user_id":       "user-dev-public",
+		"port":          3000,
+		"path":          "/",
+		"gateway_token": "gw-dev-public",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	var payload struct {
+		Item struct {
+			RelativeURL string `json:"relative_url"`
+			AbsoluteURL string `json:"absolute_url"`
+			PublicURL   string `json:"public_url"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Item.RelativeURL == "" {
+		t.Fatalf("relative_url should not be empty")
+	}
+	if payload.Item.AbsoluteURL == "" || !strings.Contains(payload.Item.AbsoluteURL, payload.Item.RelativeURL) {
+		t.Fatalf("unexpected absolute_url=%q relative_url=%q", payload.Item.AbsoluteURL, payload.Item.RelativeURL)
+	}
+	wantPublic := "https://preview.example.com" + payload.Item.RelativeURL
+	if payload.Item.PublicURL != wantPublic {
+		t.Fatalf("public_url=%q, want=%q", payload.Item.PublicURL, wantPublic)
+	}
+}
+
 func TestBotDevLinkProxyValidationAndMethod(t *testing.T) {
 	srv := newTestServer()
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/dev/link", map[string]any{
@@ -1882,6 +1935,7 @@ func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
 		OpenClawConfig:           "{\"plugins\":{}}",
 		CollabModeSkill:          "collab-skill",
 		DevPreviewSkill:          "dev-preview-skill",
+		UpgradeClawcolonySkill:   "upgrade-skill",
 		KnowledgeBaseMCPManifest: "kb-manifest",
 		KnowledgeBaseMCPPlugin:   "kb-plugin",
 		CollabMCPManifest:        "collab-manifest",
@@ -1906,6 +1960,7 @@ func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
 		"openclaw.json":                     "{\"plugins\":{}}",
 		"COLLAB_MODE_SKILL":                 "collab-skill",
 		"DEV_PREVIEW_SKILL":                 "dev-preview-skill",
+		"UPGRADE_CLAWCOLONY_SKILL":          "upgrade-skill",
 		"KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST": "kb-manifest",
 		"KNOWLEDGEBASE_MCP_PLUGIN_JS":       "kb-plugin",
 		"COLLAB_MCP_PLUGIN_MANIFEST":        "collab-manifest",
@@ -1950,6 +2005,12 @@ func TestPatchWorkspaceBootstrapScriptForMCP(t *testing.T) {
 	if !strings.Contains(patched, "cp /seed/openclaw.json /state/openclaw/openclaw.json") {
 		t.Fatalf("openclaw.json should be copied unconditionally: %s", patched)
 	}
+	if strings.Contains(patched, "/extensions/mcp-knowledgebase/") {
+		t.Fatalf("legacy mcp-knowledgebase copy lines should be removed: %s", patched)
+	}
+	if !strings.Contains(patched, "rm -rf /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase") {
+		t.Fatalf("patched script missing legacy mcp cleanup")
+	}
 	for _, marker := range []string{
 		"clawcolony-mcp-knowledgebase",
 		"clawcolony-mcp-collab",
@@ -1967,6 +2028,12 @@ func TestPatchWorkspaceBootstrapScriptForMCP(t *testing.T) {
 	if !strings.Contains(patched, "/skills/dev-preview/SKILL.md") {
 		t.Fatalf("patched script missing dev-preview skill copy block")
 	}
+	if !strings.Contains(patched, "cp /seed/DEV_PREVIEW_SKILL /state/openclaw/workspace/skills/dev-preview/SKILL.md") {
+		t.Fatalf("patched script should keep intact dev-preview copy line")
+	}
+	if !strings.Contains(patched, "/skills/upgrade-clawcolony/SKILL.md") {
+		t.Fatalf("patched script missing upgrade-clawcolony skill copy block")
+	}
 	insertPos := strings.Index(patched, "clawcolony-mcp-knowledgebase")
 	heartbeatPos := strings.Index(patched, "rm -f /state/openclaw/workspace/HEARTBEAT.md")
 	if insertPos == -1 || heartbeatPos == -1 || insertPos > heartbeatPos {
@@ -1979,6 +2046,31 @@ func TestPatchWorkspaceBootstrapScriptForMCP(t *testing.T) {
 	}
 	if patchedAgain != patched {
 		t.Fatalf("patched script should stay stable across repeated patching")
+	}
+
+	withoutCleanup := strings.Join([]string{
+		"set -e",
+		"mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase",
+		"cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/openclaw.plugin.json",
+		"cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/index.js",
+		"mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab",
+		"cp /seed/COLLAB_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab/openclaw.plugin.json",
+		"cp /seed/COLLAB_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab/index.js",
+		"          rm -f /state/openclaw/workspace/HEARTBEAT.md",
+	}, "\n")
+	patchedNoCleanup, changedNoCleanup := patchWorkspaceBootstrapScriptForMCP(withoutCleanup)
+	if !changedNoCleanup {
+		t.Fatalf("script missing legacy cleanup should be changed")
+	}
+	if strings.Count(patchedNoCleanup, "rm -rf /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase") != 1 {
+		t.Fatalf("legacy cleanup line should be injected once: %s", patchedNoCleanup)
+	}
+	patchedNoCleanupAgain, changedNoCleanupAgain := patchWorkspaceBootstrapScriptForMCP(patchedNoCleanup)
+	if changedNoCleanupAgain {
+		t.Fatalf("cleanup-injected script should be idempotent")
+	}
+	if patchedNoCleanupAgain != patchedNoCleanup {
+		t.Fatalf("cleanup-injected script should stay stable on repatch")
 	}
 }
 
@@ -2327,8 +2419,8 @@ func TestKBProposalApproveAndApply(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("proposal get status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte(`"status":"approved"`)) {
-		t.Fatalf("proposal should be approved: %s", w.Body.String())
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"status":"applied"`)) {
+		t.Fatalf("proposal should be auto-applied: %s", w.Body.String())
 	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
@@ -2338,6 +2430,9 @@ func TestKBProposalApproveAndApply(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("apply status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
 	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"already_applied":true`)) {
+		t.Fatalf("apply should be idempotent after auto-apply: %s", w.Body.String())
+	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/kb/entries?section=terms", nil)
 	if w.Code != http.StatusOK {
@@ -2345,6 +2440,101 @@ func TestKBProposalApproveAndApply(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"title":"active user"`)) {
 		t.Fatalf("entries missing applied title: %s", w.Body.String())
+	}
+}
+
+func TestKBAutoApplyAfterVotingDeadlineFinalize(t *testing.T) {
+	srv := newTestServer()
+	register := func() string {
+		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("register status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal register body: %v", err)
+		}
+		return resp["item"].(map[string]any)["user_id"].(string)
+	}
+	a := register()
+	b := register()
+	c := register()
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals", map[string]any{
+		"proposer_user_id":    a,
+		"title":               "截止自动apply测试",
+		"reason":              "验证投票截止自动apply",
+		"vote_threshold_pct":  50,
+		"vote_window_seconds": 1,
+		"change": map[string]any{
+			"op_type":     "add",
+			"section":     "governance/test",
+			"title":       "auto-apply-deadline",
+			"new_content": "deadline finalize then auto apply",
+			"diff_text":   "+ add auto apply on voting finalize deadline path",
+		},
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("create proposal status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+	var created map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	proposalID := int64(created["proposal"].(map[string]any)["id"].(float64))
+
+	for _, uid := range []string{b, c} {
+		w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/enroll", map[string]any{
+			"proposal_id": proposalID,
+			"user_id":     uid,
+		})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("enroll status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+		}
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/start-vote", map[string]any{
+		"proposal_id": proposalID,
+		"user_id":     a,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("start vote status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+	var start map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &start)
+	votingRevisionID := int64(start["proposal"].(map[string]any)["voting_revision_id"].(float64))
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/ack", map[string]any{
+		"proposal_id": proposalID,
+		"revision_id": votingRevisionID,
+		"user_id":     b,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("ack status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/vote", map[string]any{
+		"proposal_id": proposalID,
+		"revision_id": votingRevisionID,
+		"user_id":     b,
+		"vote":        "yes",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("vote status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+	srv.kbTick(context.Background(), 1)
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/kb/proposals/get?proposal_id="+strconv.FormatInt(proposalID, 10), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("proposal get status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"status":"applied"`)) {
+		t.Fatalf("proposal should be auto-applied after deadline finalize: %s", w.Body.String())
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/kb/entries?section=governance/test", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list entries status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"title":"auto-apply-deadline"`)) {
+		t.Fatalf("entries missing auto applied title: %s", w.Body.String())
 	}
 }
 
@@ -2653,6 +2843,62 @@ func TestKBAutoProgressDiscussingStartsVote(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(`"voting_deadline_at":"`)) {
 		t.Fatalf("expected voting deadline set: %s", w.Body.String())
+	}
+}
+
+func TestKBAutoProgressDiscussingLegacyNilDeadlineStartsVote(t *testing.T) {
+	srv := newTestServer()
+	register := func() string {
+		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("register status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal register body: %v", err)
+		}
+		return resp["item"].(map[string]any)["user_id"].(string)
+	}
+	a := register()
+	b := register()
+
+	ctx := context.Background()
+	proposal, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    a,
+		Title:             "legacy-nil-deadline",
+		Reason:            "regression",
+		Status:            "discussing",
+		VoteThresholdPct:  80,
+		VoteWindowSeconds: 120,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "governance/test",
+		Title:      "legacy",
+		NewContent: "v1",
+		DiffText:   "+ add legacy nil deadline regression case",
+	})
+	if err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+	if proposal.DiscussionDeadlineAt != nil {
+		t.Fatalf("expected legacy proposal to have nil discussion deadline")
+	}
+	if _, err := srv.store.EnrollKBProposal(ctx, proposal.ID, b); err != nil {
+		t.Fatalf("enroll status: %v", err)
+	}
+
+	srv.kbTick(ctx, 1)
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/kb/proposals/get?proposal_id="+strconv.FormatInt(proposal.ID, 10), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("proposal get status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	if !bytes.Contains(body, []byte(`"status":"voting"`)) {
+		t.Fatalf("expected legacy nil deadline proposal auto starts voting: %s", w.Body.String())
+	}
+	if bytes.Contains(body, []byte(`"voting_revision_id":0`)) {
+		t.Fatalf("expected voting revision id to be set: %s", w.Body.String())
 	}
 }
 
