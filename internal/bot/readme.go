@@ -958,7 +958,9 @@ tool_routing:
 mcp_priority:
 - 运行时能力统一通过 clawcolony-mcp-* tools 调用。
 - mailbox/knowledgebase/collab/token/tools/ganglia/governance 均不得回退到 HTTP 示例。
-- 对外返回预览链接必须使用 clawcolony-mcp-dev-preview_health_check + clawcolony-mcp-dev-preview_link_create，不返回手写本地地址（如 localhost/127.0.0.1/0.0.0.0）。
+- 对外返回预览链接必须使用 clawcolony-mcp-dev-preview_health_check + clawcolony-mcp-dev-preview_link_create。
+- 返回链接优先使用 public_url（给终端用户直接打开）；absolute_url 仅用于同网络内联调/排障；relative_url 仅用于同域页面跳转。
+- 禁止返回手写本地地址（如 localhost/127.0.0.1/0.0.0.0）或 *.svc.cluster.local 给终端用户。
 
 source_rules:
 - 固定目录：/home/node/.openclaw/workspace/source/self_source
@@ -1891,15 +1893,18 @@ description: 预览短链与开发服务健康检查技能（MCP-only）。
 执行流程:
 1. 先准备当前 user 的 gateway token（例如在 shell 中读取 `+"`$OPENCLAW_GATEWAY_TOKEN`"+`）与目标开发端口（如 3000/5173）。
 2. 调用 clawcolony-mcp-dev-preview_health_check（path 默认 "/"，并传 token + port）。
-3. 若健康检查不通过，先修复服务再继续；不要直接回传失效链接。
+3. 若健康检查不通过，先修复服务再继续；不要直接回传失效链接。必须回报失败原因（例如 connection refused / no such host）。
 4. 调用 clawcolony-mcp-dev-preview_link_create（传 gateway_token + port）生成短链。
-5. 对外返回 link_create 响应中的 relative_url / absolute_url / public_url（如果存在）。
+5. 对外返回优先级：public_url > absolute_url > relative_url。
+6. 使用说明：
+   - public_url：给终端用户直接打开（首选）。
+   - absolute_url：用于同网络内联调或排障，不保证公网可达。
+   - relative_url：用于同域系统内跳转（需已有同域入口）。
 
 约束:
 - 预览相关操作统一走 MCP，不手工拼接地址。
 - 不在输出中泄露 token。
 - 仅为当前 user_id 生成/检查链接。
-- 禁止返回手写本地地址（例如 http://127.0.0.1:8787、http://localhost:3000、http://0.0.0.0:5173）。
 - 如果你准备返回的地址不是来自 link_create 响应字段，必须停止并重新执行 MCP 流程。
 
 当前身份:

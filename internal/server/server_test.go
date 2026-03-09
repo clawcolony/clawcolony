@@ -398,6 +398,59 @@ func TestBotDevLinkProxyCreatesSignedRuntimeLink(t *testing.T) {
 	}
 }
 
+func TestBotDevLinkProxyIncludesPublicURLWhenConfigured(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "runtime-sync-token"
+	srv.cfg.PreviewAllowedPorts = "3000"
+	srv.cfg.PreviewPublicBaseURL = "https://preview.example.com"
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-dev-public",
+		Name:        "user-dev-public",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-dev-public",
+		GatewayToken: "gw-dev-public",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/dev/link", map[string]any{
+		"user_id":       "user-dev-public",
+		"port":          3000,
+		"path":          "/",
+		"gateway_token": "gw-dev-public",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	var payload struct {
+		Item struct {
+			RelativeURL string `json:"relative_url"`
+			AbsoluteURL string `json:"absolute_url"`
+			PublicURL   string `json:"public_url"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Item.RelativeURL == "" {
+		t.Fatalf("relative_url should not be empty")
+	}
+	if payload.Item.AbsoluteURL == "" || !strings.Contains(payload.Item.AbsoluteURL, payload.Item.RelativeURL) {
+		t.Fatalf("unexpected absolute_url=%q relative_url=%q", payload.Item.AbsoluteURL, payload.Item.RelativeURL)
+	}
+	wantPublic := "https://preview.example.com" + payload.Item.RelativeURL
+	if payload.Item.PublicURL != wantPublic {
+		t.Fatalf("public_url=%q, want=%q", payload.Item.PublicURL, wantPublic)
+	}
+}
+
 func TestBotDevLinkProxyValidationAndMethod(t *testing.T) {
 	srv := newTestServer()
 	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/dev/link", map[string]any{

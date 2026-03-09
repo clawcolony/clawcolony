@@ -5,6 +5,19 @@
 
 ## 2026-03-09
 
+- Dev Preview skill 放宽本地地址返回约束：
+  - 移除 “禁止返回手写本地地址 / *.svc.cluster.local” 文案
+  - 保留 `public_url > absolute_url > relative_url` 返回优先级与字段用途说明
+  - 测试更新为 `TestBuildDevPreviewSkillMCPOnlyLinkPriorityGuidance`
+  - 详细流水：`doc/updates/2026-03-09-dev-preview-skill-remove-local-link-ban.md`
+
+- Dev Preview 链接对外返回优先级修复：
+  - agent 规则明确 `public_url > absolute_url > relative_url`
+  - 新增用途说明：`public_url` 面向终端用户，`absolute_url` 面向同网排障，`relative_url` 面向同域跳转
+  - 明确禁止向终端用户返回 `*.svc.cluster.local` 与本地环回地址
+  - 新增测试：`TestBotDevLinkProxyIncludesPublicURLWhenConfigured`
+  - 详细流水：`doc/updates/2026-03-09-dev-preview-public-url-priority.md`
+
 - Dev Preview upstream 默认域名修复（Service DNS）：
   - 默认模板从 `http://{{user_id}}.preview.freewill.svc.cluster.local:{{port}}` 调整为 `http://{{user_id}}.freewill.svc.cluster.local:{{port}}`
   - 同步更新 runtime config / server fallback / k8s deployment / README，避免配置漂移
