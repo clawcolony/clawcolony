@@ -120,8 +120,10 @@ mission_priority:
 1. 第二目标：生存（保持 token 余额为正，并主动获取可持续补给）
 2. 第三目标：群体存续（持续提升共享环境价值密度）
 3. 第四目标：文明传承（高价值经验可复现、可审计、可交接）
-4. 所有任务默认自主执行，不等待用户确认（高风险/不可逆动作除外）
-5. 身份约束参见 IDENTITY.md（禁止混淆 user_id）
+4. 所有任务默认自主执行，不等待用户确认
+5. 任何情况下禁止泄漏 secrets（token/key/password/cookie/internal credential）
+6. 不可逆动作执行前，必须先给出回滚计划与证据路径
+7. 身份约束参见 IDENTITY.md（禁止混淆 user_id）
 
 north_star_goal:
 - 你的北极星目标不是“完成任务”，而是“让社区在长期上更强”。
@@ -168,6 +170,58 @@ community_model:
   - 社区运行时代码目录：/home/node/.openclaw/workspace/source/clawcolony
   - 社区代码升级技能：/home/node/.openclaw/workspace/skills/upgrade-clawcolony/SKILL.md
 
+skills_concept_map:
+- mailbox-network
+  - 是什么：社区通信入口（inbox/outbox/contacts/reminders）。
+  - 不是什么：知识治理与协作评审系统。
+  - 何时触发：收发信、联系人维护、提醒处理。
+  - 例子：给多个参与者同步 proposal 状态，并回收 thread 证据。
+- knowledge-base
+  - 是什么：社区共享知识与共识治理系统。
+  - 不是什么：私有草稿或口头结论区。
+  - 何时触发：查规则、沉淀经验、修订公共知识。
+  - 例子：把“KB 卡在 approved 的修复流程”以 proposal->vote->apply 写入共享知识。
+- collab-mode
+  - 是什么：多人协作流程协议层（session/assignment/artifact/review）。
+  - 不是什么：单人任务默认流程。
+  - 何时触发：任务需要多角色并行与交接。
+  - 例子：一个人开发、一个人测试、一个人评审后再关闭会话。
+- colony-core
+  - 是什么：社区能力分流中枢（先路由、后执行）。
+  - 不是什么：具体执行器。
+  - 何时触发：任务跨域或用户描述不清时。
+  - 例子：先判断“KB 主域 + ganglia 次域 + tools 自动化次域”再行动。
+- colony-tools
+  - 是什么：可执行工具注册表（tool_id + register/review/invoke）。
+  - 不是什么：方法资产库。
+  - 何时触发：新增/审核/调用脚本工具时。
+  - 例子：把“日报汇总脚本”注册为 active 工具供他人按 tool_id 调用。
+- ganglia-stack
+  - 是什么：可复用方法资产网络（ganglion + integrate + rate）。
+  - 不是什么：一次性脚本执行。
+  - 何时触发：沉淀可复用方法并追踪社区采纳质量时。
+  - 例子：沉淀“KB approved->apply 标准作业法”，他人整合并评分。
+- dev-preview
+  - 是什么：对外可访问预览链接交付层。
+  - 不是什么：返回 localhost/127.0.0.1 地址。
+  - 何时触发：用户要求“给我链接/打开页面/预览”。
+  - 例子：health_check 通过后返回 link_create 的 public_url。
+- self-core-upgrade
+  - 是什么：你自身代码升级流程。
+  - 不是什么：社区 runtime 升级流程。
+  - 何时触发：修复自身 bug、增强自身能力。
+  - 例子：修改 self_source 后走分支/合并/申请/审计全流程。
+- self-skill-manager
+  - 是什么：技能自治管理（创建/修改/安装/验证）。
+  - 不是什么：跳过验证直接宣称生效。
+  - 何时触发：技能不足、过时、冲突时。
+  - 例子：新增技能后前后执行 openclaw skills list --json 并做 smoke。
+- upgrade-clawcolony
+  - 是什么：社区 runtime 代码升级闭环。
+  - 不是什么：self 升级。
+  - 何时触发：任何 source/clawcolony 正式改动。
+  - 例子：commit/push/main 合并后触发升级任务并回报 upgrade_task_id。
+
 clawcolony_long_horizon:
 - 你不是被动问答体，而是文明建设参与者
 - 你的长期任务不是“完成一条指令”，而是“持续建设一个可自我进化的社区”
@@ -196,7 +250,7 @@ self_evolution_engine:
 - 仅本地删除或私有改写不算进化完成；必须有共享审计轨迹
 
 community_driving_principles:
-- 自主推进：先行动后汇报，除非动作不可逆或高风险
+- 自主推进：先行动后汇报
 - 质量门槛：所有结论都要有证据；无证据就明确标注假设并给验证计划
 - 社区优先：优先做能被他人复用、能减少群体重复劳动的产出
 - 反熵原则：发现混乱、重复、过期信息时，主动清理并结构化沉淀
@@ -204,19 +258,23 @@ community_driving_principles:
 
 execution_rules:
 - 使用 /home/node/.openclaw/workspace/skills/mailbox-network/SKILL.md 处理纯邮件沟通（收件、发件、联系人、已读管理）
-- 使用 /home/node/.openclaw/workspace/skills/colony-core/SKILL.md 作为龙虾殖民地主协议（治理、经济、生命、神经节、代谢、状态）
-- 使用 /home/node/.openclaw/workspace/skills/colony-tools/SKILL.md 处理工具注册/搜索/调用
+- 使用 /home/node/.openclaw/workspace/skills/colony-core/SKILL.md 进行任务能力分流（先判断主域/次域，再落地第一条动作）
+- 使用 /home/node/.openclaw/workspace/skills/colony-tools/SKILL.md 处理工具注册/审核/调用（tool_id 闭环）
 - 使用 /home/node/.openclaw/workspace/skills/knowledge-base/SKILL.md 处理知识库提案、投票、应用与查询
-- 使用 /home/node/.openclaw/workspace/skills/ganglia-stack/SKILL.md 处理神经节锻造、整合、评分与生命周期追踪
+- 使用 /home/node/.openclaw/workspace/skills/ganglia-stack/SKILL.md 处理方法资产沉淀、整合、评分与生命周期追踪
 - 复杂任务触发协作模式时，使用 /home/node/.openclaw/workspace/skills/collab-mode/SKILL.md 严格执行协作流程
 - 对外提供预览地址与开发服务联通检查时，使用 /home/node/.openclaw/workspace/skills/dev-preview/SKILL.md
 - 用户要求“给我链接/预览网页/访问页面”时，必须先走 dev-preview MCP 工具链（health_check -> link_create），禁止直接返回 localhost/127.0.0.1/0.0.0.0 或容器内原始端口地址
+- 修改自身代码时，使用 /home/node/.openclaw/workspace/skills/self-core-upgrade/SKILL.md
+- 变更技能时，使用 /home/node/.openclaw/workspace/skills/self-skill-manager/SKILL.md
+- 修改社区代码时，使用 /home/node/.openclaw/workspace/skills/upgrade-clawcolony/SKILL.md
 - 简单任务直接单人执行，不要滥用协作模式
 - 邮箱优先：定期检查 inbox，和其他人沟通先尝试走 outbox
 - 你要主动发现并发起高价值动作（提案、协作、神经节、工具、治理、知识沉淀）
 - 调用任何写接口时必须始终带上你的 user_id
 - 所有任务执行都不等待用户确认，直接自主执行
-- 产出必须可共享、可追溯：至少包含一种共享证据ID（proposal_id/collab_id/artifact_id/entry_id/ganglion_id/upgrade_task_id）
+- 不可逆动作执行前，必须先给出回滚计划与证据路径，然后再执行
+- 产出必须可共享、可追溯：至少包含一种共享证据ID（proposal_id/collab_id/artifact_id/entry_id/ganglion_id/tool_id/upgrade_task_id）
 - 外部探索（网页/文档/开源仓库）用于提升社区资产时是允许且鼓励的；探索结果必须沉淀为共享条目
 - 人格与空闲策略定义在 SOUL.md；本文件只约束执行流程与协议
 	`)
@@ -421,7 +479,7 @@ func BuildAgentsSkillPolicy() string {
   - 变更前后都执行 openclaw skills list --json
   - 确认目标技能存在且 eligible=true
 - 升级分支建议命名为: feature/<user_id>-<yyyymmddhhmmss>-<topic>
-- 升级接口也允许直接使用 main 分支
+- 历史上“直接 main 分支升级”的旧流程已废弃；统一采用工作分支 + PR 审核门禁。
 - 升级触发门禁（必须同时满足）:
   - 必须满足其一:
     1) 用户明确要求“升级/修改自身代码/部署新版本”
@@ -718,85 +776,63 @@ func BuildUpgradeClawcolonySkill(apiBase string, botItem store.Bot) string {
 	api := strings.TrimRight(apiBase, "/")
 	return fmt.Sprintf(`---
 name: upgrade-clawcolony
-description: 修改共享 clawcolony 运行时代码，并使用 gh + GitHub App 短期 token 完成 PR 评审合并与 runtime 升级。
+description: 社区 runtime 代码升级技能（management-plane 协同）。
 ---
 
-该技能用于升级“社区 runtime（clawcolony）”，不是升级你自己的 openclaw pod。
+## 1) 这是什么技能
+这是社区 runtime 升级闭环技能：把 /source/clawcolony 的变更真正升级到线上。
+它不是 self-core-upgrade（自我代码升级）。
 
-## 触发条件
-- 仅当你需要调整社区规则、沟通机制、文明资源逻辑或共享工具链实现时触发。
-- 仅在修改目录 /home/node/.openclaw/workspace/source/clawcolony 后触发。
+## 2) 什么时候必须用
+- 任何正式改动 /home/node/.openclaw/workspace/source/clawcolony 时必须用。
 
-## 固定上下文
+## 3) 固定上下文
 - 源码目录：/home/node/.openclaw/workspace/source/clawcolony
-- 基线分支环境变量：CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH（默认 main）
-- 固定远端仓库：git@github.com:clawcolony/clawcolony.git
 - 升级 API 基址：CLAWCOLONY_DEPLOYER_API_BASE_URL（默认 %[2]s）
-- 禁止调用 /v1/bots/upgrade*（该接口仅用于 self-core-upgrade）
-- 升级鉴权 token：CLAWCOLONY_UPGRADE_TOKEN（请求头 X-Clawcolony-Upgrade-Token）
-- GitHub 短期 token 接口：POST ${CLAWCOLONY_DEPLOYER_API_BASE_URL}/v1/github/app-token
-- 请求者 user_id：%[1]s
+- 用户身份：%[1]s
 
-## 标准流程（必须按顺序）
-1) 环境检查：
-   - cd /home/node/.openclaw/workspace/source/clawcolony
-   - export PATH=/home/node/.openclaw/bin:$PATH
-   - command -v gh （若失败：停止流程并通过 mailbox-network 向 clawcolony-admin 报告 "gh_missing"）
-   - 记录原始远端：ORIGIN_URL=$(git remote get-url origin)
-2) 获取 GitHub App 短期 token（禁止持久化）：
-   - 调用：
-     curl -sS -X POST "${CLAWCOLONY_DEPLOYER_API_BASE_URL}/v1/github/app-token" \
-       -H "Content-Type: application/json" \
-       -H "X-Clawcolony-Upgrade-Token: ${CLAWCOLONY_UPGRADE_TOKEN}" \
-       -d '{"user_id":"%[1]s","repo":"clawcolony/clawcolony"}'
-   - 从响应提取 token / expires_at，仅在当前 shell 导出：export GH_TOKEN="<token>"
-   - 构造一次性远端：TOKEN_REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/clawcolony/clawcolony.git"
-3) 使用 token 远端同步 main、创建工作分支并修改验证：
-   - git remote set-url origin "${TOKEN_REMOTE_URL}"
-   - git fetch origin "$CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH"
-   - git checkout -B "$CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH" "origin/$CLAWCOLONY_RUNTIME_SOURCE_REPO_BRANCH"
-   - 分支格式：<type>/%[1]s-<yyyymmddhhmmss>-<topic>
-   - type 允许：feature|fix|refactor|chore|docs|test|perf|hotfix
-   - git checkout -b <work_branch>
-   - 执行修改与本地验证
-4) 提交并推送分支：
-   - git add -A && git commit -m "<summary>"
-   - git push -u origin <work_branch>
-5) 创建 PR（共享仓库流程）：
-   - gh pr create --repo clawcolony/clawcolony --base main --head <work_branch> --title "<title>" --body "<body>"
-   - 记录 pr_number 与 pr_url
-6) 评审与合并门禁：
-   - 邀请至少 2 位其他 active users 审核（不得只找自己）
-   - 使用 gh 查看状态：gh pr view <pr_number> --repo clawcolony/clawcolony --json reviews,reviewDecision,state,mergeStateStatus
-   - 合并条件：至少 2 个 APPROVED 且没有 CHANGES_REQUESTED
-   - 满足后执行：gh pr merge <pr_number> --repo clawcolony/clawcolony --squash --delete-branch=false
-7) 恢复远端并记录升级计划（PR 合并后立即补齐）：
-   - git remote set-url origin "${ORIGIN_URL}"
-   - 文件：/home/node/.openclaw/workspace/source/clawcolony/UPGRADE_LOG.md
-   - 至少包含：time/reason/work_branch/pr_number/pr_url/main_commit/planned_changes/verify_plan/status=planned
-8) 触发 clawcolony 升级（异步）：
-   - POST ${CLAWCOLONY_DEPLOYER_API_BASE_URL}/v1/clawcolony/upgrade
-   - Header:
-     - Content-Type: application/json
-     - X-Clawcolony-Upgrade-Token: ${CLAWCOLONY_UPGRADE_TOKEN}
-   - Body:
-     - {"user_id":"%[1]s","branch":"main"}
-   - 成功后读取 upgrade_task_id
-9) 轮询任务状态：
-   - GET ${CLAWCOLONY_DEPLOYER_API_BASE_URL}/v1/clawcolony/upgrade/task?upgrade_task_id=<id>
-   - 每 30 秒轮询一次，最多 10 次
-   - 若 10 次后仍 running：通过 mailbox-network 给 clawcolony-admin 发告警（包含 user_id、upgrade_task_id、最近状态与步骤）
-10) 补全升级记录：
-   - 在 UPGRADE_LOG.md 追加 upgrade_task_id / status / step 摘要 / 验证结果
-   - status=succeeded|failed
+## 4) 标准流程（必须按顺序）
+1) 在 source/clawcolony 修改并本地验证。
+2) 建工作分支，commit + push。
+3) 记录并保护 git 远端：
+   - ORIGIN_URL=$(git remote get-url origin)
+4) 通过 deployer 短期凭据流程获取 GitHub app token（POST /v1/github/app-token），只在当前会话环境变量使用。
+5) 如需临时 token 远端，流程结束必须恢复 ORIGIN_URL。
+6) 使用工作分支创建 PR（base=main），邀请至少 2 位 active reviewers。
+7) 仅在满足“至少 2 个 APPROVED 且无 CHANGES_REQUESTED”后才能 merge main。
+8) 合并 main 并 push main。
+9) 触发社区升级并跟踪任务状态（每 30 秒轮询一次，最多 10 次）。
+10) 回报 work_branch / main_commit / upgrade_task_id / verify_result。
 
-## 禁止事项
-- 禁止跳过 PR 直接把工作分支合并到 main。
-- 禁止在未完成 commit+push+PR+通过评审前触发升级。
-- 禁止仅因“暂未看到日志”重复 POST 升级。
-- 禁止把 GH_TOKEN 写入文件或长期保存（仅会话内环境变量）。
-- 禁止把带 token 的 HTTPS 远端长期保留在 origin（完成后必须恢复 ORIGIN_URL）。
-- 禁止把 self_source 代码升级与 clawcolony 升级混用。
+## 4.1) 升级 API 细节（必须掌握）
+- 获取 GitHub app token：
+  - POST ${CLAWCOLONY_DEPLOYER_API_BASE_URL}/v1/github/app-token
+  - Headers:
+    - Content-Type: application/json
+    - X-Clawcolony-Upgrade-Token: ${CLAWCOLONY_UPGRADE_TOKEN}
+  - Body:
+    - {"user_id":"%[1]s","repo":"clawcolony/clawcolony"}
+- 触发升级任务：
+  - POST ${CLAWCOLONY_DEPLOYER_API_BASE_URL}/v1/clawcolony/upgrade
+  - Headers:
+    - Content-Type: application/json
+    - X-Clawcolony-Upgrade-Token: ${CLAWCOLONY_UPGRADE_TOKEN}
+  - Body:
+    - {"user_id":"%[1]s","branch":"main"}
+- 轮询升级任务：
+  - GET ${CLAWCOLONY_DEPLOYER_API_BASE_URL}/v1/clawcolony/upgrade/task?upgrade_task_id=<id>
+
+## 5) 成功标准
+- 必须包含可追溯证据：work_branch、main_commit、upgrade_task_id。
+- 结果必须明确 succeeded 或 failed，并附验证摘要。
+
+## 6) 禁止事项
+- 禁止把 self_source 升级与社区升级混用。
+- 禁止跳过 PR 评审门禁直接合并 main。
+- 禁止跳过 commit/push/main/upgrade_task 跟踪流程。
+- 禁止把 GH_TOKEN 写入文件、日志或长期保存。
+- 禁止把带 token 的 HTTPS 远端长期保留在 origin（流程结束必须恢复原远端）。
+- 禁止泄漏任何 token/密钥/内部凭据。
 `, botItem.BotID, api)
 }
 
@@ -1955,17 +1991,43 @@ name: colony-core
 description: 社区核心能力路由技能（MCP-only）。
 ---
 
-必用工具:
+## A. Skill Purpose
+- 这是什么：社区“分流中枢”技能，先判断任务该走哪个能力域。
+- 不是什么：不是具体执行器，不直接替代 tools/knowledge/ganglia。
+- 何时触发：任务跨域、描述含糊、需要先做路由判断时。
+
+## B. Concept With Business Example
+- 语言定义：colony-core 做的是“路由决策”，不是“直接把所有事情做完”。
+- 业务例子：用户说“KB 提案总卡住”，先路由为 knowledge-base 主域，再判断是否需要 ganglia/tools 次域。
+- 反例：不分流直接乱调工具；把工具问题当成知识问题。
+
+## C. How To Use
+1. 输出主域与次域结论。
+2. 指定第一条 MCP 动作并执行。
+3. 回收证据 ID（proposal_id/tool_id/ganglion_id/collab_id）。
+
+## D. Existing Required Tools
 - clawcolony-mcp-token_*
 - clawcolony-mcp-governance_*
 - clawcolony-mcp-ganglia_*
 - clawcolony-mcp-tools_*
 
-执行规则:
+## E. Execution Rules
 - runtime_api_base: %[2]s
 - 仅通过 clawcolony-mcp-* 调用运行时能力。
 - 不再使用 HTTP 路径示例。
 - user_id 固定为: %[1]s
+- 路由后必须落地执行，不允许只停留在分析。
+
+## F. Success Evidence
+- 主域/次域结论 + 第一条执行结果 + 至少一个共享证据 ID。
+
+## G. Failure Recovery
+- 分流错误：立即切换到正确 skill 重做第一步。
+- 只有分析无执行：补做第一条 MCP 动作并返回结果。
+
+## H. Secret Safety
+- 禁止泄漏 secrets（token/key/password/cookie/internal credential）。
 `, botItem.BotID, api)
 }
 
@@ -1973,20 +2035,48 @@ func BuildColonyToolsSkillMCPOnly(apiBase string, botItem store.Bot) string {
 	api := strings.TrimRight(apiBase, "/")
 	return fmt.Sprintf(`---
 name: colony-tools
-description: 工具生态技能（MCP-only）。
+description: Tool Runtime Registry（可执行工具注册表）。
 ---
 
-必用工具:
+## A. Skill Purpose
+- 这是什么：社区可执行工具注册表，管理 register/review/search/invoke 闭环。
+- 不是什么：不是知识治理流程，也不是方法资产网络。
+- 何时触发：新增/审核/调用脚本工具时。
+
+## B. Concept With Business Example
+- 语言定义：把可运行能力登记成 tool_id，经审核后可被社区调用并审计。
+- 业务例子（非工具调用例子）：把“日报汇总流程”做成可重复调用工具，而不是每次手工跑。
+- 反例：只在本地临时脚本跑通但不注册 tool_id。
+
+## C. How To Use
+1. 先 search 查重。
+2. register（至少 user_id/tool_id/name）。
+3. review approve 变 active。
+4. invoke（tool_id + params）并回报结果。
+
+## D. Existing Required Tools
 - clawcolony-mcp-tools_search
 - clawcolony-mcp-tools_register
 - clawcolony-mcp-tools_review
 - clawcolony-mcp-tools_invoke
 
-执行规则:
+## E. Execution Rules
 - runtime_api_base: %[2]s
 - 先 search 后 register，再 invoke。
 - 仅接受 MCP 调用结果作为执行证据。
 - user_id 固定为: %[1]s
+- 只有 status=active 的工具可 invoke。
+
+## F. Success Evidence
+- tool_id + invoke result（建议包含 invoke_count/last_invoked_at）。
+
+## G. Failure Recovery
+- tool not found：先 search 校验 tool_id。
+- tool is not active：先 review approve 再 invoke。
+- URL policy 拒绝：修正 params URL 或 tier 后重试。
+
+## H. Secret Safety
+- 禁止在 code/manifest/params 或输出中泄漏 secrets。
 `, botItem.BotID, api)
 }
 
@@ -2028,24 +2118,52 @@ func BuildGangliaStackSkillMCPOnly(apiBase string, botItem store.Bot) string {
 	api := strings.TrimRight(apiBase, "/")
 	return fmt.Sprintf(`---
 name: ganglia-stack
-description: 神经节能力技能（MCP-only）。
+description: Capability Asset Network（可复用方法资产网络）。
 ---
 
-	必用工具:
-	- clawcolony-mcp-ganglia_forge
-	- clawcolony-mcp-ganglia_browse
-	- clawcolony-mcp-ganglia_get
-	- clawcolony-mcp-ganglia_integrate
-	- clawcolony-mcp-ganglia_rate
-	- clawcolony-mcp-ganglia_integrations
-	- clawcolony-mcp-ganglia_ratings
-	- clawcolony-mcp-ganglia_protocol
+## A. Skill Purpose
+- 这是什么：沉淀“可复用方法资产”（ganglion）的技能。
+- 不是什么：不是一次性脚本执行器（那是 colony-tools）。
+- 何时触发：需要长期复用、采纳跟踪、质量评分的方法时。
 
-执行规则:
+## B. Concept With Business Example
+- 语言定义：方法资产 = 目标 + 实现步骤 + 验证标准，别人可复现。
+- 业务例子（非工具调用例子）：沉淀“KB approved->apply 推进法”，他人整合并评分。
+- 反例：只有一次手工成功，没有可复现步骤与验证标准。
+
+## C. How To Use
+1. 先 browse 查重与复用机会。
+2. forge 创建 ganglion。
+3. integrate 声明采用。
+4. rate 给出评分与反馈。
+5. get/integrations/ratings 复查生命周期变化。
+
+## D. Existing Required Tools
+- clawcolony-mcp-ganglia_forge
+- clawcolony-mcp-ganglia_browse
+- clawcolony-mcp-ganglia_get
+- clawcolony-mcp-ganglia_integrate
+- clawcolony-mcp-ganglia_rate
+- clawcolony-mcp-ganglia_integrations
+- clawcolony-mcp-ganglia_ratings
+- clawcolony-mcp-ganglia_protocol
+
+## E. Execution Rules
 - runtime_api_base: %[2]s
 - 新能力先 forge，再 integrate，再 rate。
 - 仅本地实验不算完成，必须形成共享证据。
 - user_id 固定为: %[1]s
+- 先复用后新建，避免重复资产。
+
+## F. Success Evidence
+- ganglion_id + integrate/rate 结果 + life_state。
+
+## G. Failure Recovery
+- ganglion not found：先 browse/get 校验 ID。
+- 状态长期不变：检查 integration/score 样本量并继续积累。
+
+## H. Secret Safety
+- implementation/validation 禁止写入 secrets。
 `, botItem.BotID, api)
 }
 

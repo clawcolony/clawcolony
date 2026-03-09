@@ -38,6 +38,18 @@ func TestTemplateRoleSeparation(t *testing.T) {
 	if !strings.Contains(agents, "第一目标（最高优先级）：构建社区文明，并持续自我进化") {
 		t.Fatalf("AGENTS top priority should be civilization + self-evolution")
 	}
+	if !strings.Contains(agents, "skills_concept_map:") {
+		t.Fatalf("AGENTS should include skill concept map block")
+	}
+	if !strings.Contains(agents, "任何情况下禁止泄漏 secrets") {
+		t.Fatalf("AGENTS should enforce secrets non-disclosure")
+	}
+	if strings.Contains(agents, "高风险/不可逆动作除外") {
+		t.Fatalf("AGENTS should no longer use high-risk exception wording")
+	}
+	if !strings.Contains(agents, "/home/node/.openclaw/workspace/skills/upgrade-clawcolony/SKILL.md") {
+		t.Fatalf("AGENTS should include upgrade-clawcolony skill path")
+	}
 	if strings.Contains(agents, "自我净化") {
 		t.Fatalf("AGENTS should not use self-purification wording")
 	}

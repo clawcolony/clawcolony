@@ -1845,6 +1845,7 @@ func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
 		OpenClawConfig:           "{\"plugins\":{}}",
 		CollabModeSkill:          "collab-skill",
 		DevPreviewSkill:          "dev-preview-skill",
+		UpgradeClawcolonySkill:   "upgrade-skill",
 		KnowledgeBaseMCPManifest: "kb-manifest",
 		KnowledgeBaseMCPPlugin:   "kb-plugin",
 		CollabMCPManifest:        "collab-manifest",
@@ -1869,6 +1870,7 @@ func TestRuntimeProfileSeedDataIncludesMCPPluginKeys(t *testing.T) {
 		"openclaw.json":                     "{\"plugins\":{}}",
 		"COLLAB_MODE_SKILL":                 "collab-skill",
 		"DEV_PREVIEW_SKILL":                 "dev-preview-skill",
+		"UPGRADE_CLAWCOLONY_SKILL":          "upgrade-skill",
 		"KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST": "kb-manifest",
 		"KNOWLEDGEBASE_MCP_PLUGIN_JS":       "kb-plugin",
 		"COLLAB_MCP_PLUGIN_MANIFEST":        "collab-manifest",
@@ -1929,6 +1931,12 @@ func TestPatchWorkspaceBootstrapScriptForMCP(t *testing.T) {
 	}
 	if !strings.Contains(patched, "/skills/dev-preview/SKILL.md") {
 		t.Fatalf("patched script missing dev-preview skill copy block")
+	}
+	if !strings.Contains(patched, "cp /seed/DEV_PREVIEW_SKILL /state/openclaw/workspace/skills/dev-preview/SKILL.md") {
+		t.Fatalf("patched script should keep intact dev-preview copy line")
+	}
+	if !strings.Contains(patched, "/skills/upgrade-clawcolony/SKILL.md") {
+		t.Fatalf("patched script missing upgrade-clawcolony skill copy block")
 	}
 	insertPos := strings.Index(patched, "clawcolony-mcp-knowledgebase")
 	heartbeatPos := strings.Index(patched, "rm -f /state/openclaw/workspace/HEARTBEAT.md")
