@@ -4239,6 +4239,7 @@ const reminderLookbackFloor = 10 * time.Minute
 const nonPinnedReminderResendCooldown = 20 * time.Minute
 const kbEnrollReminderResendCooldown = 15 * time.Minute
 const kbVoteReminderResendCooldown = 10 * time.Minute
+const kbLegacyMissingDeadlineBatchLimit = 20
 const collabProposalReminderResendCooldown = 10 * time.Minute
 
 var reminderTickPattern = regexp.MustCompile(`(?i)\btick=(\d+)\b`)
@@ -6665,26 +6666,57 @@ func (s *Server) handleKBProposalApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	if proposal.Status == "applied" {
+		resp := map[string]any{
+			"proposal":        proposal,
+			"already_applied": true,
+		}
+		if change, cerr := s.store.GetKBProposalChange(r.Context(), req.ProposalID); cerr == nil && change.TargetEntryID > 0 {
+			if entry, eerr := s.store.GetKBEntry(r.Context(), change.TargetEntryID); eerr == nil {
+				resp["entry"] = entry
+			}
+		}
+		writeJSON(w, http.StatusAccepted, resp)
+		return
+	}
 	if proposal.Status != "approved" {
 		writeError(w, http.StatusConflict, "proposal is not approved")
 		return
 	}
-	entry, updated, err := s.store.ApplyKBProposal(r.Context(), req.ProposalID, req.UserID, time.Now().UTC())
+	entry, updated, err := s.applyKBProposalAndBroadcast(r.Context(), req.ProposalID, req.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_, _, _ = s.saveGenesisBootstrapStateForProposal(r.Context(), req.ProposalID, func(cur *genesisState) bool {
-		cur.BootstrapPhase = "applied"
-		cur.CharterEntryID = entry.ID
-		cur.LastPhaseNote = fmt.Sprintf("charter applied by %s", req.UserID)
-		return true
-	})
-	s.broadcastKBApplied(r.Context(), req.ProposalID, entry, updated)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"entry":    entry,
 		"proposal": updated,
 	})
+}
+
+func (s *Server) applyKBProposalAndBroadcast(ctx context.Context, proposalID int64, appliedBy string) (store.KBEntry, store.KBProposal, error) {
+	entry, updated, err := s.store.ApplyKBProposal(ctx, proposalID, appliedBy, time.Now().UTC())
+	if err != nil {
+		latest, gerr := s.store.GetKBProposal(ctx, proposalID)
+		if gerr == nil && latest.Status == "applied" {
+			var existing store.KBEntry
+			if change, cerr := s.store.GetKBProposalChange(ctx, proposalID); cerr == nil && change.TargetEntryID > 0 {
+				if current, eerr := s.store.GetKBEntry(ctx, change.TargetEntryID); eerr == nil {
+					existing = current
+				}
+			}
+			return existing, latest, nil
+		}
+		return store.KBEntry{}, store.KBProposal{}, err
+	}
+	_, _, _ = s.saveGenesisBootstrapStateForProposal(ctx, proposalID, func(cur *genesisState) bool {
+		cur.BootstrapPhase = "applied"
+		cur.CharterEntryID = entry.ID
+		cur.LastPhaseNote = fmt.Sprintf("charter applied by %s", appliedBy)
+		return true
+	})
+	s.broadcastKBApplied(ctx, proposalID, entry, updated)
+	return entry, updated, nil
 }
 
 func (s *Server) kbTick(ctx context.Context, tickID int64) {
@@ -6905,19 +6937,39 @@ func (s *Server) kbAutoProgressDiscussing(ctx context.Context) {
 		return
 	}
 	now := time.Now().UTC()
+	legacyProcessed := 0
+	legacyDeferred := 0
 	for _, p := range items {
 		if s.kbAdvanceGenesisBootstrapDiscussing(ctx, p, now) {
 			continue
 		}
-		if p.DiscussionDeadlineAt == nil || now.Before(*p.DiscussionDeadlineAt) {
+		legacyMissingDeadline := false
+		discussionDeadline := p.DiscussionDeadlineAt
+		if discussionDeadline == nil {
+			legacyMissingDeadline = true
+			// Historical rows created before the deadline write bug are treated as due now so they can converge.
+			legacyDeadline := now
+			discussionDeadline = &legacyDeadline
+		}
+		if now.Before(*discussionDeadline) {
 			continue
+		}
+		if legacyMissingDeadline && legacyProcessed >= kbLegacyMissingDeadlineBatchLimit {
+			legacyDeferred++
+			continue
+		}
+		if legacyMissingDeadline {
+			legacyProcessed++
 		}
 		enrolled, err := s.store.ListKBProposalEnrollments(ctx, p.ID)
 		if err != nil {
 			continue
 		}
 		if len(enrolled) == 0 {
-			reason := fmt.Sprintf("自动失败: 讨论期截止且无人报名（deadline=%s）", p.DiscussionDeadlineAt.UTC().Format(time.RFC3339))
+			reason := fmt.Sprintf("自动失败: 讨论期截止且无人报名（deadline=%s）", discussionDeadline.UTC().Format(time.RFC3339))
+			if legacyMissingDeadline {
+				reason = fmt.Sprintf("自动失败: 发现历史遗留提案缺失 discussion_deadline_at 且无人报名（processed_at=%s）", now.UTC().Format(time.RFC3339))
+			}
 			closed, err := s.store.CloseKBProposal(ctx, p.ID, "rejected", reason, 0, 0, 0, 0, 0, now)
 			if err != nil {
 				continue
@@ -6963,6 +7015,9 @@ func (s *Server) kbAutoProgressDiscussing(ctx context.Context) {
 				p.ID, item.VotingRevisionID, deadline.UTC().Format(time.RFC3339))
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, targets, subject, body)
 		}
+	}
+	if legacyProcessed > 0 || legacyDeferred > 0 {
+		log.Printf("kb_legacy_missing_deadline processed=%d deferred=%d batch_limit=%d", legacyProcessed, legacyDeferred, kbLegacyMissingDeadlineBatchLimit)
 	}
 }
 
@@ -7116,22 +7171,33 @@ func (s *Server) closeKBProposalByStats(
 	if err != nil {
 		return store.KBProposal{}, err
 	}
-	// Keep genesis bootstrap state machine in sync with governance outcome.
-	_, _, _ = s.saveGenesisBootstrapStateForProposal(ctx, proposal.ID, func(cur *genesisState) bool {
-		switch strings.ToLower(strings.TrimSpace(closed.Status)) {
-		case "approved":
-			cur.BootstrapPhase = "approved"
-		case "rejected":
-			cur.BootstrapPhase = "failed"
-		}
-		cur.LastPhaseNote = reason
-		return true
-	})
 	_, _ = s.store.CreateKBThreadMessage(ctx, store.KBThreadMessage{
 		ProposalID:  proposal.ID,
 		AuthorID:    clawWorldSystemID,
 		MessageType: "result",
 		Content:     fmt.Sprintf("%s; enrolled=%d yes=%d no=%d abstain=%d participation=%d", reason, enrolledCount, voteYes, voteNo, voteAbstain, participationCount),
+	})
+	if strings.EqualFold(strings.TrimSpace(closed.Status), "approved") {
+		_, _, applyErr := s.applyKBProposalAndBroadcast(ctx, proposal.ID, clawWorldSystemID)
+		if applyErr != nil {
+			_, _, _ = s.saveGenesisBootstrapStateForProposal(ctx, proposal.ID, func(cur *genesisState) bool {
+				cur.BootstrapPhase = "approved"
+				cur.LastPhaseNote = reason
+				return true
+			})
+			log.Printf("kb_auto_apply_failed proposal_id=%d err=%v", proposal.ID, applyErr)
+			subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P1][ACTION:APPLY] #%d %s", proposal.ID, proposal.Title)
+			body := fmt.Sprintf("proposal 已 approved，但系统自动 apply 失败。\nproposal_id=%d\n请尽快调用 /v1/kb/proposals/apply 手动应用。", proposal.ID)
+			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{proposal.ProposerUserID}, subject, body)
+			return closed, nil
+		}
+		return closed, nil
+	}
+	// Keep genesis bootstrap state machine in sync with non-approved governance outcomes.
+	_, _, _ = s.saveGenesisBootstrapStateForProposal(ctx, proposal.ID, func(cur *genesisState) bool {
+		cur.BootstrapPhase = "failed"
+		cur.LastPhaseNote = reason
+		return true
 	})
 	return closed, nil
 }

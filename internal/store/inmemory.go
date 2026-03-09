@@ -1752,6 +1752,9 @@ func (s *InMemoryStore) ApplyKBProposal(_ context.Context, proposalID int64, app
 	if !ok {
 		return KBEntry{}, KBProposal{}, fmt.Errorf("kb proposal not found")
 	}
+	if strings.ToLower(strings.TrimSpace(p.Status)) != "approved" {
+		return KBEntry{}, KBProposal{}, fmt.Errorf("proposal is not approved")
+	}
 	c, ok := s.kbChanges[proposalID]
 	if !ok {
 		return KBEntry{}, KBProposal{}, fmt.Errorf("kb proposal change not found")

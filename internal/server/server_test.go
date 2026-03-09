@@ -2290,8 +2290,8 @@ func TestKBProposalApproveAndApply(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("proposal get status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte(`"status":"approved"`)) {
-		t.Fatalf("proposal should be approved: %s", w.Body.String())
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"status":"applied"`)) {
+		t.Fatalf("proposal should be auto-applied: %s", w.Body.String())
 	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
@@ -2301,6 +2301,9 @@ func TestKBProposalApproveAndApply(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("apply status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
 	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"already_applied":true`)) {
+		t.Fatalf("apply should be idempotent after auto-apply: %s", w.Body.String())
+	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/kb/entries?section=terms", nil)
 	if w.Code != http.StatusOK {
@@ -2308,6 +2311,101 @@ func TestKBProposalApproveAndApply(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"title":"active user"`)) {
 		t.Fatalf("entries missing applied title: %s", w.Body.String())
+	}
+}
+
+func TestKBAutoApplyAfterVotingDeadlineFinalize(t *testing.T) {
+	srv := newTestServer()
+	register := func() string {
+		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("register status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal register body: %v", err)
+		}
+		return resp["item"].(map[string]any)["user_id"].(string)
+	}
+	a := register()
+	b := register()
+	c := register()
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals", map[string]any{
+		"proposer_user_id":    a,
+		"title":               "截止自动apply测试",
+		"reason":              "验证投票截止自动apply",
+		"vote_threshold_pct":  50,
+		"vote_window_seconds": 1,
+		"change": map[string]any{
+			"op_type":     "add",
+			"section":     "governance/test",
+			"title":       "auto-apply-deadline",
+			"new_content": "deadline finalize then auto apply",
+			"diff_text":   "+ add auto apply on voting finalize deadline path",
+		},
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("create proposal status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+	var created map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	proposalID := int64(created["proposal"].(map[string]any)["id"].(float64))
+
+	for _, uid := range []string{b, c} {
+		w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/enroll", map[string]any{
+			"proposal_id": proposalID,
+			"user_id":     uid,
+		})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("enroll status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+		}
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/start-vote", map[string]any{
+		"proposal_id": proposalID,
+		"user_id":     a,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("start vote status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+	var start map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &start)
+	votingRevisionID := int64(start["proposal"].(map[string]any)["voting_revision_id"].(float64))
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/ack", map[string]any{
+		"proposal_id": proposalID,
+		"revision_id": votingRevisionID,
+		"user_id":     b,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("ack status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/vote", map[string]any{
+		"proposal_id": proposalID,
+		"revision_id": votingRevisionID,
+		"user_id":     b,
+		"vote":        "yes",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("vote status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+	srv.kbTick(context.Background(), 1)
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/kb/proposals/get?proposal_id="+strconv.FormatInt(proposalID, 10), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("proposal get status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"status":"applied"`)) {
+		t.Fatalf("proposal should be auto-applied after deadline finalize: %s", w.Body.String())
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/kb/entries?section=governance/test", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list entries status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"title":"auto-apply-deadline"`)) {
+		t.Fatalf("entries missing auto applied title: %s", w.Body.String())
 	}
 }
 
@@ -2616,6 +2714,62 @@ func TestKBAutoProgressDiscussingStartsVote(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(`"voting_deadline_at":"`)) {
 		t.Fatalf("expected voting deadline set: %s", w.Body.String())
+	}
+}
+
+func TestKBAutoProgressDiscussingLegacyNilDeadlineStartsVote(t *testing.T) {
+	srv := newTestServer()
+	register := func() string {
+		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("register status = %d, want %d body=%s", w.Code, http.StatusAccepted, w.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal register body: %v", err)
+		}
+		return resp["item"].(map[string]any)["user_id"].(string)
+	}
+	a := register()
+	b := register()
+
+	ctx := context.Background()
+	proposal, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    a,
+		Title:             "legacy-nil-deadline",
+		Reason:            "regression",
+		Status:            "discussing",
+		VoteThresholdPct:  80,
+		VoteWindowSeconds: 120,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "governance/test",
+		Title:      "legacy",
+		NewContent: "v1",
+		DiffText:   "+ add legacy nil deadline regression case",
+	})
+	if err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+	if proposal.DiscussionDeadlineAt != nil {
+		t.Fatalf("expected legacy proposal to have nil discussion deadline")
+	}
+	if _, err := srv.store.EnrollKBProposal(ctx, proposal.ID, b); err != nil {
+		t.Fatalf("enroll status: %v", err)
+	}
+
+	srv.kbTick(ctx, 1)
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/kb/proposals/get?proposal_id="+strconv.FormatInt(proposal.ID, 10), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("proposal get status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	if !bytes.Contains(body, []byte(`"status":"voting"`)) {
+		t.Fatalf("expected legacy nil deadline proposal auto starts voting: %s", w.Body.String())
+	}
+	if bytes.Contains(body, []byte(`"voting_revision_id":0`)) {
+		t.Fatalf("expected voting revision id to be set: %s", w.Body.String())
 	}
 }
 
