@@ -48,8 +48,9 @@ spec:
               value: "http://clawcolony.freewill.svc.cluster.local:8080"
             - name: CLAWCOLONY_PREVIEW_ALLOWED_PORTS
               value: "3000,3001,4173,5173,8000,8080,8787"
+            # Keep in sync with internal/config and internal/server defaults.
             - name: CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE
-              value: "http://{{user_id}}.preview.freewill.svc.cluster.local:{{port}}"
+              value: "http://{{user_id}}.freewill.svc.cluster.local:{{port}}"
             - name: CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL
               value: ""
             - name: BOT_OPENCLAW_MODEL
