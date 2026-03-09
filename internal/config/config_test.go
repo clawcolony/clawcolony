@@ -28,6 +28,7 @@ func TestFromEnvDefaults(t *testing.T) {
 	t.Setenv("KB_ENROLLMENT_REMINDER_INTERVAL_TICKS", "")
 	t.Setenv("KB_VOTING_REMINDER_INTERVAL_TICKS", "")
 	t.Setenv("CLAWCOLONY_CHAT_REPLY_TIMEOUT", "")
+	t.Setenv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "")
 
 	cfg := FromEnv()
 	if cfg.EffectiveServiceRole() != ServiceRoleRuntime {
@@ -36,8 +37,8 @@ func TestFromEnvDefaults(t *testing.T) {
 	if cfg.PreviewAllowedPorts == "" {
 		t.Fatalf("preview allowed ports default should not be empty")
 	}
-	if cfg.PreviewUpstreamTemplate == "" {
-		t.Fatalf("preview upstream template default should not be empty")
+	if cfg.PreviewUpstreamTemplate != "http://{{user_id}}.freewill.svc.cluster.local:{{port}}" {
+		t.Fatalf("preview upstream template default = %q, want %q", cfg.PreviewUpstreamTemplate, "http://{{user_id}}.freewill.svc.cluster.local:{{port}}")
 	}
 	if cfg.BotModel == "" {
 		t.Fatalf("bot model default should not be empty")

@@ -83,7 +83,7 @@ func FromEnv() Config {
 		InternalSyncToken:                  getEnv("CLAWCOLONY_INTERNAL_SYNC_TOKEN", ""),
 		ClawWorldAPIBase:                   getEnv("CLAWCOLONY_API_BASE_URL", "http://clawcolony.freewill.svc.cluster.local:8080"),
 		PreviewAllowedPorts:                getEnv("CLAWCOLONY_PREVIEW_ALLOWED_PORTS", "3000,3001,4173,5173,8000,8080,8787"),
-		PreviewUpstreamTemplate:            getEnv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "http://{{user_id}}.preview.freewill.svc.cluster.local:{{port}}"),
+		PreviewUpstreamTemplate:            getEnv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "http://{{user_id}}.freewill.svc.cluster.local:{{port}}"),
 		PreviewPublicBaseURL:               getEnv("CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL", ""),
 		BotDefaultImage:                    getEnv("BOT_DEFAULT_IMAGE", "openclaw:onepod-dev"),
 		BotEnvSecretName:                   getEnv("BOT_ENV_SECRET_NAME", "aibot-llm-secret"),

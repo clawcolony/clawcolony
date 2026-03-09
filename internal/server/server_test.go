@@ -785,6 +785,43 @@ func TestBotDevHealthUnknownUserReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestPreviewUpstreamURLUsesServiceDNSByDefault(t *testing.T) {
+	srv := newTestServer()
+	// Empty template forces server-level fallback (defaultPreviewUpstreamTemplate).
+	srv.cfg.PreviewUpstreamTemplate = ""
+
+	u, err := srv.previewUpstreamURL("user-dev-default", 3000)
+	if err != nil {
+		t.Fatalf("previewUpstreamURL error: %v", err)
+	}
+	if got, want := u.String(), "http://user-dev-default.freewill.svc.cluster.local:3000"; got != want {
+		t.Fatalf("upstream url = %q, want %q", got, want)
+	}
+}
+
+func TestPreviewUpstreamDefaultMatchesConfigDefault(t *testing.T) {
+	t.Setenv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "")
+	cfg := config.FromEnv()
+	if got, want := cfg.PreviewUpstreamTemplate, defaultPreviewUpstreamTemplate; got != want {
+		t.Fatalf("preview upstream default drift: config=%q server=%q", got, want)
+	}
+}
+
+func TestPreviewUpstreamURLUsesConfigDefaultTemplate(t *testing.T) {
+	srv := newTestServer()
+	t.Setenv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "")
+	cfg := config.FromEnv()
+	srv.cfg.PreviewUpstreamTemplate = cfg.PreviewUpstreamTemplate
+
+	u, err := srv.previewUpstreamURL("user-dev-config-default", 5173)
+	if err != nil {
+		t.Fatalf("previewUpstreamURL error: %v", err)
+	}
+	if got, want := u.String(), "http://user-dev-config-default.freewill.svc.cluster.local:5173"; got != want {
+		t.Fatalf("upstream url = %q, want %q", got, want)
+	}
+}
+
 func TestRegisterAndTokenLifecycle(t *testing.T) {
 	srv := newTestServer()
 

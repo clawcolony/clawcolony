@@ -5,6 +5,12 @@
 
 ## 2026-03-09
 
+- Dev Preview upstream 默认域名修复（Service DNS）：
+  - 默认模板从 `http://{{user_id}}.preview.freewill.svc.cluster.local:{{port}}` 调整为 `http://{{user_id}}.freewill.svc.cluster.local:{{port}}`
+  - 同步更新 runtime config / server fallback / k8s deployment / README，避免配置漂移
+  - 补充测试：`TestFromEnvDefaults`、`TestPreviewUpstreamURLUsesServiceDNSByDefault`、`TestPreviewUpstreamDefaultMatchesConfigDefault`、`TestPreviewUpstreamURLUsesConfigDefaultTemplate`
+  - 详细流水：`doc/updates/2026-03-09-dev-preview-upstream-service-dns-fix.md`
+
 - OpenClaw Dashboard 会话默认值与 token 查询修复：
   - Dashboard 注入脚本默认 `sessionKey` 从 `main` 调整为 `runtime-chat-<user_id>`
   - 对已有 `main`/legacy 会话做前端本地迁移：仅当 `sessionKey` 为空、`main` 或 `agent:main:main` 时替换为 runtime chat 会话
