@@ -4016,6 +4016,21 @@ func patchWorkspaceBootstrapScriptForMCP(script string) (string, bool) {
 		}
 		changed = true
 	}
+	if !strings.Contains(out, "/skills/upgrade-clawcolony/SKILL.md") {
+		const marker = "          cp /seed/DEV_PREVIEW_SKILL /state/openclaw/workspace/skills/dev-preview/SKILL.md"
+		block := strings.TrimPrefix(`
+          mkdir -p /state/openclaw/workspace/skills/upgrade-clawcolony
+          cp /seed/UPGRADE_CLAWCOLONY_SKILL /state/openclaw/workspace/skills/upgrade-clawcolony/SKILL.md
+`, "\n")
+		if idx := strings.Index(out, marker); idx >= 0 {
+			insertPos := idx + len(marker)
+			tail := strings.TrimPrefix(out[insertPos:], "\n")
+			out = out[:insertPos] + "\n" + block + tail
+		} else {
+			out = strings.TrimRight(out, "\n") + "\n" + block + "\n"
+		}
+		changed = true
+	}
 	return out, changed
 }
 
