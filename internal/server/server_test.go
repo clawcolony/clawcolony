@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
@@ -124,6 +125,24 @@ func doJSONRequestWithHeaders(t *testing.T, h http.Handler, method, path string,
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func doJSONRequestWithRemoteAddr(t *testing.T, h http.Handler, method, path string, payload any, remoteAddr string) *httptest.ResponseRecorder {
+	t.Helper()
+	var body []byte
+	if payload != nil {
+		var err error
+		body, err = json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+	}
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = remoteAddr
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w
@@ -3425,6 +3444,384 @@ func TestWorldTickExtinctionFreeze(t *testing.T) {
 	if !bytes.Contains(body, []byte(`"step_name":"kb_tick"`)) ||
 		!bytes.Contains(body, []byte(`"status":"skipped"`)) {
 		t.Fatalf("expected kb_tick skipped when frozen: %s", steps.Body.String())
+	}
+}
+
+func TestWorldFreezeRescueDryRun(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.ExtinctionThreshold = 50
+	ctx := context.Background()
+	userIDs := []string{"u-rescue-dry-1", "u-rescue-dry-2"}
+	for _, uid := range userIDs {
+		if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+			BotID:       uid,
+			Name:        uid,
+			Provider:    "system",
+			Status:      "active",
+			Initialized: true,
+		}); err != nil {
+			t.Fatalf("upsert bot %s: %v", uid, err)
+		}
+	}
+
+	srv.runWorldTick(ctx)
+
+	w := doJSONRequestWithRemoteAddr(t, srv.mux, http.MethodPost, "/v1/world/freeze/rescue", map[string]any{
+		"mode":    "at_risk",
+		"amount":  10000,
+		"dry_run": true,
+	}, "127.0.0.1:12345")
+	if w.Code != http.StatusOK {
+		t.Fatalf("rescue dry-run status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"dry_run":true`)) ||
+		!bytes.Contains(w.Body.Bytes(), []byte(`"targeted_users":2`)) {
+		t.Fatalf("unexpected dry-run response: %s", w.Body.String())
+	}
+
+	for _, uid := range userIDs {
+		acc := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/accounts?user_id="+uid, nil)
+		if acc.Code != http.StatusOK {
+			t.Fatalf("token account status=%d uid=%s body=%s", acc.Code, uid, acc.Body.String())
+		}
+		if !bytes.Contains(acc.Body.Bytes(), []byte(`"balance":0`)) {
+			t.Fatalf("dry-run should not change balance uid=%s body=%s", uid, acc.Body.String())
+		}
+	}
+
+	freeze := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/freeze/status", nil)
+	if freeze.Code != http.StatusOK {
+		t.Fatalf("freeze status=%d body=%s", freeze.Code, freeze.Body.String())
+	}
+	if !bytes.Contains(freeze.Body.Bytes(), []byte(`"frozen":true`)) {
+		t.Fatalf("dry-run should keep frozen=true: %s", freeze.Body.String())
+	}
+}
+
+func TestWorldFreezeRescueApplyUnfreezesWorld(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.ExtinctionThreshold = 50
+	ctx := context.Background()
+	userIDs := []string{"u-rescue-apply-1", "u-rescue-apply-2"}
+	for _, uid := range userIDs {
+		if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+			BotID:       uid,
+			Name:        uid,
+			Provider:    "system",
+			Status:      "active",
+			Initialized: true,
+		}); err != nil {
+			t.Fatalf("upsert bot %s: %v", uid, err)
+		}
+	}
+
+	srv.runWorldTick(ctx)
+
+	w := doJSONRequestWithRemoteAddr(t, srv.mux, http.MethodPost, "/v1/world/freeze/rescue", map[string]any{
+		"mode":   "at_risk",
+		"amount": 10000,
+	}, "127.0.0.1:12345")
+	if w.Code != http.StatusOK {
+		t.Fatalf("rescue apply status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"applied_users":2`)) {
+		t.Fatalf("unexpected apply response: %s", w.Body.String())
+	}
+
+	freeze := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/freeze/status", nil)
+	if freeze.Code != http.StatusOK {
+		t.Fatalf("freeze status=%d body=%s", freeze.Code, freeze.Body.String())
+	}
+	if !bytes.Contains(freeze.Body.Bytes(), []byte(`"frozen":false`)) {
+		t.Fatalf("expected frozen=false after rescue apply: %s", freeze.Body.String())
+	}
+
+	for _, uid := range userIDs {
+		acc := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/accounts?user_id="+uid, nil)
+		if acc.Code != http.StatusOK {
+			t.Fatalf("token account status=%d uid=%s body=%s", acc.Code, uid, acc.Body.String())
+		}
+		if !bytes.Contains(acc.Body.Bytes(), []byte(`"balance":10000`)) {
+			t.Fatalf("expected balance=10000 uid=%s body=%s", uid, acc.Body.String())
+		}
+	}
+}
+
+func TestWorldFreezeRescueValidation(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       "u-rescue-validate-1",
+		Name:        "u-rescue-validate-1",
+		Provider:    "system",
+		Status:      "active",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert bot: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		payload map[string]any
+		wantErr string
+	}{
+		{
+			name: "invalid amount zero",
+			payload: map[string]any{
+				"mode":   "at_risk",
+				"amount": 0,
+			},
+			wantErr: "amount must be in [1",
+		},
+		{
+			name: "invalid amount negative",
+			payload: map[string]any{
+				"mode":   "at_risk",
+				"amount": -1,
+			},
+			wantErr: "amount must be in [1",
+		},
+		{
+			name: "invalid amount above max",
+			payload: map[string]any{
+				"mode":   "at_risk",
+				"amount": worldFreezeRescueMaxAmount + 1,
+			},
+			wantErr: "amount must be in [1",
+		},
+		{
+			name: "unknown selected users",
+			payload: map[string]any{
+				"mode":     "selected",
+				"amount":   1,
+				"user_ids": []string{"u-not-exists"},
+			},
+			wantErr: "some user_ids are not found in token accounts",
+		},
+		{
+			name: "selected mode missing user_ids",
+			payload: map[string]any{
+				"mode":   "selected",
+				"amount": 1,
+			},
+			wantErr: "user_ids is required when mode=selected",
+		},
+		{
+			name: "reject system user",
+			payload: map[string]any{
+				"mode":     "selected",
+				"amount":   1,
+				"user_ids": []string{clawWorldSystemID},
+			},
+			wantErr: "claw-world-system cannot be rescued",
+		},
+	}
+	for _, tc := range cases {
+		w := doJSONRequestWithRemoteAddr(t, srv.mux, http.MethodPost, "/v1/world/freeze/rescue", tc.payload, "127.0.0.1:12345")
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s status=%d body=%s", tc.name, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), tc.wantErr) {
+			t.Fatalf("%s expected error containing %q body=%s", tc.name, tc.wantErr, w.Body.String())
+		}
+	}
+}
+
+func TestWorldFreezeRescueApplyHandlesOverflow(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	userID := "u-rescue-overflow-1"
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       userID,
+		Name:        userID,
+		Provider:    "system",
+		Status:      "active",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert bot: %v", err)
+	}
+	if _, err := srv.store.Recharge(ctx, userID, math.MaxInt64); err != nil {
+		t.Fatalf("seed max balance: %v", err)
+	}
+
+	w := doJSONRequestWithRemoteAddr(t, srv.mux, http.MethodPost, "/v1/world/freeze/rescue", map[string]any{
+		"mode":     "selected",
+		"amount":   1,
+		"user_ids": []string{userID},
+		"dry_run":  false,
+	}, "127.0.0.1:12345")
+	if w.Code != http.StatusOK {
+		t.Fatalf("rescue apply overflow status=%d body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"failed_users":1`) || !strings.Contains(body, "token balance overflow") {
+		t.Fatalf("expected overflow failure in response body=%s", body)
+	}
+}
+
+func TestWorldFreezeRescueDryRunOverflow(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	userID := "u-rescue-overflow-dry-1"
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       userID,
+		Name:        userID,
+		Provider:    "system",
+		Status:      "active",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert bot: %v", err)
+	}
+	if _, err := srv.store.Recharge(ctx, userID, math.MaxInt64); err != nil {
+		t.Fatalf("seed max balance: %v", err)
+	}
+	w := doJSONRequestWithRemoteAddr(t, srv.mux, http.MethodPost, "/v1/world/freeze/rescue", map[string]any{
+		"mode":     "selected",
+		"amount":   1,
+		"user_ids": []string{userID},
+		"dry_run":  true,
+	}, "127.0.0.1:12345")
+	if w.Code != http.StatusOK {
+		t.Fatalf("rescue dry-run overflow status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "balance overflow in dry_run simulation") {
+		t.Fatalf("expected dry-run overflow error body=%s", w.Body.String())
+	}
+}
+
+func TestWorldFreezeRescueModeDefaultAtRisk(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	for _, uid := range []string{"u-rescue-default-1", "u-rescue-default-2"} {
+		if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+			BotID:       uid,
+			Name:        uid,
+			Provider:    "system",
+			Status:      "active",
+			Initialized: true,
+		}); err != nil {
+			t.Fatalf("upsert bot: %v", err)
+		}
+	}
+	w := doJSONRequestWithRemoteAddr(t, srv.mux, http.MethodPost, "/v1/world/freeze/rescue", map[string]any{
+		"amount": 1,
+	}, "127.0.0.1:12345")
+	if w.Code != http.StatusOK {
+		t.Fatalf("default mode rescue status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"mode":"at_risk"`) {
+		t.Fatalf("expected mode=at_risk in default response body=%s", w.Body.String())
+	}
+}
+
+func TestWorldFreezeRescueAtRiskTruncatesTargets(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	total := worldFreezeRescueMaxUsers + 2
+	for i := 0; i < total; i++ {
+		uid := fmt.Sprintf("u-rescue-many-%03d", i)
+		if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+			BotID:       uid,
+			Name:        uid,
+			Provider:    "system",
+			Status:      "active",
+			Initialized: true,
+		}); err != nil {
+			t.Fatalf("upsert bot: %v", err)
+		}
+	}
+	w := doJSONRequestWithRemoteAddr(t, srv.mux, http.MethodPost, "/v1/world/freeze/rescue", map[string]any{
+		"mode":    "at_risk",
+		"amount":  1,
+		"dry_run": true,
+	}, "127.0.0.1:12345")
+	if w.Code != http.StatusOK {
+		t.Fatalf("at-risk truncate status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), fmt.Sprintf(`"targeted_users":%d`, worldFreezeRescueMaxUsers)) {
+		t.Fatalf("expected targeted_users=%d body=%s", worldFreezeRescueMaxUsers, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"truncated_users":2`) {
+		t.Fatalf("expected truncated_users=2 body=%s", w.Body.String())
+	}
+}
+
+func TestWorldFreezeRescueSelectedModeApply(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	userA := "u-rescue-selected-a"
+	userB := "u-rescue-selected-b"
+	for _, uid := range []string{userA, userB} {
+		if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+			BotID:       uid,
+			Name:        uid,
+			Provider:    "system",
+			Status:      "active",
+			Initialized: true,
+		}); err != nil {
+			t.Fatalf("upsert bot %s: %v", uid, err)
+		}
+	}
+	w := doJSONRequestWithRemoteAddr(t, srv.mux, http.MethodPost, "/v1/world/freeze/rescue", map[string]any{
+		"mode":     "selected",
+		"amount":   50,
+		"user_ids": []string{userA},
+	}, "127.0.0.1:12345")
+	if w.Code != http.StatusOK {
+		t.Fatalf("selected rescue apply status=%d body=%s", w.Code, w.Body.String())
+	}
+	a := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/accounts?user_id="+userA, nil)
+	b := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/accounts?user_id="+userB, nil)
+	if !bytes.Contains(a.Body.Bytes(), []byte(`"balance":50`)) {
+		t.Fatalf("userA expected balance=50 body=%s", a.Body.String())
+	}
+	if !bytes.Contains(b.Body.Bytes(), []byte(`"balance":0`)) {
+		t.Fatalf("userB expected balance=0 body=%s", b.Body.String())
+	}
+}
+
+func TestWorldFreezeRescueMethodNotAllowed(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/freeze/rescue", nil)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("method not allowed status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestWorldFreezeRescueRejectsNonLoopbackWithoutToken(t *testing.T) {
+	srv := newTestServer()
+	req := httptest.NewRequest(http.MethodPost, "/v1/world/freeze/rescue", bytes.NewBufferString(`{"mode":"at_risk","amount":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "10.0.0.8:3456"
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("non-loopback request should be unauthorized, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestWorldFreezeRescueAllowsNonLoopbackWithToken(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "sync-token"
+	ctx := context.Background()
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       "u-rescue-auth-1",
+		Name:        "u-rescue-auth-1",
+		Provider:    "system",
+		Status:      "active",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert bot: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/world/freeze/rescue", bytes.NewBufferString(`{"mode":"selected","amount":1,"user_ids":["u-rescue-auth-1"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Clawcolony-Internal-Token", "sync-token")
+	req.RemoteAddr = "10.0.0.8:3456"
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("non-loopback request with token should pass, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

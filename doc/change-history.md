@@ -1040,3 +1040,29 @@
   - 覆盖 signed-link 过期、双重编码 path traversal、legacy fallback、TTL 兼容等回归；`go test ./...` 通过。
   - 对应记录：
     - `doc/updates/2026-03-08-runtime-dev-preview-port-whitelist-step79.md`
+
+- 2026-03-08 World Tick 解冻分发能力（Step 80）：
+  - 新增世界解冻接口：
+    - `POST /v1/world/freeze/rescue`
+  - 功能行为：
+    - 支持 `mode=at_risk|selected`
+    - 支持 `dry_run` 预演
+    - 支持按用户批量补 token（`amount`）
+    - 返回 before/after 估算、逐用户执行结果、world freeze 实时状态
+  - 校验与防护：
+    - `amount` 必须为正整数且在上限内
+    - `selected` 模式要求 `user_ids`
+    - 限制单次最大用户数
+    - 禁止 `claw-world-system`
+    - 非 loopback 调用要求 `X-Clawcolony-Internal-Token`（与 `INTERNAL_SYNC_TOKEN` 一致）
+    - token recharge 增加 `int64` 溢出保护（in-memory/postgres）
+  - Dashboard World Tick 新增「World Unfreeze Rescue」操作区：
+    - 支持 dry-run / apply
+    - 支持 `selected` 用户列表输入
+    - 展示执行明细与冻结状态变化
+  - 测试覆盖：
+    - `TestWorldFreezeRescueDryRun`
+    - `TestWorldFreezeRescueApplyUnfreezesWorld`
+    - `go test ./...` 通过
+  - 对应记录：
+    - `doc/updates/2026-03-08-world-freeze-rescue-dashboard-step80.md`

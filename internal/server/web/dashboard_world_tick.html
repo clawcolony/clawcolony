@@ -216,6 +216,29 @@
         <div class="title">Current Tick Status</div>
         <div id="status"></div>
       </div>
+      <div class="panel" style="grid-column: 1 / -1;">
+        <div class="title">World Unfreeze Rescue</div>
+        <div class="meta">按目标用户批量补 token，降低 at_risk 比例并解除世界冻结。</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+          <label>mode:
+            <select id="freezeRescueMode">
+              <option value="at_risk">at_risk (自动选余额<=0用户)</option>
+              <option value="selected">selected (手动指定用户)</option>
+            </select>
+          </label>
+          <label>amount per user:
+            <input id="freezeRescueAmount" type="number" min="1" step="1" value="10000" style="width:140px" />
+          </label>
+          <button onclick="runFreezeRescue(true)">预演 Dry Run</button>
+          <button onclick="runFreezeRescue(false)">执行分发</button>
+          <span id="freezeRescueState" class="meta"></span>
+        </div>
+        <div style="margin-top:8px;">
+          <label style="display:block; margin-bottom:4px;">user_ids（仅 selected 模式生效，逗号/空格/换行分隔）:</label>
+          <textarea id="freezeRescueUserIDs" style="width:100%; min-height:80px;" placeholder="user-xxx&#10;user-yyy"></textarea>
+        </div>
+        <div id="freezeRescueResult" style="margin-top:8px;"></div>
+      </div>
       <div class="panel">
         <div class="title">Current Tick Steps</div>
         <div id="tickSteps"></div>
@@ -267,6 +290,73 @@
       function renderStatus(d){
         const node = document.getElementById("status");
         node.innerHTML = `<div class="item"><div class="meta">tick_id=${esc(d.tick_id)} · last_tick_at=${esc(d.last_tick_at)} · duration_ms=${esc(d.last_duration_ms)} · interval_sec=${esc(d.tick_interval_sec)}</div><div class="meta" style="margin-top:6px;">law=${esc(d.tian_dao_law_key)}@${esc(d.tian_dao_law_version)} · sha256=${esc(d.tian_dao_law_sha256 || "")}</div><div class="meta" style="margin-top:6px;">law_updated=${esc(d.tian_dao_law_updated || "")} · action_cost_consume=${esc(d.action_cost_consume)}</div><div class="meta" style="margin-top:6px;">frozen=${esc(d.frozen)} · freeze_tick=${esc(d.freeze_tick_id || 0)} · at_risk=${esc(d.freeze_at_risk_users || 0)}/${esc(d.freeze_total_users || 0)} · threshold=${esc(d.freeze_threshold_pct || 0)}%</div><pre style="margin-top:8px; color:#ffd0d0;">${esc(d.freeze_reason || d.last_error || "")}</pre></div>`;
+      }
+      function parseUserIDList(raw){
+        return Array.from(new Set(String(raw || "")
+          .split(/[\s,]+/)
+          .map(x => x.trim())
+          .filter(Boolean)
+        ));
+      }
+      function renderFreezeRescueResult(d){
+        const node = document.getElementById("freezeRescueResult");
+        const items = Array.isArray(d.items) ? d.items : [];
+        const rows = items.length
+          ? items.map(it => `
+            <div class="item">
+              <div class="meta">user=${esc(it.user_id)} · before=${esc(it.balance_before)} · after=${esc(it.balance_after)} · recharge=${esc(it.recharge_amount)} · applied=${esc(it.applied)}</div>
+              <pre style="margin-top:8px; color:#ffd0d0;">${esc(it.error || "")}</pre>
+            </div>
+          `).join("")
+          : `<div class="item"><div class="meta">暂无结果</div></div>`;
+        node.innerHTML = `
+          <div class="item">
+            <div class="meta">mode=${esc(d.mode)} · dry_run=${esc(d.dry_run)} · amount_per_user=${esc(d.amount_per_user)} · targeted=${esc(d.targeted_users)} · applied=${esc(d.applied_users)} · failed=${esc(d.failed_users)}</div>
+            <div class="meta" style="margin-top:6px;">before at_risk=${esc((d.before||{}).at_risk_users)} triggered=${esc((d.before||{}).triggered)} · after_estimate at_risk=${esc((d.after_estimate||{}).at_risk_users)} triggered=${esc((d.after_estimate||{}).triggered)}</div>
+            <div class="meta" style="margin-top:6px;">world_frozen=${esc(d.world_frozen)} · world_tick_id=${esc(d.world_tick_id)} · freeze_tick=${esc(d.world_freeze_tick || 0)}</div>
+            <pre style="margin-top:8px; color:#ffd0d0;">${esc(d.world_freeze_reason || d.eval_error || "")}</pre>
+          </div>
+          ${rows}
+        `;
+      }
+      async function runFreezeRescue(dryRun){
+        const state = document.getElementById("freezeRescueState");
+        try{
+          const mode = String(document.getElementById("freezeRescueMode").value || "at_risk").trim();
+          const amount = Number(document.getElementById("freezeRescueAmount").value || "0");
+          if(!Number.isInteger(amount) || amount <= 0){
+            throw new Error("amount per user must be a positive integer");
+          }
+          const userIDs = parseUserIDList(document.getElementById("freezeRescueUserIDs").value || "");
+          if(mode === "selected" && userIDs.length === 0){
+            throw new Error("selected mode requires at least one user_id");
+          }
+          if(!dryRun){
+            const targetHint = mode === "selected" ? `${userIDs.length}` : "at_risk auto";
+            const ok = window.confirm(`确认执行分发？mode=${mode}, amount=${amount}, targets=${targetHint}`);
+            if(!ok){
+              state.textContent = "rescue canceled";
+              return;
+            }
+          }
+          const r = await fetch("/v1/world/freeze/rescue", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({
+              mode,
+              amount,
+              user_ids: userIDs,
+              dry_run: !!dryRun,
+            }),
+          });
+          const d = await r.json();
+          if(!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+          renderFreezeRescueResult(d);
+          state.textContent = `rescue ok: dry_run=${d.dry_run} targeted=${d.targeted_users} applied=${d.applied_users} world_frozen=${d.world_frozen}`;
+          await refreshAll();
+        }catch(e){
+          state.textContent = "rescue failed: " + (e.message || e);
+        }
       }
       function renderHistory(items){
         const node = document.getElementById("history");

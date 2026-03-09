@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -679,6 +680,9 @@ func (s *InMemoryStore) Recharge(_ context.Context, botID string, amount int64) 
 	defer s.mu.Unlock()
 	s.ensureBot(botID)
 	account := s.accounts[botID]
+	if amount > 0 && account.Balance > (math.MaxInt64-amount) {
+		return TokenLedger{}, ErrBalanceOverflow
+	}
 	account.Balance += amount
 	account.UpdatedAt = time.Now().UTC()
 	s.accounts[botID] = account

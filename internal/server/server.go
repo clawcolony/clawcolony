@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"mime"
 	"net"
@@ -954,6 +955,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/tian-dao/law", s.handleTianDaoLaw)
 	s.mux.HandleFunc("/v1/world/tick/status", s.handleWorldTickStatus)
 	s.mux.HandleFunc("/v1/world/freeze/status", s.handleWorldFreezeStatus)
+	s.mux.HandleFunc("/v1/world/freeze/rescue", s.handleWorldFreezeRescue)
 	s.mux.HandleFunc("/v1/world/tick/history", s.handleWorldTickHistory)
 	s.mux.HandleFunc("/v1/world/tick/chain/verify", s.handleWorldTickChainVerify)
 	s.mux.HandleFunc("/v1/world/tick/replay", s.handleWorldTickReplay)
@@ -1215,6 +1217,338 @@ func (s *Server) handleWorldFreezeStatus(w http.ResponseWriter, r *http.Request)
 		"freeze_threshold_pct": s.worldFreezeThreshold,
 		"tick_id":              s.worldTickID,
 		"last_tick_at":         s.worldTickAt,
+	})
+}
+
+const (
+	worldFreezeRescueModeAtRisk   = "at_risk"
+	worldFreezeRescueModeSelected = "selected"
+	worldFreezeRescueMaxUsers     = 500
+	worldFreezeRescueMaxAmount    = int64(1_000_000_000)
+)
+
+type worldFreezeRescueRequest struct {
+	Mode    string   `json:"mode"`
+	Amount  int64    `json:"amount"`
+	UserIDs []string `json:"user_ids"`
+	DryRun  bool     `json:"dry_run"`
+}
+
+type worldFreezeRescueResultItem struct {
+	UserID         string `json:"user_id"`
+	BalanceBefore  int64  `json:"balance_before"`
+	BalanceAfter   int64  `json:"balance_after"`
+	RechargeAmount int64  `json:"recharge_amount"`
+	Applied        bool   `json:"applied"`
+	Error          string `json:"error,omitempty"`
+}
+
+func normalizeWorldFreezeRescueMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case worldFreezeRescueModeAtRisk:
+		return worldFreezeRescueModeAtRisk
+	case worldFreezeRescueModeSelected:
+		return worldFreezeRescueModeSelected
+	default:
+		return ""
+	}
+}
+
+func normalizeDistinctUserIDs(raw []string) []string {
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, it := range raw {
+		uid := strings.TrimSpace(it)
+		if uid == "" {
+			continue
+		}
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		out = append(out, uid)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func isLoopbackRemoteAddr(remoteAddr string) bool {
+	raw := strings.TrimSpace(remoteAddr)
+	if raw == "" {
+		return false
+	}
+	host := raw
+	if h, _, err := net.SplitHostPort(raw); err == nil {
+		host = h
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func safeInt64Add(a, b int64) (int64, bool) {
+	if b > 0 && a > (math.MaxInt64-b) {
+		return 0, false
+	}
+	if b < 0 && a < (math.MinInt64-b) {
+		return 0, false
+	}
+	return a + b, true
+}
+
+func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !isLoopbackRemoteAddr(r.RemoteAddr) {
+		expected := strings.TrimSpace(s.cfg.InternalSyncToken)
+		got := internalSyncTokenFromRequest(r)
+		if expected == "" {
+			writeError(w, http.StatusUnauthorized, "non-loopback requests require internal sync token configuration")
+			return
+		}
+		if got == "" || got != expected {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+	}
+	var req worldFreezeRescueRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	mode := normalizeWorldFreezeRescueMode(req.Mode)
+	if mode == "" {
+		if strings.TrimSpace(req.Mode) == "" {
+			mode = worldFreezeRescueModeAtRisk
+		} else {
+			writeError(w, http.StatusBadRequest, "mode must be one of: at_risk, selected")
+			return
+		}
+	}
+	if req.Amount <= 0 || req.Amount > worldFreezeRescueMaxAmount {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("amount must be in [1, %d]", worldFreezeRescueMaxAmount))
+		return
+	}
+
+	selectedUserIDs := normalizeDistinctUserIDs(req.UserIDs)
+	if mode == worldFreezeRescueModeSelected && len(selectedUserIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "user_ids is required when mode=selected")
+		return
+	}
+	if len(selectedUserIDs) > worldFreezeRescueMaxUsers {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("user_ids exceeds max users: %d", worldFreezeRescueMaxUsers))
+		return
+	}
+	for _, uid := range selectedUserIDs {
+		if uid == clawWorldSystemID {
+			writeError(w, http.StatusBadRequest, "claw-world-system cannot be rescued")
+			return
+		}
+	}
+
+	accounts, err := s.store.ListTokenAccounts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	balanceByUser := make(map[string]int64, len(accounts))
+	totalUsers := 0
+	atRiskBefore := 0
+	for _, it := range accounts {
+		uid := strings.TrimSpace(it.BotID)
+		if uid == "" || uid == clawWorldSystemID {
+			continue
+		}
+		balanceByUser[uid] = it.Balance
+		totalUsers++
+		if it.Balance <= 0 {
+			atRiskBefore++
+		}
+	}
+
+	targetUsers := make([]string, 0)
+	unknownUserIDs := make([]string, 0)
+	truncatedUsers := 0
+	if mode == worldFreezeRescueModeAtRisk {
+		for uid, bal := range balanceByUser {
+			if bal <= 0 {
+				targetUsers = append(targetUsers, uid)
+			}
+		}
+		sort.Strings(targetUsers)
+		if len(targetUsers) > worldFreezeRescueMaxUsers {
+			truncatedUsers = len(targetUsers) - worldFreezeRescueMaxUsers
+			targetUsers = targetUsers[:worldFreezeRescueMaxUsers]
+		}
+	} else {
+		targetUsers = make([]string, 0, len(selectedUserIDs))
+		for _, uid := range selectedUserIDs {
+			if _, ok := balanceByUser[uid]; !ok {
+				unknownUserIDs = append(unknownUserIDs, uid)
+				continue
+			}
+			targetUsers = append(targetUsers, uid)
+		}
+		if len(unknownUserIDs) > 0 {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("some user_ids are not found in token accounts: %s", strings.Join(unknownUserIDs, ",")))
+			return
+		}
+	}
+
+	if len(targetUsers) == 0 {
+		writeError(w, http.StatusBadRequest, "no target users matched current rescue mode")
+		return
+	}
+	for _, uid := range targetUsers {
+		if uid == clawWorldSystemID {
+			writeError(w, http.StatusBadRequest, "claw-world-system cannot be rescued")
+			return
+		}
+	}
+	if mode == worldFreezeRescueModeSelected && len(targetUsers) > worldFreezeRescueMaxUsers {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("target users exceeds max users: %d", worldFreezeRescueMaxUsers))
+		return
+	}
+
+	simulatedBalances := make(map[string]int64, len(balanceByUser))
+	for uid, bal := range balanceByUser {
+		simulatedBalances[uid] = bal
+	}
+	items := make([]worldFreezeRescueResultItem, 0, len(targetUsers))
+	appliedUsers := 0
+	evalErr := ""
+	for _, uid := range targetUsers {
+		before := simulatedBalances[uid]
+		item := worldFreezeRescueResultItem{
+			UserID:         uid,
+			BalanceBefore:  before,
+			BalanceAfter:   before,
+			RechargeAmount: req.Amount,
+			Applied:        false,
+		}
+		if req.DryRun {
+			after, ok := safeInt64Add(before, req.Amount)
+			if !ok {
+				item.Error = "balance overflow in dry_run simulation"
+				items = append(items, item)
+				continue
+			}
+			item.BalanceAfter = after
+			simulatedBalances[uid] = item.BalanceAfter
+			items = append(items, item)
+			continue
+		}
+		if err := s.ensureUserAlive(r.Context(), uid); err != nil {
+			item.Error = err.Error()
+			items = append(items, item)
+			continue
+		}
+		ledger, err := s.store.Recharge(r.Context(), uid, req.Amount)
+		if err != nil {
+			item.Error = err.Error()
+			items = append(items, item)
+			continue
+		}
+		item.BalanceAfter = ledger.BalanceAfter
+		item.RechargeAmount = ledger.Amount
+		item.Applied = true
+		appliedUsers++
+		simulatedBalances[uid] = ledger.BalanceAfter
+		items = append(items, item)
+	}
+
+	atRiskAfter := 0
+	totalUsersAfter := totalUsers
+	if req.DryRun {
+		for _, bal := range simulatedBalances {
+			if bal <= 0 {
+				atRiskAfter++
+			}
+		}
+	} else {
+		afterAccounts, err := s.store.ListTokenAccounts(r.Context())
+		if err != nil {
+			evalErr = strings.TrimSpace(err.Error())
+			atRiskAfter = 0
+			totalUsersAfter = 0
+			for _, bal := range simulatedBalances {
+				totalUsersAfter++
+				if bal <= 0 {
+					atRiskAfter++
+				}
+			}
+		} else {
+			atRiskAfter = 0
+			totalUsersAfter = 0
+			for _, it := range afterAccounts {
+				uid := strings.TrimSpace(it.BotID)
+				if uid == "" || uid == clawWorldSystemID {
+					continue
+				}
+				totalUsersAfter++
+				if it.Balance <= 0 {
+					atRiskAfter++
+				}
+			}
+		}
+	}
+	threshold := s.currentExtinctionThresholdPct()
+	triggeredBefore := totalUsers > 0 && atRiskBefore*100 >= totalUsers*threshold
+	triggeredAfter := totalUsersAfter > 0 && atRiskAfter*100 >= totalUsersAfter*threshold
+	if !req.DryRun {
+		s.worldTickMu.Lock()
+		tickID := s.worldTickID
+		s.worldTickMu.Unlock()
+		if _, err := s.applyExtinctionGuard(r.Context(), tickID); err != nil {
+			if strings.TrimSpace(evalErr) != "" {
+				evalErr = evalErr + " | " + err.Error()
+			} else {
+				evalErr = err.Error()
+			}
+		}
+	}
+
+	s.worldTickMu.Lock()
+	worldFrozen := s.worldFrozen
+	worldFreezeReason := s.worldFreezeReason
+	worldFreezeTickID := s.worldFreezeTickID
+	worldTickID := s.worldTickID
+	s.worldTickMu.Unlock()
+	failedUsers := 0
+	for _, it := range items {
+		if strings.TrimSpace(it.Error) != "" {
+			failedUsers++
+		}
+	}
+	simulatedUsers := 0
+	if req.DryRun {
+		simulatedUsers = len(targetUsers) - failedUsers
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"mode":                mode,
+		"dry_run":             req.DryRun,
+		"amount_per_user":     req.Amount,
+		"targeted_users":      len(targetUsers),
+		"truncated_users":     truncatedUsers,
+		"applied_users":       appliedUsers,
+		"simulated_users":     simulatedUsers,
+		"failed_users":        failedUsers,
+		"total_users":         totalUsers,
+		"total_users_after":   totalUsersAfter,
+		"threshold_pct":       threshold,
+		"before":              map[string]any{"at_risk_users": atRiskBefore, "triggered": triggeredBefore},
+		"after_estimate":      map[string]any{"at_risk_users": atRiskAfter, "triggered": triggeredAfter},
+		"world_frozen":        worldFrozen,
+		"world_tick_id":       worldTickID,
+		"world_freeze_tick":   worldFreezeTickID,
+		"world_freeze_reason": worldFreezeReason,
+		"eval_error":          evalErr,
+		"items":               items,
 	})
 }
 
@@ -9110,6 +9444,7 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/tian-dao/law",
 		"GET /v1/world/tick/status",
 		"GET /v1/world/freeze/status",
+		"POST /v1/world/freeze/rescue",
 		"GET /v1/world/tick/history?limit=<n>",
 		"GET /v1/world/tick/chain/verify?limit=<n>",
 		"POST /v1/world/tick/replay",

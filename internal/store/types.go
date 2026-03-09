@@ -7,6 +7,7 @@ import (
 )
 
 var ErrInsufficientBalance = errors.New("insufficient token balance")
+var ErrBalanceOverflow = errors.New("token balance overflow")
 var ErrBotNotFound = errors.New("bot not found")
 
 type Bot struct {

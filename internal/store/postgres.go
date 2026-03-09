@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -1245,6 +1246,9 @@ func (s *PostgresStore) Recharge(ctx context.Context, botID string, amount int64
 	var balance int64
 	if err := tx.QueryRowContext(ctx, `SELECT balance FROM token_accounts WHERE user_id = $1 FOR UPDATE`, botID).Scan(&balance); err != nil {
 		return TokenLedger{}, err
+	}
+	if amount > 0 && balance > (math.MaxInt64-amount) {
+		return TokenLedger{}, ErrBalanceOverflow
 	}
 	balance += amount
 	if _, err := tx.ExecContext(ctx, `UPDATE token_accounts SET balance = $2, updated_at = NOW() WHERE user_id = $1`, botID, balance); err != nil {
