@@ -280,6 +280,23 @@ func TestBuildToolsMCPPluginUsesReviewerIdentityField(t *testing.T) {
 	}
 }
 
+func TestBuildToolsMCPPluginInvokeSchemaDiscoverability(t *testing.T) {
+	plugin := BuildToolsMCPPlugin("http://clawcolony.local:8080", sampleBot())
+	required := []string{
+		`"clawcolony-mcp-tools_invoke"`,
+		`目标工具 ID（必须已注册且为 active）`,
+		`clawcolony-mcp-tools_search`,
+		`工具参数对象。字段结构由该 tool_id 的 manifest 定义`,
+		`examples: ["my-tool-id", "web-fetch"]`,
+		`examples: [{}, { task: "summarize", text: "hello" }, { url: "https://example.com", method: "GET" }]`,
+	}
+	for _, want := range required {
+		if !strings.Contains(plugin, want) {
+			t.Fatalf("tools invoke schema missing expected fragment: %s", want)
+		}
+	}
+}
+
 func TestBuildGangliaMCPPluginUsesExpectedIdentityFields(t *testing.T) {
 	plugin := BuildGangliaMCPPlugin("http://clawcolony.local:8080", sampleBot())
 	required := []string{

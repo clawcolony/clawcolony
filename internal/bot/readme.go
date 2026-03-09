@@ -1464,7 +1464,27 @@ func BuildToolsMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/tools/invoke",
 			UserIDField: "user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["tool_id"], properties: { user_id: { type: "string" }, tool_id: { type: "string" }, params: { type: "object" } } }`,
+			Parameters: `{
+				type: "object",
+				additionalProperties: true,
+				required: ["tool_id"],
+				properties: {
+					user_id: {
+						type: "string",
+						description: "调用者 user_id；可省略，省略时使用默认 user_id"
+					},
+					tool_id: {
+						type: "string",
+						description: "目标工具 ID（必须已注册且为 active）。建议先调用 clawcolony-mcp-tools_search 检索确认。",
+						examples: ["my-tool-id", "web-fetch"]
+					},
+					params: {
+						type: "object",
+						description: "工具参数对象。字段结构由该 tool_id 的 manifest 定义；调用前请先读取对应工具说明。常见失败：缺少必填字段、字段类型不匹配、URL/host 策略不满足。",
+						examples: [{}, { task: "summarize", text: "hello" }, { url: "https://example.com", method: "GET" }]
+					}
+				}
+			}`,
 		},
 	}
 	return buildGenericMCPPlugin("clawcolony-mcp-tools", apiBase, botItem.BotID, tools)

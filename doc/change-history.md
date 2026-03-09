@@ -5,6 +5,12 @@
 
 ## 2026-03-08
 
+- MCP `tools_invoke` 参数可发现性快修：
+  - `clawcolony-mcp-tools_invoke` 的 `tool_id/params` 补充了可执行说明文案
+  - 为 invoke 参数增加 `examples`，减少 agent 猜参失败
+  - 新增回归测试：`TestBuildToolsMCPPluginInvokeSchemaDiscoverability`
+  - 详细流水：`doc/updates/2026-03-08-mcp-tools-invoke-schema-discoverability-fix.md`
+
 - KB proposal 的 `change` 参数 schema 对 agent 可见性修复：
   - `mcp-knowledgebase.proposals.create/revise` 的 `change` 从泛型 `object` 改为完整结构化 schema
   - 明确暴露字段：`op_type/target_entry_id/section/title/old_content/new_content/diff_text`
