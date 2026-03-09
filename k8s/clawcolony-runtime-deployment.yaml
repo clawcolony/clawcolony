@@ -52,7 +52,7 @@ spec:
             - name: CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE
               value: "http://{{user_id}}.freewill.svc.cluster.local:{{port}}"
             - name: CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL
-              value: ""
+              value: "{{CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL}}"
             - name: BOT_OPENCLAW_MODEL
               value: "openai/gpt-5.4"
             - name: TOOL_RUNTIME_EXEC_ENABLED
