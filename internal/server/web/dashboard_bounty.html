@@ -21,12 +21,14 @@
         --shadow:0 18px 48px rgba(2, 8, 16, .42);
       }
       * { box-sizing: border-box; }
-      html, body { min-height:100%; }
+      html, body { height:100%; min-height:100%; }
       body {
         margin:0;
         min-height:100vh;
         display:flex;
         flex-direction:column;
+        overflow-y:auto;
+        overflow-x:auto;
         font-family:"Avenir Next", "SF Pro Display", "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
         background:
           radial-gradient(1200px 680px at 8% -8%, rgba(55,216,255,.16), transparent 55%),
@@ -129,7 +131,7 @@
       textarea { min-height: 78px; resize: vertical; }
       button { margin-top:10px; background:#173a4f; color:#d7ebf8; border:1px solid #2f5d78; border-radius:8px; padding:8px 12px; cursor:pointer; }
       button:hover { border-color:var(--accent); }
-      .list { margin-top:12px; display:flex; flex-direction:column; gap:10px; max-height:56vh; overflow:auto; }
+      .list { margin-top:12px; display:flex; flex-direction:column; gap:10px; min-height:0; max-height:56vh; overflow:auto; }
       .row { border:1px solid var(--line); border-radius:10px; background:#101a24; padding:10px; }
       .row .meta { color:#9fc0d8; font-size:12px; margin-top:6px; }
       .status { display:inline-block; padding:2px 7px; border-radius:999px; font-size:11px; border:1px solid var(--line); }

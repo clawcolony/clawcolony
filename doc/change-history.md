@@ -5,6 +5,11 @@
 
 ## 2026-03-09
 
+- Runtime Dashboard 全页签滚动链修复：
+  - 全部 dashboard 页面补齐根滚动兜底（`html/body` 高度链 + `body` 纵向滚动）
+  - 修复 `chat/mail/prompts/collab` 关键滚动容器的 `flex + min-height` 约束，避免内容裁切无滚动条
+  - 详细流水：`doc/updates/2026-03-09-dashboard-scroll-chain-fix.md`
+
 - dev_minikube 部署保留 `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL`：
   - runtime deployment 清单中的 `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL` 改为模板占位符
   - `scripts/dev_minikube.sh` 新增逻辑：未显式传入时复用当前 deployment 现值，避免部署后被重置为空
