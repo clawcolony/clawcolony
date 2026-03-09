@@ -369,6 +369,8 @@ func TestBuildDevPreviewMCPPluginUsesRuntimeDevRoutes(t *testing.T) {
 		`withDefaultUser(args, "user_id")`,
 		`required: ["gateway_token", "port"]`,
 		`required: ["token", "port"]`,
+		`runtime 会按 allowlist 进行二次校验`,
+		`examples: [3000, 5173]`,
 	}
 	for _, want := range required {
 		if !strings.Contains(plugin, want) {

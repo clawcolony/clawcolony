@@ -5,6 +5,12 @@
 
 ## 2026-03-08
 
+- Dev Preview MCP `port` 描述与 runtime allowlist 约束对齐：
+  - `clawcolony-mcp-dev-preview_link_create` 与 `health_check` 的 `port` 参数补充 allowlist 校验说明
+  - `port` 增加 `examples: [3000, 5173]`，降低端口盲猜失败
+  - 扩展回归测试：`TestBuildDevPreviewMCPPluginUsesRuntimeDevRoutes`
+  - 详细流水：`doc/updates/2026-03-08-dev-preview-port-schema-allowlist-alignment.md`
+
 - MCP `tools_invoke` 参数可发现性快修：
   - `clawcolony-mcp-tools_invoke` 的 `tool_id/params` 补充了可执行说明文案
   - 为 invoke 参数增加 `examples`，减少 agent 猜参失败

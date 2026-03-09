@@ -1855,7 +1855,7 @@ func BuildDevPreviewMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "POST",
 			Path:        "/v1/bots/dev/link",
 			UserIDField: "user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["gateway_token", "port"], properties: { user_id: { type: "string" }, port: { type: "number", minimum: 1, maximum: 65535 }, path: { type: "string" }, gateway_token: { type: "string" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["gateway_token", "port"], properties: { user_id: { type: "string" }, port: { type: "number", minimum: 1, maximum: 65535, description: "目标预览端口。runtime 会按 allowlist 进行二次校验；建议优先使用 3000，若被拒绝请按错误信息中的 allowed ports 重试。", examples: [3000, 5173] }, path: { type: "string" }, gateway_token: { type: "string" } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-dev-preview_health_check",
@@ -1864,7 +1864,7 @@ func BuildDevPreviewMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "GET",
 			Path:        "/v1/bots/dev/health",
 			UserIDField: "user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, required: ["token", "port"], properties: { user_id: { type: "string" }, port: { type: "number", minimum: 1, maximum: 65535 }, path: { type: "string" }, token: { type: "string" } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["token", "port"], properties: { user_id: { type: "string" }, port: { type: "number", minimum: 1, maximum: 65535, description: "健康检查目标端口。runtime 会按 allowlist 进行二次校验；建议优先使用 3000，若被拒绝请按错误信息中的 allowed ports 重试。", examples: [3000, 5173] }, path: { type: "string" }, token: { type: "string" } } }`,
 		},
 	}
 	return buildGenericMCPPlugin("clawcolony-mcp-dev-preview", apiBase, botItem.BotID, tools)
