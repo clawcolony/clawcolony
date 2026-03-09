@@ -5,6 +5,12 @@
 
 ## 2026-03-09
 
+- dev_minikube 部署保留 `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL`：
+  - runtime deployment 清单中的 `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL` 改为模板占位符
+  - `scripts/dev_minikube.sh` 新增逻辑：未显式传入时复用当前 deployment 现值，避免部署后被重置为空
+  - `Makefile deploy` 同步新增 `{{CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL}}` 替换与 `PREVIEW_PUBLIC_BASE_URL` 参数
+  - 详细流水：`doc/updates/2026-03-09-dev-minikube-preserve-preview-public-base-url.md`
+
 - Dev Preview skill 放宽本地地址返回约束：
   - 移除 “禁止返回手写本地地址 / *.svc.cluster.local” 文案
   - 保留 `public_url > absolute_url > relative_url` 返回优先级与字段用途说明

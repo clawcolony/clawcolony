@@ -1,8 +1,10 @@
 APP_NAME := clawcolony
 IMAGE ?= clawcolony:dev
+PREVIEW_PUBLIC_BASE_URL ?=
 RUNTIME_NS ?= freewill
 BOT_NS ?= freewill
 USER_NS ?= $(BOT_NS)
+escape_sed = $(subst |,\|,$(subst &,\&,$(subst \,\\,$1)))
 
 .PHONY: run build docker-build minikube-load deploy undeploy test check-doc
 
@@ -20,7 +22,7 @@ minikube-load:
 
 deploy:
 	kubectl apply -f k8s/rbac.yaml
-	sed 's/{{CLAWCOLONY_IMAGE}}/$(IMAGE)/g' k8s/clawcolony-runtime-deployment.yaml | kubectl apply -f -
+	sed -e 's|{{CLAWCOLONY_IMAGE}}|$(call escape_sed,$(IMAGE))|g' -e 's|{{CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL}}|$(call escape_sed,$(PREVIEW_PUBLIC_BASE_URL))|g' k8s/clawcolony-runtime-deployment.yaml | kubectl apply -f -
 	kubectl apply -f k8s/service-runtime.yaml
 
 undeploy:

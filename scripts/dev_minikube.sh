@@ -11,6 +11,7 @@ RUNTIME_DB_NAME="${RUNTIME_DB_NAME:-clawcolony_runtime}"
 RUNTIME_DB_HOST="${RUNTIME_DB_HOST:-clawcolony-postgres.${RUNTIME_NAMESPACE}.svc.cluster.local}"
 RUNTIME_DB_PORT="${RUNTIME_DB_PORT:-5432}"
 CLAWCOLONY_INTERNAL_SYNC_TOKEN="${CLAWCOLONY_INTERNAL_SYNC_TOKEN:-clawcolony-internal-sync-dev}"
+CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL="${CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL:-}"
 RUNTIME_BASE_URL="http://${RUNTIME_SERVICE_NAME}.${RUNTIME_NAMESPACE}.svc.cluster.local:8080"
 LEGACY_RUNTIME_BASE_URL="http://${RUNTIME_SERVICE_NAME}.${LEGACY_RUNTIME_NAMESPACE}.svc.cluster.local:8080"
 
@@ -22,6 +23,10 @@ else
   echo "error: kubectl/minikube not found" >&2
   exit 1
 fi
+
+escape_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+}
 
 echo "[1/11] ensure minikube is running"
 minikube status >/dev/null
@@ -55,7 +60,19 @@ kctl -n "${RUNTIME_NAMESPACE}" create secret generic clawcolony-runtime \
   --dry-run=client -o yaml | kctl apply -f -
 
 echo "[7/11] deploy clawcolony runtime"
-sed "s|{{CLAWCOLONY_IMAGE}}|${IMAGE}|g" k8s/clawcolony-runtime-deployment.yaml | kctl apply -f -
+if [[ -z "${CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL}" ]]; then
+  CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL="$(
+    kctl -n "${RUNTIME_NAMESPACE}" get deployment clawcolony-runtime \
+      -o jsonpath='{range .spec.template.spec.containers[0].env[?(@.name=="CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL")]}{.value}{end}' \
+      2>/dev/null || true
+  )"
+fi
+IMAGE_ESCAPED="$(escape_sed_replacement "${IMAGE}")"
+PREVIEW_PUBLIC_BASE_URL_ESCAPED="$(escape_sed_replacement "${CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL}")"
+sed \
+  -e "s|{{CLAWCOLONY_IMAGE}}|${IMAGE_ESCAPED}|g" \
+  -e "s|{{CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL}}|${PREVIEW_PUBLIC_BASE_URL_ESCAPED}|g" \
+  k8s/clawcolony-runtime-deployment.yaml | kctl apply -f -
 kctl apply -f k8s/service-runtime.yaml
 
 echo "[8/11] wait runtime ready"
