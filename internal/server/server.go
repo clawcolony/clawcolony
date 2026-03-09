@@ -9247,7 +9247,11 @@ func (s *Server) openClawBootstrapScript(r *http.Request, userID string) string 
 	}
 	wsURL := fmt.Sprintf("%s://%s/v1/bots/openclaw/%s/", scheme, r.Host, neturl.PathEscape(userID))
 	token := strings.TrimSpace(s.userGatewayToken(r.Context(), userID))
-	return fmt.Sprintf(`<script>(function(){try{var k="openclaw.control.settings.v1";var s={};var raw=localStorage.getItem(k);if(raw){try{s=JSON.parse(raw)||{}}catch(_){s={}}}s.gatewayUrl=%q;s.token=%q;s.sessionKey=s.sessionKey||"main";localStorage.setItem(k,JSON.stringify(s));}catch(_){}})();</script>`, wsURL, token)
+	defaultSession := strings.TrimSpace(defaultRuntimeChatSessionID(userID))
+	if defaultSession == "" {
+		defaultSession = "main"
+	}
+	return fmt.Sprintf(`<script>(function(){try{var k="openclaw.control.settings.v1";var s={};var raw=localStorage.getItem(k);if(raw){try{s=JSON.parse(raw)||{}}catch(_){s={}}}s.gatewayUrl=%q;s.token=%q;var runtimeSession=%q;var currentKey=String(s.sessionKey||"").trim();if(!currentKey||currentKey==="main"||currentKey==="agent:main:main"){s.sessionKey=runtimeSession||"main";}localStorage.setItem(k,JSON.stringify(s));}catch(_){}})();</script>`, wsURL, token, defaultSession)
 }
 
 func isWebSocketUpgradeRequest(r *http.Request) bool {
@@ -9264,6 +9268,23 @@ func (s *Server) handleOpenClawDashboardConfig(w http.ResponseWriter, r *http.Re
 		return
 	}
 	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	item, err := s.store.GetBot(r.Context(), userID)
+	if err != nil {
+		if errors.Is(err, store.ErrBotNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if strings.TrimSpace(item.BotID) == "" {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": strings.TrimSpace(s.userGatewayToken(r.Context(), userID)),
 	})
