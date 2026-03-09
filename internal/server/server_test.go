@@ -4505,6 +4505,71 @@ func TestDefaultRuntimeChatSessionID(t *testing.T) {
 	}
 }
 
+func TestOpenClawBootstrapScriptDefaultsRuntimeChatSession(t *testing.T) {
+	srv := newTestServer()
+	req := httptest.NewRequest(http.MethodGet, "http://runtime.local/v1/bots/openclaw/user-abc/", nil)
+	script := srv.openClawBootstrapScript(req, "user-abc")
+	if !strings.Contains(script, `ws://runtime.local/v1/bots/openclaw/user-abc/`) {
+		t.Fatalf("expected injected gateway url for user dashboard: %s", script)
+	}
+	if !strings.Contains(script, `runtime-chat-user-abc`) {
+		t.Fatalf("expected runtime session default to use user chat session: %s", script)
+	}
+	if !strings.Contains(script, `currentKey==="main"`) || !strings.Contains(script, `currentKey==="agent:main:main"`) || !strings.Contains(script, `s.sessionKey=runtimeSession||"main"`) {
+		t.Fatalf("expected session key migration guard for main/empty sessions: %s", script)
+	}
+}
+
+func TestOpenClawBootstrapScriptFallbackSessionWhenUserMissing(t *testing.T) {
+	srv := newTestServer()
+	req := httptest.NewRequest(http.MethodGet, "http://runtime.local/v1/bots/openclaw//", nil)
+	script := srv.openClawBootstrapScript(req, "")
+	if !strings.Contains(script, `runtimeSession="main"`) {
+		t.Fatalf("expected fallback runtime session when user id is empty: %s", script)
+	}
+}
+
+func TestOpenClawDashboardConfigRequiresUserID(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/system/openclaw-dashboard-config", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request for missing user_id, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestOpenClawDashboardConfigReturnsUserToken(t *testing.T) {
+	srv := newTestServer()
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       "user-openclaw-1",
+		Name:        "user-openclaw-1",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBotCredentials(context.Background(), store.BotCredentials{
+		UserID:       "user-openclaw-1",
+		GatewayToken: "gw-openclaw-1",
+	}); err != nil {
+		t.Fatalf("seed credentials: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/system/openclaw-dashboard-config?user_id=user-openclaw-1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Token != "gw-openclaw-1" {
+		t.Fatalf("unexpected token: got=%q", payload.Token)
+	}
+}
+
 func TestNextRuntimeChatRetrySessionID(t *testing.T) {
 	base := defaultRuntimeChatSessionID("user-abc")
 	got := nextRuntimeChatRetrySessionID("user-abc")

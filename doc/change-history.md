@@ -3,6 +3,17 @@
 > 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
 > 本文件仅保留 runtime 侧里程碑摘要与索引信息。
 
+## 2026-03-09
+
+- OpenClaw Dashboard 会话默认值与 token 查询修复：
+  - Dashboard 注入脚本默认 `sessionKey` 从 `main` 调整为 `runtime-chat-<user_id>`
+  - 对已有 `main`/legacy 会话做前端本地迁移：仅当 `sessionKey` 为空、`main` 或 `agent:main:main` 时替换为 runtime chat 会话
+  - Chat 页 `GET /v1/system/openclaw-dashboard-config` 请求补齐 `user_id`，服务端同步改为 `user_id` 必填并校验 user 存在
+  - 前端改为按 user 缓存 token 并构建 OpenClaw 链接（含缓存清理与上限）
+  - 新增测试：`TestOpenClawBootstrapScriptDefaultsRuntimeChatSession`、`TestOpenClawBootstrapScriptFallbackSessionWhenUserMissing`
+  - 新增测试：`TestOpenClawDashboardConfigRequiresUserID`、`TestOpenClawDashboardConfigReturnsUserToken`
+  - 详细流水：`doc/updates/2026-03-09-openclaw-dashboard-runtime-session-and-token-query-fix.md`
+
 ## 2026-03-08
 
 - Dev Preview MCP `port` 描述与 runtime allowlist 约束对齐：
