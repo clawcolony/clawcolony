@@ -3966,13 +3966,15 @@ func patchWorkspaceBootstrapScriptForMCP(script string) (string, bool) {
 
 	const guardedOpenClawConfigCopy = "[ -f /state/openclaw/openclaw.json ] || cp /seed/openclaw.json /state/openclaw/openclaw.json"
 	const unconditionalOpenClawConfigCopy = "cp /seed/openclaw.json /state/openclaw/openclaw.json"
+	const heartbeatCleanupMarker = "          rm -f /state/openclaw/workspace/HEARTBEAT.md"
 	if strings.Contains(out, guardedOpenClawConfigCopy) {
 		out = strings.ReplaceAll(out, guardedOpenClawConfigCopy, unconditionalOpenClawConfigCopy)
 		changed = true
 	}
 
+	// Keep insertion order stable: the broad MCP bootstrap block should stay ahead of
+	// later specific blocks (dev-preview, skills), all inserted before HEARTBEAT cleanup.
 	if !strings.Contains(out, "clawcolony-mcp-collab") {
-		const marker = "          rm -f /state/openclaw/workspace/HEARTBEAT.md"
 		block := strings.TrimPrefix(`
           rm -rf /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase
           mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase
@@ -3997,21 +3999,29 @@ func patchWorkspaceBootstrapScriptForMCP(script string) (string, bool) {
           cp /seed/GOVERNANCE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance/openclaw.plugin.json
           cp /seed/GOVERNANCE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-governance/index.js
 `, "\n")
-		if idx := strings.Index(out, marker); idx >= 0 {
+		if idx := strings.Index(out, heartbeatCleanupMarker); idx >= 0 {
 			out = out[:idx] + block + "\n" + out[idx:]
 		} else {
 			out = strings.TrimRight(out, "\n") + "\n" + block + "\n"
 		}
 		changed = true
 	}
+	if !strings.Contains(out, "rm -rf /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase") {
+		line := "          rm -rf /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase"
+		if idx := strings.Index(out, heartbeatCleanupMarker); idx >= 0 {
+			out = out[:idx] + line + "\n" + out[idx:]
+		} else {
+			out = strings.TrimRight(out, "\n") + "\n" + line + "\n"
+		}
+		changed = true
+	}
 	if !strings.Contains(out, "clawcolony-mcp-dev-preview") {
-		const marker = "          rm -f /state/openclaw/workspace/HEARTBEAT.md"
 		block := strings.TrimPrefix(`
           mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-dev-preview
           cp /seed/DEV_PREVIEW_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-dev-preview/openclaw.plugin.json
           cp /seed/DEV_PREVIEW_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-dev-preview/index.js
 `, "\n")
-		if idx := strings.Index(out, marker); idx >= 0 {
+		if idx := strings.Index(out, heartbeatCleanupMarker); idx >= 0 {
 			out = out[:idx] + block + "\n" + out[idx:]
 		} else {
 			out = strings.TrimRight(out, "\n") + "\n" + block + "\n"
@@ -4019,12 +4029,11 @@ func patchWorkspaceBootstrapScriptForMCP(script string) (string, bool) {
 		changed = true
 	}
 	if !strings.Contains(out, "/skills/dev-preview/SKILL.md") {
-		const marker = "          rm -f /state/openclaw/workspace/HEARTBEAT.md"
 		block := strings.TrimPrefix(`
           mkdir -p /state/openclaw/workspace/skills/dev-preview
           cp /seed/DEV_PREVIEW_SKILL /state/openclaw/workspace/skills/dev-preview/SKILL.md
 `, "\n")
-		if idx := strings.Index(out, marker); idx >= 0 {
+		if idx := strings.Index(out, heartbeatCleanupMarker); idx >= 0 {
 			out = out[:idx] + block + "\n" + out[idx:]
 		} else {
 			out = strings.TrimRight(out, "\n") + "\n" + block + "\n"

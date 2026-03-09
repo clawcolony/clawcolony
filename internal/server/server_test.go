@@ -1957,6 +1957,31 @@ func TestPatchWorkspaceBootstrapScriptForMCP(t *testing.T) {
 	if patchedAgain != patched {
 		t.Fatalf("patched script should stay stable across repeated patching")
 	}
+
+	withoutCleanup := strings.Join([]string{
+		"set -e",
+		"mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase",
+		"cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/openclaw.plugin.json",
+		"cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/index.js",
+		"mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab",
+		"cp /seed/COLLAB_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab/openclaw.plugin.json",
+		"cp /seed/COLLAB_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-collab/index.js",
+		"          rm -f /state/openclaw/workspace/HEARTBEAT.md",
+	}, "\n")
+	patchedNoCleanup, changedNoCleanup := patchWorkspaceBootstrapScriptForMCP(withoutCleanup)
+	if !changedNoCleanup {
+		t.Fatalf("script missing legacy cleanup should be changed")
+	}
+	if strings.Count(patchedNoCleanup, "rm -rf /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase") != 1 {
+		t.Fatalf("legacy cleanup line should be injected once: %s", patchedNoCleanup)
+	}
+	patchedNoCleanupAgain, changedNoCleanupAgain := patchWorkspaceBootstrapScriptForMCP(patchedNoCleanup)
+	if changedNoCleanupAgain {
+		t.Fatalf("cleanup-injected script should be idempotent")
+	}
+	if patchedNoCleanupAgain != patchedNoCleanup {
+		t.Fatalf("cleanup-injected script should stay stable on repatch")
+	}
 }
 
 func TestPromptTemplateUpsertCanonicalizesPreviewUser(t *testing.T) {
