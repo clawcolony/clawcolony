@@ -1239,6 +1239,191 @@ func TestDashboardMonitorPage(t *testing.T) {
 	}
 }
 
+func TestOpsOverviewEndpoint(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	userA := seedActiveUser(t, srv)
+	userB := seedActiveUser(t, srv)
+	now := time.Now().UTC()
+
+	// low token signal for action ownership.
+	if _, err := srv.store.Consume(ctx, userA, 900); err != nil {
+		t.Fatalf("consume userA tokens: %v", err)
+	}
+
+	// output signal: applied KB proposal.
+	applied, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    userA,
+		Title:             "ops applied",
+		Reason:            "ops",
+		Status:            "discussing",
+		VoteThresholdPct:  80,
+		VoteWindowSeconds: 300,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "knowledge/ops",
+		Title:      "ops entry",
+		NewContent: "v1",
+		DiffText:   "+ v1",
+	})
+	if err != nil {
+		t.Fatalf("create applied proposal: %v", err)
+	}
+	if _, err := srv.store.CloseKBProposal(ctx, applied.ID, "approved", "ok", 1, 1, 0, 0, 1, now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("close applied proposal: %v", err)
+	}
+	if _, _, err := srv.store.ApplyKBProposal(ctx, applied.ID, userA, now.Add(-90*time.Minute)); err != nil {
+		t.Fatalf("apply proposal: %v", err)
+	}
+
+	// risk/action signal: approved but not applied.
+	stalled, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    userB,
+		Title:             "ops approved pending apply",
+		Reason:            "ops",
+		Status:            "discussing",
+		VoteThresholdPct:  80,
+		VoteWindowSeconds: 300,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "knowledge/ops",
+		Title:      "ops pending",
+		NewContent: "v1",
+		DiffText:   "+ v1",
+	})
+	if err != nil {
+		t.Fatalf("create stalled proposal: %v", err)
+	}
+	if _, err := srv.store.CloseKBProposal(ctx, stalled.ID, "approved", "pending apply", 1, 1, 0, 0, 1, now.Add(-3*time.Hour)); err != nil {
+		t.Fatalf("close stalled proposal: %v", err)
+	}
+
+	// output signal: closed collab.
+	collab, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
+		CollabID:       "collab-ops-smoke",
+		Title:          "ops collab",
+		Goal:           "close",
+		Complexity:     "normal",
+		Phase:          "recruiting",
+		ProposerUserID: userA,
+		MinMembers:     2,
+		MaxMembers:     3,
+	})
+	if err != nil {
+		t.Fatalf("create collab: %v", err)
+	}
+	closedAt := now.Add(-30 * time.Minute)
+	if _, err := srv.store.UpdateCollabPhase(ctx, collab.CollabID, "closed", userA, "done", &closedAt); err != nil {
+		t.Fatalf("close collab: %v", err)
+	}
+
+	// output signal: mailbox activity.
+	if _, err := srv.store.SendMail(ctx, userA, []string{userB}, "ops-overview-smoke", "hello"); err != nil {
+		t.Fatalf("send mail: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/ops/overview?window=both&include_inactive=1&limit=80", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ops overview status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Window   string `json:"window"`
+		Snapshot struct {
+			Users struct {
+				Total    int `json:"total"`
+				LowToken int `json:"low_token"`
+			} `json:"users"`
+			OpenRiskCount int `json:"open_risk_count"`
+		} `json:"snapshot"`
+		Windows map[string]struct {
+			OutputTotal int `json:"output_total"`
+			RiskCount   int `json:"risk_count"`
+			ActionCount int `json:"action_count"`
+			Actions     []struct {
+				OwnerUserID string `json:"owner_user_id"`
+				Type        string `json:"type"`
+				Priority    string `json:"priority"`
+			} `json:"actions"`
+			Ownership []struct {
+				UserID string `json:"user_id"`
+				Total  int    `json:"total"`
+			} `json:"ownership"`
+		} `json:"windows"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal ops overview: %v", err)
+	}
+	if resp.Window != "both" {
+		t.Fatalf("window=%q, want both", resp.Window)
+	}
+	if resp.Snapshot.Users.Total < 2 {
+		t.Fatalf("unexpected user total: %d", resp.Snapshot.Users.Total)
+	}
+	if resp.Snapshot.Users.LowToken <= 0 {
+		t.Fatalf("expected low token users > 0: %s", w.Body.String())
+	}
+	if resp.Snapshot.OpenRiskCount <= 0 {
+		t.Fatalf("expected open risks > 0: %s", w.Body.String())
+	}
+
+	win24, ok := resp.Windows["24h"]
+	if !ok {
+		t.Fatalf("missing 24h window: %s", w.Body.String())
+	}
+	if win24.OutputTotal <= 0 {
+		t.Fatalf("expected 24h output_total > 0: %s", w.Body.String())
+	}
+	if win24.RiskCount <= 0 || win24.ActionCount <= 0 {
+		t.Fatalf("expected 24h risk/action counts > 0: %s", w.Body.String())
+	}
+	foundPendingApply := false
+	for _, it := range win24.Actions {
+		if strings.Contains(it.Type, "approved_not_applied") {
+			foundPendingApply = true
+		}
+	}
+	if !foundPendingApply {
+		t.Fatalf("expected approved_not_applied action: %s", w.Body.String())
+	}
+	foundOwner := false
+	for _, it := range win24.Ownership {
+		if strings.TrimSpace(it.UserID) == userA || strings.TrimSpace(it.UserID) == userB {
+			foundOwner = true
+		}
+	}
+	if !foundOwner {
+		t.Fatalf("expected user ownership in 24h window: %s", w.Body.String())
+	}
+
+	if _, ok := resp.Windows["7d"]; !ok {
+		t.Fatalf("missing 7d window: %s", w.Body.String())
+	}
+}
+
+func TestOpsOverviewRejectsInvalidWindow(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/ops/overview?window=1d", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid window status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestDashboardOpsPage(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/dashboard/ops", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("dashboard ops page status=%d body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	if !bytes.Contains(body, []byte("Owner Actions")) {
+		t.Fatalf("dashboard ops page missing Owner Actions section: %s", w.Body.String())
+	}
+	if !bytes.Contains(body, []byte(`/v1/ops/overview`)) {
+		t.Fatalf("dashboard ops page missing ops API binding: %s", w.Body.String())
+	}
+}
+
 func TestAPICompatibilityRoutes(t *testing.T) {
 	srv := newTestServer()
 	register := func(provider string) string {

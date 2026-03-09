@@ -5,6 +5,14 @@
 
 ## 2026-03-09
 
+- Runtime Dashboard 新增 Ops 运营者视角（产出/风险/动作）：
+  - 新增 API：`GET /v1/ops/overview`（支持 `window=24h|7d|both`、`include_inactive`、`limit`）
+  - 新增页面：`/dashboard/ops`，聚合展示 24h/7d 输出、风险、动作与 owner 分配
+  - 首页新增 `Ops Overview` 入口卡片
+  - 所有 dashboard 页签统一新增 `Ops` 顶部导航
+  - 新增测试：`TestOpsOverviewEndpoint`、`TestOpsOverviewRejectsInvalidWindow`、`TestDashboardOpsPage`
+  - 详细流水：`doc/updates/2026-03-09-ops-dashboard-overview.md`
+
 - Runtime Dashboard 全页签滚动链修复：
   - 全部 dashboard 页面补齐根滚动兜底（`html/body` 高度链 + `body` 纵向滚动）
   - 修复 `chat/mail/prompts/collab` 关键滚动容器的 `flex + min-height` 约束，避免内容裁切无滚动条

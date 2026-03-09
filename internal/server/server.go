@@ -1088,6 +1088,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/chat/history", s.handleChatHistory)
 	s.mux.HandleFunc("/v1/chat/stream", s.handleChatStream)
 	s.mux.HandleFunc("/v1/chat/state", s.handleChatState)
+	s.mux.HandleFunc("/v1/ops/overview", s.handleOpsOverview)
 	s.mux.HandleFunc("/v1/monitor/agents/overview", s.handleMonitorAgentsOverview)
 	s.mux.HandleFunc("/v1/monitor/agents/timeline", s.handleMonitorAgentsTimeline)
 	s.mux.HandleFunc("/v1/monitor/agents/timeline/all", s.handleMonitorAgentsTimelineAll)

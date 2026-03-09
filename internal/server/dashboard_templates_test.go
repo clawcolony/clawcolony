@@ -10,6 +10,7 @@ import (
 func TestDashboardTopTabsConsistent(t *testing.T) {
 	expectedTabs := []string{
 		"/dashboard",
+		"/dashboard/ops",
 		"/dashboard/mail",
 		"/dashboard/chat",
 		"/dashboard/collab",
@@ -30,6 +31,7 @@ func TestDashboardTopTabsConsistent(t *testing.T) {
 		activeHref string
 	}{
 		{file: "web/dashboard_home.html", activeHref: "/dashboard"},
+		{file: "web/dashboard_ops.html", activeHref: "/dashboard/ops"},
 		{file: "web/dashboard_mail.html", activeHref: "/dashboard/mail"},
 		{file: "web/dashboard_chat.html", activeHref: "/dashboard/chat"},
 		{file: "web/dashboard_collab.html", activeHref: "/dashboard/collab"},
