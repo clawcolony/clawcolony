@@ -1915,6 +1915,12 @@ func TestPatchWorkspaceBootstrapScriptForMCP(t *testing.T) {
 	if !strings.Contains(patched, "cp /seed/openclaw.json /state/openclaw/openclaw.json") {
 		t.Fatalf("openclaw.json should be copied unconditionally: %s", patched)
 	}
+	if strings.Contains(patched, "/extensions/mcp-knowledgebase/") {
+		t.Fatalf("legacy mcp-knowledgebase copy lines should be removed: %s", patched)
+	}
+	if !strings.Contains(patched, "rm -rf /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase") {
+		t.Fatalf("patched script missing legacy mcp cleanup")
+	}
 	for _, marker := range []string{
 		"clawcolony-mcp-knowledgebase",
 		"clawcolony-mcp-collab",

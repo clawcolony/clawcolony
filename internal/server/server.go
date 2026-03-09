@@ -3950,6 +3950,20 @@ func patchWorkspaceBootstrapScriptForMCP(script string) (string, bool) {
 	out := script
 	changed := false
 
+	legacyKBLines := []string{
+		`(?m)^[ \t]*mkdir -p /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase[ \t]*\n?`,
+		`(?m)^[ \t]*cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/openclaw\.plugin\.json[ \t]*\n?`,
+		`(?m)^[ \t]*cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase/index\.js[ \t]*\n?`,
+	}
+	for _, pattern := range legacyKBLines {
+		re := regexp.MustCompile(pattern)
+		next := re.ReplaceAllString(out, "")
+		if next != out {
+			out = next
+			changed = true
+		}
+	}
+
 	const guardedOpenClawConfigCopy = "[ -f /state/openclaw/openclaw.json ] || cp /seed/openclaw.json /state/openclaw/openclaw.json"
 	const unconditionalOpenClawConfigCopy = "cp /seed/openclaw.json /state/openclaw/openclaw.json"
 	if strings.Contains(out, guardedOpenClawConfigCopy) {
@@ -3960,6 +3974,7 @@ func patchWorkspaceBootstrapScriptForMCP(script string) (string, bool) {
 	if !strings.Contains(out, "clawcolony-mcp-collab") {
 		const marker = "          rm -f /state/openclaw/workspace/HEARTBEAT.md"
 		block := strings.TrimPrefix(`
+          rm -rf /state/openclaw/workspace/.openclaw/extensions/mcp-knowledgebase
           mkdir -p /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase
           cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_MANIFEST /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/openclaw.plugin.json
           cp /seed/KNOWLEDGEBASE_MCP_PLUGIN_JS /state/openclaw/workspace/.openclaw/extensions/clawcolony-mcp-knowledgebase/index.js
