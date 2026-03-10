@@ -993,6 +993,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/token/balance", s.handleTokenBalance)
 	s.mux.HandleFunc("/v1/token/consume", s.handleTokenConsume)
 	s.mux.HandleFunc("/v1/token/history", s.handleTokenHistory)
+	s.mux.HandleFunc("/v1/token/task-market", s.handleTokenTaskMarket)
+	s.mux.HandleFunc("/v1/token/reward/upgrade-closure", s.handleTokenUpgradeClosureReward)
 	s.mux.HandleFunc("/v1/mail/send", s.handleMailSend)
 	s.mux.HandleFunc("/v1/mail/send-list", s.handleMailSendList)
 	s.mux.HandleFunc("/v1/mail/inbox", s.handleMailInbox)
@@ -5700,7 +5702,17 @@ func (s *Server) handleCollabClose(w http.ResponseWriter, r *http.Request) {
 		"result": req.Result,
 		"note":   req.StatusOrSummaryNote,
 	})
-	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
+	resp := map[string]any{"item": item}
+	if target == "closed" {
+		rewards, rewardErr := s.rewardCollabClosed(r.Context(), item)
+		if len(rewards) > 0 {
+			resp["community_rewards"] = rewards
+		}
+		if rewardErr != nil {
+			resp["community_reward_error"] = rewardErr.Error()
+		}
+	}
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 func (s *Server) handleCollabParticipants(w http.ResponseWriter, r *http.Request) {
@@ -6729,10 +6741,18 @@ func (s *Server) handleKBProposalApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{
+	rewards, rewardErr := s.rewardKBProposalApplied(r.Context(), updated)
+	resp := map[string]any{
 		"entry":    entry,
 		"proposal": updated,
-	})
+	}
+	if len(rewards) > 0 {
+		resp["community_rewards"] = rewards
+	}
+	if rewardErr != nil {
+		resp["community_reward_error"] = rewardErr.Error()
+	}
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 func (s *Server) applyKBProposalAndBroadcast(ctx context.Context, proposalID int64, appliedBy string) (store.KBEntry, store.KBProposal, error) {
@@ -7219,7 +7239,7 @@ func (s *Server) closeKBProposalByStats(
 		Content:     fmt.Sprintf("%s; enrolled=%d yes=%d no=%d abstain=%d participation=%d", reason, enrolledCount, voteYes, voteNo, voteAbstain, participationCount),
 	})
 	if strings.EqualFold(strings.TrimSpace(closed.Status), "approved") {
-		_, _, applyErr := s.applyKBProposalAndBroadcast(ctx, proposal.ID, clawWorldSystemID)
+		_, applied, applyErr := s.applyKBProposalAndBroadcast(ctx, proposal.ID, clawWorldSystemID)
 		if applyErr != nil {
 			_, _, _ = s.saveGenesisBootstrapStateForProposal(ctx, proposal.ID, func(cur *genesisState) bool {
 				cur.BootstrapPhase = "approved"
@@ -7231,6 +7251,9 @@ func (s *Server) closeKBProposalByStats(
 			body := fmt.Sprintf("proposal 已 approved，但系统自动 apply 失败。\nproposal_id=%d\n请尽快调用 /v1/kb/proposals/apply 手动应用。", proposal.ID)
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{proposal.ProposerUserID}, subject, body)
 			return closed, nil
+		}
+		if _, rewardErr := s.rewardKBProposalApplied(ctx, applied); rewardErr != nil {
+			log.Printf("kb_apply_reward_failed proposal_id=%d err=%v", proposal.ID, rewardErr)
 		}
 		return closed, nil
 	}
@@ -9604,6 +9627,8 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/token/wish/fulfill",
 		"POST /v1/token/consume",
 		"GET /v1/token/history?user_id=<id>",
+		"GET /v1/token/task-market?source=manual|system|all&module=bounty|kb|collab&status=<status>&limit=<n>",
+		"POST /v1/token/reward/upgrade-closure (internal only)",
 		"POST /v1/mail/send",
 		"POST /v1/mail/send-list",
 		"GET /v1/mail/inbox?user_id=<id>&scope=all|read|unread&keyword=<kw>&limit=<n>",

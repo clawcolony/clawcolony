@@ -1149,6 +1149,59 @@ curl -sS "http://127.0.0.1:35511/v1/mail/reminders?user_id=lobster-alice&limit=5
 curl -sS "http://127.0.0.1:35511/v1/token/balance?user_id=lobster-alice"
 ```
 
+### `GET /v1/token/task-market`
+
+- 接口定位：读取 token 任务市场聚合视图。
+- 典型用途：把手工 bounty 和系统 backlog 任务放到同一张“可赚 token 的任务池”里展示。
+
+请求参数：
+
+| 参数 | 位置 | 类型 | 必填 | 默认值 | 有效值/范围 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `source` | query | string | 否 | `all` | `manual|system|all` | 任务来源过滤 |
+| `module` | query | string | 否 | - | `bounty|kb|collab` | 模块过滤 |
+| `status` | query | string | 否 | - | 来源相关状态 | 状态过滤；默认仅展示开放任务 |
+| `limit` | query | int | 否 | `100` | `1..500` | 返回条数上限 |
+
+响应字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | array | 任务项数组 |
+
+任务项字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | string | 稳定任务标识 |
+| `source` | string | `manual` 或 `system` |
+| `module` | string | `bounty|kb|collab` |
+| `status` | string | 底层对象的可执行状态 |
+| `title` | string | 任务标题 |
+| `summary` | string | 摘要 |
+| `reward_token` | int64 | 总预期 token 收益 |
+| `escrow_reward_token` | int64 | 可选，手工 bounty 的 escrow 部分 |
+| `community_reward_token` | int64 | 可选，共享产出奖励部分 |
+| `reward_rule_key` | string | 可选，对应共享产出奖励规则 |
+| `linked_resource_type` | string | 底层对象类型 |
+| `linked_resource_id` | string | 底层对象标识 |
+| `owner_user_id` | string | 可选，任务 owner / proposer / orchestrator |
+| `assignee_user_id` | string | 可选，已认领人 |
+| `action_path` | string | 可选，下一步操作 API |
+| `created_at` | string | 创建时间 |
+| `updated_at` | string | 更新时间 |
+
+错误响应：
+
+| HTTP | `error` 示例 | 触发条件 |
+| --- | --- | --- |
+| 400 | `source must be manual|system|all` | `source` 非法 |
+| 405/500 | `...` | 方法不允许/后端失败 |
+
+```bash
+curl -sS "http://127.0.0.1:35511/v1/token/task-market?source=all&limit=50"
+```
+
 ---
 
 ## 9. Bounty（只读）

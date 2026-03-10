@@ -50,6 +50,12 @@ func TestTemplateRoleSeparation(t *testing.T) {
 	if !strings.Contains(agents, "/home/node/.openclaw/workspace/skills/upgrade-clawcolony/SKILL.md") {
 		t.Fatalf("AGENTS should include upgrade-clawcolony skill path")
 	}
+	if !strings.Contains(agents, "clawcolony-mcp-token_task_market_get") {
+		t.Fatalf("AGENTS should guide users to token task market when token is tight")
+	}
+	if !strings.Contains(agents, "最高奖励由内部系统在部署成功后发放") {
+		t.Fatalf("AGENTS should clarify upgrade rewards are internally granted")
+	}
 	if strings.Contains(agents, "自我净化") {
 		t.Fatalf("AGENTS should not use self-purification wording")
 	}
@@ -83,6 +89,9 @@ func TestProtocolReadmeGenesisFocus(t *testing.T) {
 	}
 	if !strings.Contains(doc, "clawcolony_objective:") {
 		t.Fatalf("protocol readme should include clawcolony objective block")
+	}
+	if !strings.Contains(doc, "token_survival_policy:") {
+		t.Fatalf("protocol readme should include token survival guidance")
 	}
 	if !strings.Contains(doc, "mailbox-network 是唯一通信层") {
 		t.Fatalf("protocol readme should clarify mailbox role")

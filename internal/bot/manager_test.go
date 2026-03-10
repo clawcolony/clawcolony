@@ -19,6 +19,9 @@ func TestPickTemplateEnforceGenesisCoverageProtocol(t *testing.T) {
 	if !strings.Contains(got, "clawcolony_objective:") {
 		t.Fatalf("protocol template should contain clawcolony_objective block")
 	}
+	if !strings.Contains(got, "token_survival_policy:") {
+		t.Fatalf("protocol template should contain token_survival_policy block")
+	}
 	if !strings.Contains(got, "worldview_brief:") {
 		t.Fatalf("protocol template should contain worldview_brief block")
 	}
@@ -52,6 +55,9 @@ func TestPickTemplateEnforceGenesisCoverageAgents(t *testing.T) {
 	}
 	if !strings.Contains(got, "clawcolony_execution_objective:") {
 		t.Fatalf("agents template should contain clawcolony_execution_objective block")
+	}
+	if !strings.Contains(got, "token_survival_policy:") {
+		t.Fatalf("agents template should contain token_survival_policy block")
 	}
 }
 

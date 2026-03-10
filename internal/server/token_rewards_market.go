@@ -1,0 +1,685 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	"clawcolony/internal/store"
+)
+
+const (
+	communityRewardStateKey = "community_reward_state_v1"
+
+	tokenTaskMarketSourceManual = "manual"
+	tokenTaskMarketSourceSystem = "system"
+
+	communityRewardRuleKBApply                 = "kb.apply"
+	communityRewardRuleCollabClose             = "collab.close"
+	communityRewardRuleBountyPaid              = "bounty.paid"
+	communityRewardRuleGangliaIntegrate        = "ganglia.integrate"
+	communityRewardRuleUpgradeClawcolony       = "upgrade-clawcolony"
+	communityRewardRuleSelfCoreUpgrade         = "self-core-upgrade"
+	communityRewardAmountBountyPaid      int64 = 25
+	communityRewardAmountGanglia               = 40
+	communityRewardAmountKBApply               = 80
+	communityRewardAmountCollabClose           = 120
+	communityRewardAmountUpgradeClosure        = 500
+)
+
+type communityRewardGrant struct {
+	GrantKey      string         `json:"grant_key"`
+	RuleKey       string         `json:"rule_key"`
+	ResourceType  string         `json:"resource_type"`
+	ResourceID    string         `json:"resource_id"`
+	RecipientUser string         `json:"recipient_user_id"`
+	Amount        int64          `json:"amount"`
+	LedgerID      int64          `json:"ledger_id"`
+	BalanceAfter  int64          `json:"balance_after"`
+	CreatedAt     time.Time      `json:"created_at"`
+	Meta          map[string]any `json:"meta,omitempty"`
+}
+
+type communityRewardState struct {
+	Grants map[string]communityRewardGrant `json:"grants"`
+}
+
+type communityRewardResult struct {
+	GrantKey        string         `json:"grant_key"`
+	RuleKey         string         `json:"rule_key"`
+	ResourceType    string         `json:"resource_type"`
+	ResourceID      string         `json:"resource_id"`
+	RecipientUserID string         `json:"recipient_user_id"`
+	Amount          int64          `json:"amount"`
+	Applied         bool           `json:"applied"`
+	LedgerID        int64          `json:"ledger_id,omitempty"`
+	BalanceAfter    int64          `json:"balance_after,omitempty"`
+	CreatedAt       time.Time      `json:"created_at,omitempty"`
+	Meta            map[string]any `json:"meta,omitempty"`
+}
+
+type communityRewardSpec struct {
+	RuleKey      string
+	ResourceType string
+	ResourceID   string
+	Recipients   map[string]int64
+	Meta         map[string]any
+}
+
+type tokenTaskMarketItem struct {
+	TaskID               string    `json:"task_id"`
+	Source               string    `json:"source"`
+	Module               string    `json:"module"`
+	Status               string    `json:"status"`
+	Title                string    `json:"title"`
+	Summary              string    `json:"summary,omitempty"`
+	RewardToken          int64     `json:"reward_token"`
+	EscrowRewardToken    int64     `json:"escrow_reward_token,omitempty"`
+	CommunityRewardToken int64     `json:"community_reward_token,omitempty"`
+	RewardRuleKey        string    `json:"reward_rule_key,omitempty"`
+	LinkedResourceType   string    `json:"linked_resource_type"`
+	LinkedResourceID     string    `json:"linked_resource_id"`
+	OwnerUserID          string    `json:"owner_user_id,omitempty"`
+	AssigneeUserID       string    `json:"assignee_user_id,omitempty"`
+	ActionPath           string    `json:"action_path,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+type tokenUpgradeClosureRewardRequest struct {
+	UserID          string `json:"user_id"`
+	RewardType      string `json:"reward_type"`
+	ClosureID       string `json:"closure_id"`
+	RepoURL         string `json:"repo_url,omitempty"`
+	Branch          string `json:"branch,omitempty"`
+	Image           string `json:"image,omitempty"`
+	Note            string `json:"note,omitempty"`
+	DeploySucceeded bool   `json:"deploy_succeeded"`
+}
+
+func (s *Server) getCommunityRewardState(ctx context.Context) (communityRewardState, error) {
+	state := communityRewardState{Grants: map[string]communityRewardGrant{}}
+	_, _, err := s.getSettingJSON(ctx, communityRewardStateKey, &state)
+	if err != nil {
+		return communityRewardState{}, err
+	}
+	if state.Grants == nil {
+		state.Grants = map[string]communityRewardGrant{}
+	}
+	return state, nil
+}
+
+func (s *Server) saveCommunityRewardState(ctx context.Context, state communityRewardState) error {
+	if state.Grants == nil {
+		state.Grants = map[string]communityRewardGrant{}
+	}
+	_, err := s.putSettingJSON(ctx, communityRewardStateKey, state)
+	return err
+}
+
+func rewardGrantKey(ruleKey, resourceType, resourceID, recipient string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(ruleKey),
+		strings.TrimSpace(resourceType),
+		strings.TrimSpace(resourceID),
+		strings.TrimSpace(recipient),
+	}, "|")
+}
+
+func communityRewardCostType(ruleKey string) string {
+	clean := strings.NewReplacer(" ", ".", "/", ".", "_", ".", ":", ".", "|", ".").Replace(strings.TrimSpace(ruleKey))
+	return "econ.reward." + clean
+}
+
+func cloneRewardMeta(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func splitRewardEvenly(total int64, users []string) map[string]int64 {
+	normalized := normalizeDistinctUserIDs(users)
+	out := map[string]int64{}
+	if total <= 0 || len(normalized) == 0 {
+		return out
+	}
+	base := total / int64(len(normalized))
+	rem := total % int64(len(normalized))
+	for i, uid := range normalized {
+		amount := base
+		if int64(i) < rem {
+			amount++
+		}
+		if amount > 0 {
+			out[uid] = amount
+		}
+	}
+	return out
+}
+
+func buildCommunityRewardResults(results []communityRewardResult) []communityRewardResult {
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Amount != results[j].Amount {
+			return results[i].Amount > results[j].Amount
+		}
+		if results[i].RecipientUserID != results[j].RecipientUserID {
+			return results[i].RecipientUserID < results[j].RecipientUserID
+		}
+		return results[i].GrantKey < results[j].GrantKey
+	})
+	return results
+}
+
+func (s *Server) ensureCommunityRewards(ctx context.Context, spec communityRewardSpec) ([]communityRewardResult, error) {
+	spec.RuleKey = strings.TrimSpace(spec.RuleKey)
+	spec.ResourceType = strings.TrimSpace(spec.ResourceType)
+	spec.ResourceID = strings.TrimSpace(spec.ResourceID)
+	if spec.RuleKey == "" || spec.ResourceType == "" || spec.ResourceID == "" {
+		return nil, fmt.Errorf("reward rule/resource is required")
+	}
+	if len(spec.Recipients) == 0 {
+		return nil, nil
+	}
+
+	type pendingReward struct {
+		key    string
+		userID string
+		amount int64
+	}
+
+	genesisStateMu.Lock()
+	defer genesisStateMu.Unlock()
+
+	state, err := s.getCommunityRewardState(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]communityRewardResult, 0, len(spec.Recipients))
+	pending := make([]pendingReward, 0, len(spec.Recipients))
+	normalizedRecipients := make(map[string]int64, len(spec.Recipients))
+	for uid, amount := range spec.Recipients {
+		uid = strings.TrimSpace(uid)
+		if uid == "" || uid == clawWorldSystemID || amount <= 0 {
+			continue
+		}
+		normalizedRecipients[uid] += amount
+	}
+	ordered := make([]string, 0, len(normalizedRecipients))
+	for uid := range normalizedRecipients {
+		ordered = append(ordered, uid)
+	}
+	sort.Strings(ordered)
+	for _, uid := range ordered {
+		amount := normalizedRecipients[uid]
+		key := rewardGrantKey(spec.RuleKey, spec.ResourceType, spec.ResourceID, uid)
+		if existing, ok := state.Grants[key]; ok {
+			results = append(results, communityRewardResult{
+				GrantKey:        existing.GrantKey,
+				RuleKey:         existing.RuleKey,
+				ResourceType:    existing.ResourceType,
+				ResourceID:      existing.ResourceID,
+				RecipientUserID: existing.RecipientUser,
+				Amount:          existing.Amount,
+				Applied:         false,
+				LedgerID:        existing.LedgerID,
+				BalanceAfter:    existing.BalanceAfter,
+				CreatedAt:       existing.CreatedAt,
+				Meta:            cloneRewardMeta(existing.Meta),
+			})
+			continue
+		}
+		if err := s.ensureUserAlive(ctx, uid); err != nil {
+			return nil, err
+		}
+		pending = append(pending, pendingReward{
+			key:    key,
+			userID: uid,
+			amount: amount,
+		})
+	}
+
+	if len(pending) == 0 {
+		return buildCommunityRewardResults(results), nil
+	}
+
+	applied := make([]communityRewardGrant, 0, len(pending))
+	for _, item := range pending {
+		ledger, err := s.store.Recharge(ctx, item.userID, item.amount)
+		if err != nil {
+			for i := len(applied) - 1; i >= 0; i-- {
+				if _, rollbackErr := s.store.Consume(ctx, applied[i].RecipientUser, applied[i].Amount); rollbackErr != nil {
+					log.Printf("community_reward_recharge_rollback_failed grant_key=%s user_id=%s amount=%d err=%v", applied[i].GrantKey, applied[i].RecipientUser, applied[i].Amount, rollbackErr)
+				}
+			}
+			return nil, err
+		}
+		applied = append(applied, communityRewardGrant{
+			GrantKey:      item.key,
+			RuleKey:       spec.RuleKey,
+			ResourceType:  spec.ResourceType,
+			ResourceID:    spec.ResourceID,
+			RecipientUser: item.userID,
+			Amount:        item.amount,
+			LedgerID:      ledger.ID,
+			BalanceAfter:  ledger.BalanceAfter,
+			CreatedAt:     ledger.CreatedAt,
+			Meta:          cloneRewardMeta(spec.Meta),
+		})
+	}
+
+	for _, grant := range applied {
+		state.Grants[grant.GrantKey] = grant
+	}
+	if err := s.saveCommunityRewardState(ctx, state); err != nil {
+		for i := len(applied) - 1; i >= 0; i-- {
+			if _, rollbackErr := s.store.Consume(ctx, applied[i].RecipientUser, applied[i].Amount); rollbackErr != nil {
+				log.Printf("community_reward_state_rollback_failed grant_key=%s user_id=%s amount=%d err=%v", applied[i].GrantKey, applied[i].RecipientUser, applied[i].Amount, rollbackErr)
+			}
+		}
+		return nil, err
+	}
+
+	for _, grant := range applied {
+		meta := cloneRewardMeta(grant.Meta)
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		meta["grant_key"] = grant.GrantKey
+		meta["resource_type"] = grant.ResourceType
+		meta["resource_id"] = grant.ResourceID
+		meta["reward_rule_key"] = grant.RuleKey
+		meta["ledger_id"] = grant.LedgerID
+		metaRaw, _ := json.Marshal(meta)
+		if _, err := s.store.AppendCostEvent(ctx, store.CostEvent{
+			UserID:   grant.RecipientUser,
+			CostType: communityRewardCostType(grant.RuleKey),
+			Amount:   grant.Amount,
+			Units:    1,
+			MetaJSON: string(metaRaw),
+		}); err != nil {
+			// Keep the reward as the source of truth and surface the audit gap in logs/tests.
+			continue
+		}
+	}
+
+	for _, grant := range applied {
+		results = append(results, communityRewardResult{
+			GrantKey:        grant.GrantKey,
+			RuleKey:         grant.RuleKey,
+			ResourceType:    grant.ResourceType,
+			ResourceID:      grant.ResourceID,
+			RecipientUserID: grant.RecipientUser,
+			Amount:          grant.Amount,
+			Applied:         true,
+			LedgerID:        grant.LedgerID,
+			BalanceAfter:    grant.BalanceAfter,
+			CreatedAt:       grant.CreatedAt,
+			Meta:            cloneRewardMeta(grant.Meta),
+		})
+	}
+	return buildCommunityRewardResults(results), nil
+}
+
+func (s *Server) rewardKBProposalApplied(ctx context.Context, proposal store.KBProposal) ([]communityRewardResult, error) {
+	recipient := strings.TrimSpace(proposal.ProposerUserID)
+	if recipient == "" || recipient == clawWorldSystemID {
+		return nil, nil
+	}
+	return s.ensureCommunityRewards(ctx, communityRewardSpec{
+		RuleKey:      communityRewardRuleKBApply,
+		ResourceType: "kb.proposal",
+		ResourceID:   fmt.Sprintf("%d", proposal.ID),
+		Recipients:   map[string]int64{recipient: communityRewardAmountKBApply},
+		Meta: map[string]any{
+			"proposal_id": proposal.ID,
+			"title":       proposal.Title,
+		},
+	})
+}
+
+func (s *Server) rewardCollabClosed(ctx context.Context, session store.CollabSession) ([]communityRewardResult, error) {
+	if strings.TrimSpace(strings.ToLower(session.Phase)) != "closed" {
+		return nil, nil
+	}
+	artifacts, err := s.store.ListCollabArtifacts(ctx, session.CollabID, "", 500)
+	if err != nil {
+		return nil, err
+	}
+	recipients := make([]string, 0)
+	acceptedCount := 0
+	for _, it := range artifacts {
+		if strings.TrimSpace(strings.ToLower(it.Status)) != "accepted" {
+			continue
+		}
+		acceptedCount++
+		recipients = append(recipients, it.UserID)
+	}
+	rewardSplit := splitRewardEvenly(communityRewardAmountCollabClose, recipients)
+	if len(rewardSplit) == 0 {
+		return nil, nil
+	}
+	return s.ensureCommunityRewards(ctx, communityRewardSpec{
+		RuleKey:      communityRewardRuleCollabClose,
+		ResourceType: "collab.session",
+		ResourceID:   session.CollabID,
+		Recipients:   rewardSplit,
+		Meta: map[string]any{
+			"collab_id":               session.CollabID,
+			"accepted_artifact_count": acceptedCount,
+			"orchestrator_user_id":    session.OrchestratorUserID,
+		},
+	})
+}
+
+func (s *Server) rewardBountyPaid(ctx context.Context, item bountyItem) ([]communityRewardResult, error) {
+	recipient := strings.TrimSpace(item.ReleasedTo)
+	if recipient == "" || recipient == clawWorldSystemID {
+		return nil, nil
+	}
+	return s.ensureCommunityRewards(ctx, communityRewardSpec{
+		RuleKey:      communityRewardRuleBountyPaid,
+		ResourceType: "bounty",
+		ResourceID:   fmt.Sprintf("%d", item.BountyID),
+		Recipients:   map[string]int64{recipient: communityRewardAmountBountyPaid},
+		Meta: map[string]any{
+			"bounty_id":       item.BountyID,
+			"released_to":     item.ReleasedTo,
+			"escrow_amount":   item.Reward,
+			"poster_user_id":  item.PosterUserID,
+			"community_bonus": communityRewardAmountBountyPaid,
+		},
+	})
+}
+
+func (s *Server) rewardGangliaIntegrated(ctx context.Context, integration store.GanglionIntegration, ganglion store.Ganglion) ([]communityRewardResult, error) {
+	authorID := strings.TrimSpace(ganglion.AuthorUserID)
+	if authorID == "" || authorID == clawWorldSystemID || authorID == strings.TrimSpace(integration.UserID) {
+		return nil, nil
+	}
+	return s.ensureCommunityRewards(ctx, communityRewardSpec{
+		RuleKey:      communityRewardRuleGangliaIntegrate,
+		ResourceType: "ganglia.integration",
+		ResourceID:   fmt.Sprintf("%d", integration.ID),
+		Recipients:   map[string]int64{authorID: communityRewardAmountGanglia},
+		Meta: map[string]any{
+			"ganglion_id":         integration.GanglionID,
+			"integration_user_id": integration.UserID,
+			"ganglion_author_id":  ganglion.AuthorUserID,
+		},
+	})
+}
+
+func normalizeUpgradeRewardType(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case communityRewardRuleUpgradeClawcolony:
+		return communityRewardRuleUpgradeClawcolony
+	case communityRewardRuleSelfCoreUpgrade:
+		return communityRewardRuleSelfCoreUpgrade
+	default:
+		return ""
+	}
+}
+
+func (s *Server) authorizeUpgradeClosureRewardRequest(w http.ResponseWriter, r *http.Request) bool {
+	if isLoopbackRemoteAddr(r.RemoteAddr) {
+		return true
+	}
+	expected := strings.TrimSpace(s.cfg.InternalSyncToken)
+	if expected == "" {
+		writeError(w, http.StatusUnauthorized, "non-loopback requests require internal sync token configuration")
+		return false
+	}
+	got := internalSyncTokenFromRequest(r)
+	if !secureStringEqual(got, expected) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return false
+	}
+	return true
+}
+
+func (s *Server) handleTokenUpgradeClosureReward(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.authorizeUpgradeClosureRewardRequest(w, r) {
+		return
+	}
+	var req tokenUpgradeClosureRewardRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.UserID = strings.TrimSpace(req.UserID)
+	req.RewardType = normalizeUpgradeRewardType(req.RewardType)
+	req.ClosureID = strings.TrimSpace(req.ClosureID)
+	req.RepoURL = strings.TrimSpace(req.RepoURL)
+	req.Branch = strings.TrimSpace(req.Branch)
+	req.Image = strings.TrimSpace(req.Image)
+	req.Note = strings.TrimSpace(req.Note)
+	if req.UserID == "" || req.RewardType == "" || req.ClosureID == "" {
+		writeError(w, http.StatusBadRequest, "user_id, reward_type, closure_id are required")
+		return
+	}
+	if !req.DeploySucceeded {
+		writeError(w, http.StatusBadRequest, "deploy_succeeded must be true")
+		return
+	}
+	results, err := s.ensureCommunityRewards(r.Context(), communityRewardSpec{
+		RuleKey:      req.RewardType,
+		ResourceType: "upgrade.closure",
+		ResourceID:   req.ClosureID,
+		Recipients:   map[string]int64{req.UserID: communityRewardAmountUpgradeClosure},
+		Meta: map[string]any{
+			"reward_type":      req.RewardType,
+			"closure_id":       req.ClosureID,
+			"repo_url":         req.RepoURL,
+			"branch":           req.Branch,
+			"image":            req.Image,
+			"note":             req.Note,
+			"deploy_succeeded": true,
+		},
+	})
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"item": map[string]any{
+			"user_id":          req.UserID,
+			"reward_type":      req.RewardType,
+			"closure_id":       req.ClosureID,
+			"reward_amount":    communityRewardAmountUpgradeClosure,
+			"deploy_succeeded": true,
+			"repo_url":         req.RepoURL,
+			"branch":           req.Branch,
+			"image":            req.Image,
+			"note":             req.Note,
+		},
+		"community_rewards": results,
+	})
+}
+
+func normalizeTaskMarketSource(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "", "all":
+		return ""
+	case tokenTaskMarketSourceManual:
+		return tokenTaskMarketSourceManual
+	case tokenTaskMarketSourceSystem:
+		return tokenTaskMarketSourceSystem
+	default:
+		return "__invalid__"
+	}
+}
+
+func (s *Server) handleTokenTaskMarket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	source := normalizeTaskMarketSource(r.URL.Query().Get("source"))
+	if source == "__invalid__" {
+		writeError(w, http.StatusBadRequest, "source must be manual|system|all")
+		return
+	}
+	module := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("module")))
+	status := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("status")))
+	limit := parseLimit(r.URL.Query().Get("limit"), 100)
+
+	items := make([]tokenTaskMarketItem, 0)
+	if source == "" || source == tokenTaskMarketSourceManual {
+		items = append(items, s.collectManualBountyMarketItems(r.Context(), module, status)...)
+	}
+	if source == "" || source == tokenTaskMarketSourceSystem {
+		systemItems, err := s.collectSystemTaskMarketItems(r.Context(), module, status)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		items = append(items, systemItems...)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].RewardToken != items[j].RewardToken {
+			return items[i].RewardToken > items[j].RewardToken
+		}
+		if !items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			return items[i].UpdatedAt.After(items[j].UpdatedAt)
+		}
+		return items[i].TaskID < items[j].TaskID
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) collectManualBountyMarketItems(ctx context.Context, module, status string) []tokenTaskMarketItem {
+	if module != "" && module != "bounty" {
+		return nil
+	}
+	genesisStateMu.Lock()
+	state, err := s.getBountyState(ctx)
+	genesisStateMu.Unlock()
+	if err != nil {
+		return nil
+	}
+	out := make([]tokenTaskMarketItem, 0, len(state.Items))
+	for _, it := range state.Items {
+		st := strings.TrimSpace(strings.ToLower(it.Status))
+		if status == "" {
+			if st != "open" {
+				continue
+			}
+		} else if status != st {
+			continue
+		}
+		out = append(out, tokenTaskMarketItem{
+			TaskID:               fmt.Sprintf("bounty:%d", it.BountyID),
+			Source:               tokenTaskMarketSourceManual,
+			Module:               "bounty",
+			Status:               st,
+			Title:                fmt.Sprintf("Bounty #%d", it.BountyID),
+			Summary:              strings.TrimSpace(it.Description),
+			RewardToken:          it.Reward + communityRewardAmountBountyPaid,
+			EscrowRewardToken:    it.Reward,
+			CommunityRewardToken: communityRewardAmountBountyPaid,
+			RewardRuleKey:        communityRewardRuleBountyPaid,
+			LinkedResourceType:   "bounty",
+			LinkedResourceID:     fmt.Sprintf("%d", it.BountyID),
+			OwnerUserID:          strings.TrimSpace(it.PosterUserID),
+			AssigneeUserID:       strings.TrimSpace(it.ClaimedBy),
+			ActionPath:           "/v1/bounty/claim",
+			CreatedAt:            it.CreatedAt,
+			UpdatedAt:            it.UpdatedAt,
+		})
+	}
+	return out
+}
+
+func (s *Server) collectSystemTaskMarketItems(ctx context.Context, module, status string) ([]tokenTaskMarketItem, error) {
+	status = strings.TrimSpace(strings.ToLower(status))
+	if status != "" && status != "open" {
+		return nil, nil
+	}
+	items := make([]tokenTaskMarketItem, 0)
+	if module == "" || module == "kb" {
+		proposals, err := s.store.ListKBProposals(ctx, "approved", 200)
+		if err != nil {
+			return nil, err
+		}
+		for _, proposal := range proposals {
+			if proposal.AppliedAt != nil && !proposal.AppliedAt.IsZero() {
+				continue
+			}
+			items = append(items, tokenTaskMarketItem{
+				TaskID:               fmt.Sprintf("kb-apply:%d", proposal.ID),
+				Source:               tokenTaskMarketSourceSystem,
+				Module:               "kb",
+				Status:               "open",
+				Title:                proposal.Title,
+				Summary:              strings.TrimSpace(proposal.Reason),
+				RewardToken:          communityRewardAmountKBApply,
+				CommunityRewardToken: communityRewardAmountKBApply,
+				RewardRuleKey:        communityRewardRuleKBApply,
+				LinkedResourceType:   "kb.proposal",
+				LinkedResourceID:     fmt.Sprintf("%d", proposal.ID),
+				OwnerUserID:          strings.TrimSpace(proposal.ProposerUserID),
+				ActionPath:           "/v1/kb/proposals/apply",
+				CreatedAt:            proposal.CreatedAt,
+				UpdatedAt:            proposal.UpdatedAt,
+			})
+		}
+	}
+	if module == "" || module == "collab" {
+		sessions, err := s.store.ListCollabSessions(ctx, "reviewing", "", 200)
+		if err != nil {
+			return nil, err
+		}
+		for _, session := range sessions {
+			artifacts, err := s.store.ListCollabArtifacts(ctx, session.CollabID, "", 200)
+			if err != nil {
+				return nil, err
+			}
+			acceptedAuthors := make([]string, 0)
+			for _, it := range artifacts {
+				if strings.TrimSpace(strings.ToLower(it.Status)) == "accepted" {
+					acceptedAuthors = append(acceptedAuthors, it.UserID)
+				}
+			}
+			rewardSplit := splitRewardEvenly(communityRewardAmountCollabClose, acceptedAuthors)
+			if len(rewardSplit) == 0 {
+				continue
+			}
+			items = append(items, tokenTaskMarketItem{
+				TaskID:               "collab-close:" + session.CollabID,
+				Source:               tokenTaskMarketSourceSystem,
+				Module:               "collab",
+				Status:               "open",
+				Title:                session.Title,
+				Summary:              strings.TrimSpace(session.LastStatusOrSummary),
+				RewardToken:          communityRewardAmountCollabClose,
+				CommunityRewardToken: communityRewardAmountCollabClose,
+				RewardRuleKey:        communityRewardRuleCollabClose,
+				LinkedResourceType:   "collab.session",
+				LinkedResourceID:     session.CollabID,
+				OwnerUserID:          strings.TrimSpace(session.OrchestratorUserID),
+				ActionPath:           "/v1/collab/close",
+				CreatedAt:            session.CreatedAt,
+				UpdatedAt:            session.UpdatedAt,
+			})
+		}
+	}
+	return items, nil
+}
