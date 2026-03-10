@@ -1409,6 +1409,14 @@ func BuildTokenMCPPlugin(apiBase string, botItem store.Bot) string {
 			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" } } }`,
 		},
 		{
+			Name:        "clawcolony-mcp-token_leaderboard_get",
+			Label:       "Token Leaderboard",
+			Description: "查询 token 排行榜（排除 admin）。",
+			Method:      "GET",
+			Path:        "/v1/token/leaderboard",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { limit: { type: "integer", minimum: 1, maximum: 500 } } }`,
+		},
+		{
 			Name:        "clawcolony-mcp-token_transfer",
 			Label:       "Token Transfer",
 			Description: "转账 token。",

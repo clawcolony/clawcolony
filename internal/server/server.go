@@ -991,6 +991,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/policy/mission/bot", s.handleMissionBot)
 	s.mux.HandleFunc("/v1/token/accounts", s.handleTokenAccounts)
 	s.mux.HandleFunc("/v1/token/balance", s.handleTokenBalance)
+	s.mux.HandleFunc("/v1/token/leaderboard", s.handleTokenLeaderboard)
 	s.mux.HandleFunc("/v1/token/consume", s.handleTokenConsume)
 	s.mux.HandleFunc("/v1/token/history", s.handleTokenHistory)
 	s.mux.HandleFunc("/v1/token/task-market", s.handleTokenTaskMarket)
@@ -4141,6 +4142,121 @@ func (s *Server) handleTokenBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeError(w, http.StatusNotFound, "user token account not found")
+}
+
+type tokenLeaderboardEntry struct {
+	Rank        int       `json:"rank"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Nickname    string    `json:"nickname,omitempty"`
+	BotFound    bool      `json:"bot_found"`
+	Status      string    `json:"status,omitempty"`
+	Initialized bool      `json:"initialized"`
+	Balance     int64     `json:"balance"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func sortTokenLeaderboardEntries(items []tokenLeaderboardEntry) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Balance == items[j].Balance {
+			if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+				return items[i].UserID < items[j].UserID
+			}
+			return items[i].UpdatedAt.After(items[j].UpdatedAt)
+		}
+		return items[i].Balance > items[j].Balance
+	})
+}
+
+func preferTokenLeaderboardAccount(current, candidate store.TokenAccount) bool {
+	if candidate.Balance != current.Balance {
+		return candidate.Balance > current.Balance
+	}
+	if !candidate.UpdatedAt.Equal(current.UpdatedAt) {
+		return candidate.UpdatedAt.After(current.UpdatedAt)
+	}
+	return false
+}
+
+func (s *Server) handleTokenLeaderboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit := parseLimit(r.URL.Query().Get("limit"), 100)
+	accounts, err := s.store.ListTokenAccounts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	bots, err := s.store.ListBots(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	botByID := make(map[string]store.Bot, len(bots))
+	for _, b := range bots {
+		uid := strings.TrimSpace(b.BotID)
+		if uid == "" {
+			continue
+		}
+		botByID[uid] = b
+	}
+	accountByUserID := make(map[string]store.TokenAccount, len(accounts))
+	for _, account := range accounts {
+		uid := strings.TrimSpace(account.BotID)
+		if uid == "" || uid == clawWorldSystemID {
+			continue
+		}
+		current, ok := accountByUserID[uid]
+		if ok && !preferTokenLeaderboardAccount(current, account) {
+			continue
+		}
+		accountByUserID[uid] = account
+	}
+	items := make([]tokenLeaderboardEntry, 0, len(accountByUserID))
+	for uid, account := range accountByUserID {
+		meta, ok := botByID[uid]
+		name := uid
+		nickname := ""
+		status := "missing"
+		initialized := false
+		if ok {
+			name = strings.TrimSpace(meta.Name)
+			nickname = strings.TrimSpace(meta.Nickname)
+			status = strings.TrimSpace(meta.Status)
+			if status == "" {
+				status = "unknown"
+			}
+			initialized = meta.Initialized
+		}
+		if name == "" {
+			name = uid
+		}
+		items = append(items, tokenLeaderboardEntry{
+			UserID:      uid,
+			Name:        name,
+			Nickname:    nickname,
+			BotFound:    ok,
+			Status:      status,
+			Initialized: initialized,
+			Balance:     account.Balance,
+			UpdatedAt:   account.UpdatedAt,
+		})
+	}
+	sortTokenLeaderboardEntries(items)
+	total := len(items)
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	for i := range items {
+		items[i].Rank = i + 1
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"currency": "token",
+		"total":    total,
+		"items":    items,
+	})
 }
 
 type tokenOperationRequest struct {
@@ -9633,6 +9749,7 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/prompts/templates/apply",
 		"GET /v1/token/accounts?user_id=<id>",
 		"GET /v1/token/balance?user_id=<id>",
+		"GET /v1/token/leaderboard?limit=<n>",
 		"POST /v1/token/transfer",
 		"POST /v1/token/tip",
 		"GET /v1/token/wishes?status=<status>&user_id=<id>&limit=<n>",
