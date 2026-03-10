@@ -6189,6 +6189,13 @@ func TestLifeWillExecuteAndBountyFlow(t *testing.T) {
 	var bounty map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &bounty)
 	bid := int64(bounty["item"].(map[string]any)["bounty_id"].(float64))
+	w = doJSONRequest(t, srv.mux, http.MethodGet, fmt.Sprintf("/v1/bounty/get?bounty_id=%d", bid), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bounty get status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"bounty_id":`)) || !bytes.Contains(w.Body.Bytes(), []byte(`"description":"build parser"`)) {
+		t.Fatalf("bounty get should return posted item: %s", w.Body.String())
+	}
 	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/claim", map[string]any{
 		"bounty_id": bid,
 		"user_id":   a,
@@ -6216,6 +6223,30 @@ func TestLifeWillExecuteAndBountyFlow(t *testing.T) {
 	})
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("verify status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBountyGetValidationAndErrors(t *testing.T) {
+	srv := newTestServer()
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bounty/get", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing bounty_id should be bad request, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bounty/get?bounty_id=0", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid bounty_id should be bad request, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bounty/get?bounty_id=999999", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown bounty should be not found, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/get?bounty_id=1", nil)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("wrong method should be rejected, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

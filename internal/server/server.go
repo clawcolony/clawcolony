@@ -1038,6 +1038,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/metabolism/report", s.handleMetabolismReport)
 	s.mux.HandleFunc("/v1/bounty/post", s.handleBountyPost)
 	s.mux.HandleFunc("/v1/bounty/list", s.handleBountyList)
+	s.mux.HandleFunc("/v1/bounty/get", s.handleBountyGet)
 	s.mux.HandleFunc("/v1/bounty/claim", s.handleBountyClaim)
 	s.mux.HandleFunc("/v1/bounty/verify", s.handleBountyVerify)
 	s.mux.HandleFunc("/v1/collab/propose", s.handleCollabPropose)
@@ -5221,6 +5222,13 @@ func normalizeCollabPhase(v string) string {
 	}
 }
 
+func collabActionOwnerUserID(session store.CollabSession) string {
+	if uid := strings.TrimSpace(session.OrchestratorUserID); uid != "" {
+		return uid
+	}
+	return strings.TrimSpace(session.ProposerUserID)
+}
+
 func canTransitCollabPhase(from, to string) bool {
 	if from == to {
 		return true
@@ -5688,12 +5696,17 @@ func (s *Server) handleCollabClose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	ownerUserID := collabActionOwnerUserID(session)
+	if ownerUserID != "" && req.OrchestratorUserID != ownerUserID {
+		writeError(w, http.StatusForbidden, "only current orchestrator can close collab")
+		return
+	}
 	if !canTransitCollabPhase(session.Phase, target) {
 		writeError(w, http.StatusConflict, "phase transition not allowed")
 		return
 	}
 	now := time.Now().UTC()
-	item, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, target, req.OrchestratorUserID, req.StatusOrSummaryNote, &now)
+	item, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, target, ownerUserID, req.StatusOrSummaryNote, &now)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -9627,7 +9640,7 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/token/wish/fulfill",
 		"POST /v1/token/consume",
 		"GET /v1/token/history?user_id=<id>",
-		"GET /v1/token/task-market?source=manual|system|all&module=bounty|kb|collab&status=<status>&limit=<n>",
+		"GET /v1/token/task-market?user_id=<id>&source=manual|system|all&module=bounty|kb|collab&status=<status>&limit=<n>",
 		"POST /v1/token/reward/upgrade-closure (internal only)",
 		"POST /v1/mail/send",
 		"POST /v1/mail/send-list",
@@ -9664,6 +9677,7 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/metabolism/report?limit=<n>",
 		"POST /v1/bounty/post",
 		"GET /v1/bounty/list?status=<status>&poster_user_id=<id>&claimed_by=<id>&limit=<n>",
+		"GET /v1/bounty/get?bounty_id=<id>",
 		"POST /v1/bounty/claim",
 		"POST /v1/bounty/verify",
 		"GET /v1/governance/docs?keyword=<kw>&limit=<n>",

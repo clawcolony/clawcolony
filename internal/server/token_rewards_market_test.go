@@ -417,6 +417,22 @@ func TestTokenTaskMarketListsManualAndSystemItems(t *testing.T) {
 	if strings.Contains(w.Body.String(), `"source":"system"`) {
 		t.Fatalf("system task market should respect status filter body=%s", w.Body.String())
 	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/task-market?source=system&module=collab&user_id="+author+"&limit=20", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("task market non-owner filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"linked_resource_type":"collab.session"`) {
+		t.Fatalf("non-orchestrator should not see collab close task body=%s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/task-market?source=system&module=collab&user_id="+orchestrator+"&limit=20", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("task market owner filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"linked_resource_type":"collab.session"`) {
+		t.Fatalf("orchestrator should see collab close task body=%s", w.Body.String())
+	}
 }
 
 func TestCollabCloseFailedDoesNotGrantCommunityReward(t *testing.T) {
@@ -466,6 +482,68 @@ func TestCollabCloseFailedDoesNotGrantCommunityReward(t *testing.T) {
 	}
 	if tokenBalanceForUser(t, srv, author) != 1000 {
 		t.Fatalf("failed collab close should not reward author body=%s", w.Body.String())
+	}
+}
+
+func TestCollabCloseRequiresCurrentOrchestrator(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	orchestrator := seedActiveUser(t, srv)
+	otherUser := seedActiveUser(t, srv)
+	author := seedActiveUser(t, srv)
+
+	session, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
+		CollabID:           "collab-owner-guard",
+		Title:              "Protected collab",
+		Goal:               "close only by orchestrator",
+		Complexity:         "m",
+		Phase:              "reviewing",
+		ProposerUserID:     orchestrator,
+		OrchestratorUserID: orchestrator,
+		MinMembers:         1,
+		MaxMembers:         3,
+	})
+	if err != nil {
+		t.Fatalf("create collab: %v", err)
+	}
+	artifact, err := srv.store.CreateCollabArtifact(ctx, store.CollabArtifact{
+		CollabID: session.CollabID,
+		UserID:   author,
+		Role:     "builder",
+		Kind:     "spec",
+		Summary:  "accepted artifact",
+		Content:  "evidence/result/next",
+		Status:   "submitted",
+	})
+	if err != nil {
+		t.Fatalf("create collab artifact: %v", err)
+	}
+	if _, err := srv.store.UpdateCollabArtifactReview(ctx, artifact.ID, "accepted", "ok"); err != nil {
+		t.Fatalf("accept collab artifact: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
+		"collab_id":              session.CollabID,
+		"orchestrator_user_id":   otherUser,
+		"result":                 "closed",
+		"status_or_summary_note": "unauthorized close",
+	})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("non-orchestrator close should be forbidden, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	after, err := srv.store.GetCollabSession(ctx, session.CollabID)
+	if err != nil {
+		t.Fatalf("reload collab: %v", err)
+	}
+	if after.Phase != "reviewing" {
+		t.Fatalf("phase should remain reviewing, got=%s", after.Phase)
+	}
+	if after.OrchestratorUserID != orchestrator {
+		t.Fatalf("orchestrator should remain unchanged, got=%s", after.OrchestratorUserID)
+	}
+	if tokenBalanceForUser(t, srv, author) != 1000 {
+		t.Fatalf("unauthorized close should not mint reward body=%s", w.Body.String())
 	}
 }
 

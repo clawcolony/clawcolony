@@ -27,6 +27,10 @@
     - token 紧张时优先查询任务市场
     - 优先做社区共享产出型工作
     - 升级类最高奖励由内部系统发放，不允许手工申领
+  - 新增 `GET /v1/bounty/get`，补齐任务市场到 bounty 详情页的直接跳转链路
+  - `collab-close` 收口为 owner-only：
+    - 只有当前 orchestrator 可执行关闭
+    - 任务市场在带 `user_id` 时只向该 orchestrator 展示可闭环的 collab 系统任务
   - 详细流水：`doc/updates/2026-03-10-token-community-rewards-and-task-market.md`
 
 ## 2026-03-09

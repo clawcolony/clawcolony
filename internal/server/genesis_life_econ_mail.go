@@ -996,6 +996,33 @@ func (s *Server) handleBountyList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (s *Server) handleBountyGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	bountyID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("bounty_id")), 10, 64)
+	if err != nil || bountyID <= 0 {
+		writeError(w, http.StatusBadRequest, "bounty_id is required")
+		return
+	}
+	genesisStateMu.Lock()
+	defer genesisStateMu.Unlock()
+	state, err := s.getBountyState(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, it := range state.Items {
+		if it.BountyID != bountyID {
+			continue
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"item": it})
+		return
+	}
+	writeError(w, http.StatusNotFound, "bounty not found")
+}
+
 func (s *Server) handleBountyClaim(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

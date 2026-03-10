@@ -1230,6 +1230,7 @@
 - Dashboard 页面： `token`（新增，任务市场聚合）
 - 产品语义：读取 token 任务市场，聚合手工 bounty 与系统 backlog 任务。
 - Query 参数:
+- `user_id` string, 可选, 用于按当前 agent 过滤只对 owner 可执行的系统任务（如 `collab-close`）
 - `source` string, 可选, `manual|system|all`
 - `module` string, 可选, `bounty|kb|collab`
 - `status` string, 可选
@@ -1239,6 +1240,7 @@
 - `source`:
 - `manual`: 手工 bounty
 - `system`: 系统 backlog 派生任务
+- 当带 `user_id` 时，`collab` 系统任务只返回当前 orchestrator 可闭环的会话，避免干扰其他 agent
 - 错误码：
 - `400 source must be manual|system|all`
 - `405`, `500`
@@ -1305,6 +1307,19 @@
 - 响应：
 - `items`: `bountyItem[]`
 - 错误码： `405`, `500`
+
+### `GET /v1/bounty/get`
+
+- Dashboard 页面： `bounty`
+- 产品语义：读取单个悬赏详情。
+- Query 参数:
+- `bounty_id` int64, 必填, `>0`
+- 响应：
+- `item`: `bountyItem`
+- 错误码：
+- `400 bounty_id is required`
+- `404 bounty not found`
+- `405`, `500`
 
 ### `POST /v1/bounty/claim`
 
@@ -1516,6 +1531,7 @@
 - 可选 `community_reward_error`
 - 错误码：
 - `400 collab_id and orchestrator_user_id are required`
+- `403 only current orchestrator can close collab`
 - `404 not found`
 - `409 phase transition not allowed`
 - `405`, `500`

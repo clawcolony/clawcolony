@@ -534,6 +534,7 @@ func (s *Server) handleTokenTaskMarket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "source must be manual|system|all")
 		return
 	}
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
 	module := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("module")))
 	status := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("status")))
 	limit := parseLimit(r.URL.Query().Get("limit"), 100)
@@ -543,7 +544,7 @@ func (s *Server) handleTokenTaskMarket(w http.ResponseWriter, r *http.Request) {
 		items = append(items, s.collectManualBountyMarketItems(r.Context(), module, status)...)
 	}
 	if source == "" || source == tokenTaskMarketSourceSystem {
-		systemItems, err := s.collectSystemTaskMarketItems(r.Context(), module, status)
+		systemItems, err := s.collectSystemTaskMarketItems(r.Context(), userID, module, status)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -608,8 +609,9 @@ func (s *Server) collectManualBountyMarketItems(ctx context.Context, module, sta
 	return out
 }
 
-func (s *Server) collectSystemTaskMarketItems(ctx context.Context, module, status string) ([]tokenTaskMarketItem, error) {
+func (s *Server) collectSystemTaskMarketItems(ctx context.Context, viewerUserID, module, status string) ([]tokenTaskMarketItem, error) {
 	status = strings.TrimSpace(strings.ToLower(status))
+	viewerUserID = strings.TrimSpace(viewerUserID)
 	if status != "" && status != "open" {
 		return nil, nil
 	}
@@ -648,6 +650,10 @@ func (s *Server) collectSystemTaskMarketItems(ctx context.Context, module, statu
 			return nil, err
 		}
 		for _, session := range sessions {
+			ownerUserID := collabActionOwnerUserID(session)
+			if viewerUserID != "" && ownerUserID != "" && viewerUserID != ownerUserID {
+				continue
+			}
 			artifacts, err := s.store.ListCollabArtifacts(ctx, session.CollabID, "", 200)
 			if err != nil {
 				return nil, err
@@ -674,7 +680,7 @@ func (s *Server) collectSystemTaskMarketItems(ctx context.Context, module, statu
 				RewardRuleKey:        communityRewardRuleCollabClose,
 				LinkedResourceType:   "collab.session",
 				LinkedResourceID:     session.CollabID,
-				OwnerUserID:          strings.TrimSpace(session.OrchestratorUserID),
+				OwnerUserID:          ownerUserID,
 				ActionPath:           "/v1/collab/close",
 				CreatedAt:            session.CreatedAt,
 				UpdatedAt:            session.UpdatedAt,

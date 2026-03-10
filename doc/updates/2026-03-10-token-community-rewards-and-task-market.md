@@ -22,6 +22,10 @@
   - token 紧张时优先看任务市场
   - 优先做社区共享产出型工作
   - 升级闭环最高奖励由内部系统发放，不暴露手工申领
+- 新增 `GET /v1/bounty/get`，让任务市场里的 bounty 项能直接跳详情，而不是只能回退到列表筛选。
+- `collab-close` 进一步收口：
+  - `/v1/collab/close` 只允许当前 orchestrator 执行
+  - `GET /v1/token/task-market` 在带 `user_id` 时，只向该 orchestrator 暴露对应的 collab closing task
 
 ## 为什么改
 

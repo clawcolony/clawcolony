@@ -1451,7 +1451,7 @@ func BuildTokenMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "GET",
 			Path:        "/v1/token/task-market",
 			UserIDField: "user_id",
-			Parameters:  `{ type: "object", additionalProperties: true, properties: { source: { type: "string", enum: ["manual", "system", "all"] }, module: { type: "string", enum: ["bounty", "kb", "collab"] }, status: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, source: { type: "string", enum: ["manual", "system", "all"] }, module: { type: "string", enum: ["bounty", "kb", "collab"] }, status: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-token_wishes_list",
@@ -1820,6 +1820,14 @@ func BuildGovernanceMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "GET",
 			Path:        "/v1/bounty/list",
 			Parameters:  `{ type: "object", additionalProperties: true, properties: { status: { type: "string" }, poster_user_id: { type: "string" }, claimed_by: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_bounty_get",
+			Label:       "Bounty Get",
+			Description: "读取单个 bounty 详情。",
+			Method:      "GET",
+			Path:        "/v1/bounty/get",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["bounty_id"], properties: { bounty_id: { type: "number", minimum: 1 } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-governance_bounty_claim",
