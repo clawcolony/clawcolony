@@ -306,6 +306,15 @@ func (s *InMemoryStore) ListWorldTicks(_ context.Context, limit int) ([]WorldTic
 	return out, nil
 }
 
+func (s *InMemoryStore) GetFirstWorldTick(_ context.Context) (WorldTickRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.worldTicks) == 0 {
+		return WorldTickRecord{}, false, nil
+	}
+	return s.worldTicks[0], true, nil
+}
+
 func (s *InMemoryStore) AppendWorldTickStep(_ context.Context, item WorldTickStepRecord) (WorldTickStepRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -860,6 +860,23 @@ func (s *PostgresStore) ListWorldTicks(ctx context.Context, limit int) ([]WorldT
 	return out, rows.Err()
 }
 
+func (s *PostgresStore) GetFirstWorldTick(ctx context.Context) (WorldTickRecord, bool, error) {
+	var it WorldTickRecord
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, tick_id, started_at, duration_ms, trigger_type, replay_of_tick_id, prev_hash, entry_hash, status, error_text
+		FROM world_ticks
+		ORDER BY tick_id ASC, id ASC
+		LIMIT 1
+	`).Scan(&it.ID, &it.TickID, &it.StartedAt, &it.DurationMS, &it.TriggerType, &it.ReplayOfTickID, &it.PrevHash, &it.EntryHash, &it.Status, &it.ErrorText)
+	if err == sql.ErrNoRows {
+		return WorldTickRecord{}, false, nil
+	}
+	if err != nil {
+		return WorldTickRecord{}, false, err
+	}
+	return it, true, nil
+}
+
 func (s *PostgresStore) AppendWorldTickStep(ctx context.Context, item WorldTickStepRecord) (WorldTickStepRecord, error) {
 	item.StepName = strings.TrimSpace(item.StepName)
 	if item.StepName == "" {

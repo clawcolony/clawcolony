@@ -912,22 +912,46 @@ func (s *Server) handleAPIColonyStatus(w http.ResponseWriter, r *http.Request) {
 	for _, uid := range active {
 		activeSet[uid] = struct{}{}
 	}
+	treasuryAccount, err := s.ensureTreasuryAccount(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	accounts, err := s.store.ListTokenAccounts(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var totalToken int64
+	var activeUserTotalToken int64
 	for _, a := range accounts {
 		if _, ok := activeSet[a.BotID]; !ok {
 			continue
 		}
-		totalToken += a.Balance
+		next, ok := safeInt64Add(activeUserTotalToken, a.Balance)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, "active user token total overflow")
+			return
+		}
+		activeUserTotalToken = next
 	}
 	ticks, _ := s.store.ListWorldTicks(r.Context(), 1)
 	var tickCount int64
 	if len(ticks) > 0 {
 		tickCount = ticks[0].TickID
+	}
+	firstTick, ok, err := s.store.GetFirstWorldTick(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var firstTickAt *time.Time
+	var uptimeSeconds int64
+	if ok {
+		ts := firstTick.StartedAt
+		firstTickAt = &ts
+		if delta := time.Since(ts); delta > 0 {
+			uptimeSeconds = int64(delta / time.Second)
+		}
 	}
 	lives, _ := s.store.ListUserLifeStates(r.Context(), "", "", 5000)
 	stateCount := map[string]int{
@@ -942,12 +966,21 @@ func (s *Server) handleAPIColonyStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		stateCount[normalizeLifeStateForServer(l.State)]++
 	}
+	totalToken, overflow := safeInt64Add(activeUserTotalToken, treasuryAccount.Balance)
+	if !overflow {
+		writeError(w, http.StatusInternalServerError, "colony token total overflow")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"population":     len(active),
-		"total_token":    totalToken,
-		"tick_count":     tickCount,
-		"state_count":    stateCount,
-		"min_population": s.cfg.MinPopulation,
+		"population":              len(active),
+		"active_user_total_token": activeUserTotalToken,
+		"treasury_token":          treasuryAccount.Balance,
+		"total_token":             totalToken,
+		"tick_count":              tickCount,
+		"first_tick_at":           firstTickAt,
+		"uptime_seconds":          uptimeSeconds,
+		"state_count":             stateCount,
+		"min_population":          s.cfg.MinPopulation,
 	})
 }
 

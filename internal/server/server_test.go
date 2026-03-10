@@ -4673,7 +4673,7 @@ func TestWorldFreezeRescueValidation(t *testing.T) {
 				"amount":   1,
 				"user_ids": []string{clawWorldSystemID},
 			},
-			wantErr: "claw-world-system cannot be rescued",
+			wantErr: "system accounts cannot be rescued",
 		},
 	}
 	for _, tc := range cases {
