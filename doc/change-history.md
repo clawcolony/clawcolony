@@ -1172,3 +1172,36 @@
   - 验证结果：
     - 文档内接口标题仅出现 `GET`，无写方法标题
     - 每个接口均包含可运行的 `curl` 示例
+
+- 2026-03-09 Ops Dashboard 产品运营视图重构：
+  - 新增产品视角接口：
+    - `GET /v1/ops/product-overview?window=24h|7d|30d&include_inactive=0|1`
+    - 返回固定 7 个模块（KB/Governance/Ganglia/Bounty/Collab/Tools/Mail）的运营摘要：
+      - totals
+      - status_distribution
+      - window_output
+      - highlights
+      - insight（中英）
+      - top_contributors
+  - 保持原 `GET /v1/ops/overview` 兼容不变。
+  - `GET /dashboard/ops` 页面改为产品运营报告样式：
+    - 顶部全局指标（users/output/backlog）
+    - 7 个模块分段叙述（中英标签）
+    - 按模块主要贡献者区块
+  - 体验与口径修正：
+    - 页面从通用 key/value 渲染改为运营报告风格（更接近 1)~7) 模块摘要）
+    - 新增 warning 区，提示 partial data 与本地空用户基线
+    - mail insight 低样本改为“样本较少，不判断集中度”
+    - `top_contributors_by_module.mail` 空值统一为 `[]`（避免 `null`）
+    - 主要贡献者展示与接口统一携带 `nickname + username + user_id`
+  - API catalog 新增：
+    - `GET /v1/ops/product-overview?window=24h|7d|30d&include_inactive=0|1`
+  - 测试覆盖：
+    - 新增 `TestOpsProductOverviewEndpoint`
+    - 新增 `TestOpsProductOverviewRejectsInvalidWindow`
+    - 更新 `TestDashboardOpsPage`
+  - 验证结果：
+    - `go test ./internal/server -run 'TestOpsProductOverviewEndpoint|TestOpsProductOverviewRejectsInvalidWindow|TestDashboardOpsPage|TestOpsOverviewEndpoint|TestOpsOverviewRejectsInvalidWindow'` 通过
+    - `go test ./...` 通过
+  - 对应记录：
+    - `doc/updates/2026-03-09-ops-dashboard-product-overview.md`

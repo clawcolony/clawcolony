@@ -1089,6 +1089,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/chat/stream", s.handleChatStream)
 	s.mux.HandleFunc("/v1/chat/state", s.handleChatState)
 	s.mux.HandleFunc("/v1/ops/overview", s.handleOpsOverview)
+	s.mux.HandleFunc("/v1/ops/product-overview", s.handleOpsProductOverview)
 	s.mux.HandleFunc("/v1/monitor/agents/overview", s.handleMonitorAgentsOverview)
 	s.mux.HandleFunc("/v1/monitor/agents/timeline", s.handleMonitorAgentsTimeline)
 	s.mux.HandleFunc("/v1/monitor/agents/timeline/all", s.handleMonitorAgentsTimelineAll)
@@ -9672,6 +9673,7 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/collab/participants?collab_id=<id>&status=<status>&limit=<n>",
 		"GET /v1/collab/artifacts?collab_id=<id>&user_id=<id>&limit=<n>",
 		"GET /v1/collab/events?collab_id=<id>&limit=<n>",
+		"GET /v1/ops/product-overview?window=24h|7d|30d&include_inactive=0|1",
 		"GET /v1/monitor/agents/overview?user_id=<id>&include_inactive=0|1&limit=<n>&event_limit=<n>&since_seconds=<n>",
 		"GET /v1/monitor/agents/timeline?user_id=<id>&limit=<n>&event_limit=<n>&cursor=<n>&since_seconds=<n>",
 		"GET /v1/monitor/agents/timeline/all?include_inactive=0|1&limit=<n>&event_limit=<n>&user_limit=<n>&cursor=<n>&since_seconds=<n>",

@@ -1409,6 +1409,190 @@ func TestOpsOverviewRejectsInvalidWindow(t *testing.T) {
 	}
 }
 
+func TestOpsProductOverviewEndpoint(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	userA := seedActiveUser(t, srv)
+	userB := seedActiveUser(t, srv)
+	now := time.Now().UTC()
+
+	applied, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    userA,
+		Title:             "product ops applied",
+		Reason:            "ops",
+		Status:            "discussing",
+		VoteThresholdPct:  80,
+		VoteWindowSeconds: 300,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "product/ops",
+		Title:      "Town Delivery Track",
+		NewContent: "v1",
+		DiffText:   "+ v1",
+	})
+	if err != nil {
+		t.Fatalf("create applied proposal: %v", err)
+	}
+	if _, err := srv.store.CloseKBProposal(ctx, applied.ID, "approved", "ok", 1, 1, 0, 0, 1, now.Add(-90*time.Minute)); err != nil {
+		t.Fatalf("close applied proposal: %v", err)
+	}
+	if _, _, err := srv.store.ApplyKBProposal(ctx, applied.ID, userA, now.Add(-60*time.Minute)); err != nil {
+		t.Fatalf("apply proposal: %v", err)
+	}
+
+	if _, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    userB,
+		Title:             "governance discussing",
+		Reason:            "ops",
+		Status:            "discussing",
+		VoteThresholdPct:  80,
+		VoteWindowSeconds: 300,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "governance/dev-preview",
+		Title:      "Dev preview first",
+		NewContent: "policy",
+		DiffText:   "+ policy",
+	}); err != nil {
+		t.Fatalf("create governance proposal: %v", err)
+	}
+
+	if _, err := srv.store.CreateGanglion(ctx, store.Ganglion{
+		Name:           "ops ganglion",
+		GanglionType:   "method",
+		Description:    "desc",
+		Implementation: "impl",
+		Validation:     "pass",
+		AuthorUserID:   userA,
+		Temporality:    "persistent",
+		LifeState:      "validated",
+	}); err != nil {
+		t.Fatalf("create ganglion: %v", err)
+	}
+
+	collab, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
+		CollabID:       "collab-ops-product",
+		Title:          "ops collab",
+		Goal:           "close",
+		Complexity:     "normal",
+		Phase:          "recruiting",
+		ProposerUserID: userB,
+		MinMembers:     2,
+		MaxMembers:     3,
+	})
+	if err != nil {
+		t.Fatalf("create collab: %v", err)
+	}
+	closedAt := now.Add(-30 * time.Minute)
+	if _, err := srv.store.UpdateCollabPhase(ctx, collab.CollabID, "closed", userB, "done", &closedAt); err != nil {
+		t.Fatalf("close collab: %v", err)
+	}
+
+	if _, err := srv.store.SendMail(ctx, userA, []string{userB}, "ops-product-overview", "hello"); err != nil {
+		t.Fatalf("send user mail: %v", err)
+	}
+	if _, err := srv.store.SendMail(ctx, clawWorldSystemID, []string{userA}, "ops-product-overview-system", "hello"); err != nil {
+		t.Fatalf("send system mail: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/ops/product-overview?window=24h&include_inactive=1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ops product overview status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Window string `json:"window"`
+		Global struct {
+			OutputTotal     int `json:"output_total"`
+			OutputCoreTotal int `json:"output_core_total"`
+		} `json:"global"`
+		Sections []struct {
+			Module       string         `json:"module"`
+			Totals       map[string]int `json:"totals"`
+			WindowOutput map[string]int `json:"window_output"`
+		} `json:"sections"`
+		TopContributors map[string][]struct {
+			UserID   string `json:"user_id"`
+			Username string `json:"username"`
+			Nickname string `json:"nickname"`
+			Count    int    `json:"count"`
+		} `json:"top_contributors_by_module"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal ops product overview: %v", err)
+	}
+	if resp.Window != "24h" {
+		t.Fatalf("window=%q, want 24h", resp.Window)
+	}
+	if resp.Global.OutputCoreTotal <= 0 {
+		t.Fatalf("expected core output > 0: %s", w.Body.String())
+	}
+	if resp.Global.OutputTotal < resp.Global.OutputCoreTotal {
+		t.Fatalf("output_total should include core output: %s", w.Body.String())
+	}
+
+	seen := map[string]bool{}
+	for _, sec := range resp.Sections {
+		seen[sec.Module] = true
+		if sec.Module == "kb" && sec.WindowOutput["kb_applied"] <= 0 {
+			t.Fatalf("expected kb_applied > 0: %s", w.Body.String())
+		}
+		if sec.Module == "mail" && sec.Totals["fetched_count"] <= 0 {
+			t.Fatalf("expected fetched_count > 0: %s", w.Body.String())
+		}
+	}
+	required := []string{"kb", "governance", "ganglia", "bounty", "collab", "tools", "mail"}
+	for _, key := range required {
+		if !seen[key] {
+			t.Fatalf("missing section %q: %s", key, w.Body.String())
+		}
+	}
+	if len(resp.TopContributors["mail"]) == 0 {
+		t.Fatalf("expected top contributors for mail: %s", w.Body.String())
+	}
+	for _, it := range resp.TopContributors["mail"] {
+		if strings.TrimSpace(it.UserID) == "" {
+			t.Fatalf("mail contributor user_id should not be empty: %+v", it)
+		}
+		if strings.TrimSpace(it.Username) == "" {
+			t.Fatalf("mail contributor username should not be empty: %+v", it)
+		}
+	}
+
+	w30 := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/ops/product-overview?window=30d&include_inactive=1", nil)
+	if w30.Code != http.StatusOK {
+		t.Fatalf("ops product overview 30d status=%d body=%s", w30.Code, w30.Body.String())
+	}
+	var resp30 struct {
+		Window string `json:"window"`
+	}
+	if err := json.Unmarshal(w30.Body.Bytes(), &resp30); err != nil {
+		t.Fatalf("unmarshal ops product overview 30d: %v", err)
+	}
+	if resp30.Window != "30d" {
+		t.Fatalf("window=%q, want 30d", resp30.Window)
+	}
+}
+
+func TestOpsProductOverviewRejectsInvalidWindow(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/ops/product-overview?window=1d", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid window status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBuildMailInsightLowSample(t *testing.T) {
+	cn := buildMailInsightCN([]opsProductContributor{{UserID: "u1", Count: 2}})
+	if !strings.Contains(cn, "样本较少") {
+		t.Fatalf("unexpected cn insight for low sample: %q", cn)
+	}
+	en := buildMailInsightEN([]opsProductContributor{{UserID: "u1", Count: 2}})
+	if !strings.Contains(strings.ToLower(en), "too small") {
+		t.Fatalf("unexpected en insight for low sample: %q", en)
+	}
+}
+
 func TestDashboardOpsPage(t *testing.T) {
 	srv := newTestServer()
 	w := doJSONRequest(t, srv.mux, http.MethodGet, "/dashboard/ops", nil)
@@ -1416,11 +1600,11 @@ func TestDashboardOpsPage(t *testing.T) {
 		t.Fatalf("dashboard ops page status=%d body=%s", w.Code, w.Body.String())
 	}
 	body := w.Body.Bytes()
-	if !bytes.Contains(body, []byte("Owner Actions")) {
-		t.Fatalf("dashboard ops page missing Owner Actions section: %s", w.Body.String())
+	if !bytes.Contains(body, []byte("ClawColony 产出")) {
+		t.Fatalf("dashboard ops page missing product heading: %s", w.Body.String())
 	}
-	if !bytes.Contains(body, []byte(`/v1/ops/overview`)) {
-		t.Fatalf("dashboard ops page missing ops API binding: %s", w.Body.String())
+	if !bytes.Contains(body, []byte(`/v1/ops/product-overview`)) {
+		t.Fatalf("dashboard ops page missing product overview API binding: %s", w.Body.String())
 	}
 }
 
