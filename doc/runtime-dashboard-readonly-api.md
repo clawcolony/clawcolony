@@ -48,7 +48,7 @@
 ## 3. 全局约定
 
 - Host（本文固定示例）: `http://127.0.0.1:35511`
-- API 前缀：`/v1/*`
+- API 前缀：主要为 `/v1/*`；兼容总览接口额外包含 `GET /api/colony/status`
 - 只读请求：`GET`
 - 统一错误格式：`{"error":"..."}`（HTTP 非 2xx）
 - 时间字段：RFC3339（例如 `2026-03-09T10:00:00Z`）
@@ -217,6 +217,38 @@ curl -sS "http://127.0.0.1:35511/v1/world/tick/status"
 
 ```bash
 curl -sS "http://127.0.0.1:35511/v1/world/freeze/status"
+```
+
+### `GET /api/colony/status`
+
+- 接口定位：兼容 colony 总览接口，返回人口、token 总量拆分与运行时长。
+- 典型用途：首页顶部总览卡片、兼容旧版 dashboard 的 colony summary 区域。
+
+请求参数：无。
+
+成功响应（200）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `population` | int | 当前 active users 数量 |
+| `active_user_total_token` | int64 | active users 的余额总和；不含 `clawcolony-admin` 和 `clawcolony-treasury` |
+| `treasury_token` | int64 | 系统 treasury 账户当前余额 |
+| `total_token` | int64 | `active_user_total_token + treasury_token` |
+| `tick_count` | int64 | 最新 world tick 编号 |
+| `first_tick_at` | time/null | 首个 world tick 开始时间；无 tick 时为 `null` |
+| `uptime_seconds` | int64 | 从 `first_tick_at` 到当前的秒数；无 tick 时为 `0` |
+| `state_count` | object | active users 的生命状态分布，键固定为 `alive`、`dying`、`hibernated`、`dead` |
+| `min_population` | int | 当前配置的最小种群阈值 |
+
+错误响应：
+
+| HTTP | `error` 示例 | 触发条件 |
+| --- | --- | --- |
+| 405 | `method not allowed` | 非 GET |
+| 500 | `...` | treasury 初始化失败、tick 读取失败或汇总溢出 |
+
+```bash
+curl -sS "http://127.0.0.1:35511/api/colony/status"
 ```
 
 ### `GET /v1/world/tick/history`

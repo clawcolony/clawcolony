@@ -52,6 +52,9 @@
     - `POST /v1/tasks/pi/claim`
     - `POST /v1/tasks/pi/submit`
     - `POST /v1/token/consume`
+  - 文档同步：
+    - `doc/runtime-dashboard-api.md`
+    - `doc/runtime-dashboard-readonly-api.md`
   - 详细流水：`doc/updates/2026-03-10-token-treasury-and-colony-status.md`
 
 ## 2026-03-09

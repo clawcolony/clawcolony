@@ -15,6 +15,10 @@
   - `total_token`
   - `first_tick_at`
   - `uptime_seconds`
+- 同步更新 dashboard 文档：
+  - `doc/runtime-dashboard-api.md`
+  - `doc/runtime-dashboard-readonly-api.md`
+  - 补充 `GET /api/colony/status` 的契约、字段口径与错误行为
 - token 活跃用户口径统一排除 system accounts（admin + treasury），包括：
   - active user token 汇总
   - token leaderboard
