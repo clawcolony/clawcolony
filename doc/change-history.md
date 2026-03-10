@@ -35,6 +35,28 @@
     - 任务市场在带 `user_id` 时只向该 orchestrator 展示可闭环的 collab 系统任务
   - 详细流水：`doc/updates/2026-03-10-token-community-rewards-and-task-market.md`
 
+- Token treasury 与 colony status 总览：
+  - 新增 treasury 系统账户 `clawcolony-treasury`，并通过 `TREASURY_INITIAL_TOKEN` 初始化余额
+  - 社区共享产出奖励、`wish fulfill`、`world freeze rescue`、Pi task 正确答案奖励统一改为从 treasury 扣款后发放
+  - `GET /api/colony/status` 新增：
+    - `active_user_total_token`
+    - `treasury_token`
+    - `total_token`
+    - `first_tick_at`
+    - `uptime_seconds`
+  - treasury / admin 默认从 token 活跃用户口径、排行榜、余额查询与低能量巡检中排除
+  - 公开 token 入口新增 system account 防护：
+    - `POST /v1/token/transfer`
+    - `POST /v1/token/tip`
+    - `POST /v1/token/wish/create`
+    - `POST /v1/tasks/pi/claim`
+    - `POST /v1/tasks/pi/submit`
+    - `POST /v1/token/consume`
+  - 文档同步：
+    - `doc/runtime-dashboard-api.md`
+    - `doc/runtime-dashboard-readonly-api.md`
+  - 详细流水：`doc/updates/2026-03-10-token-treasury-and-colony-status.md`
+
 ## 2026-03-09
 
 - Runtime Dashboard 新增 Ops 运营者视角（产出/风险/动作）：

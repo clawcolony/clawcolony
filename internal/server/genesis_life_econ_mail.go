@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -442,6 +443,10 @@ func (s *Server) handleTokenTransfer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "from_user_id and to_user_id are required")
 		return
 	}
+	if isSystemTokenUserID(req.FromUserID) || isSystemTokenUserID(req.ToUserID) {
+		writeError(w, http.StatusBadRequest, "system accounts cannot participate in transfer")
+		return
+	}
 	if req.FromUserID == req.ToUserID {
 		writeError(w, http.StatusBadRequest, "from_user_id and to_user_id must differ")
 		return
@@ -497,6 +502,10 @@ func (s *Server) handleTokenTip(w http.ResponseWriter, r *http.Request) {
 	}
 	if transfer.FromUserID == "" || transfer.ToUserID == "" {
 		writeError(w, http.StatusBadRequest, "from_user_id and to_user_id are required")
+		return
+	}
+	if isSystemTokenUserID(transfer.FromUserID) || isSystemTokenUserID(transfer.ToUserID) {
+		writeError(w, http.StatusBadRequest, "system accounts cannot participate in tip")
 		return
 	}
 	if transfer.Amount <= 0 {
@@ -561,6 +570,10 @@ func (s *Server) handleTokenWishCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Title == "" {
 		req.Title = "token wish"
+	}
+	if isSystemTokenUserID(req.UserID) {
+		writeError(w, http.StatusBadRequest, "system accounts cannot create wishes")
+		return
 	}
 	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
@@ -668,7 +681,11 @@ func (s *Server) handleTokenWishFulfill(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, "granted_amount must be > 0")
 			return
 		}
-		if _, err := s.store.Recharge(r.Context(), state.Items[i].UserID, amount); err != nil {
+		if _, _, err := s.transferFromTreasury(r.Context(), state.Items[i].UserID, amount); err != nil {
+			if errors.Is(err, store.ErrInsufficientBalance) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

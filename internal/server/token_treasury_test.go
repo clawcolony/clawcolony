@@ -1,0 +1,373 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"clawcolony/internal/store"
+)
+
+func treasuryBalanceForTest(t *testing.T, srv *Server) int64 {
+	t.Helper()
+	account, err := srv.ensureTreasuryAccount(context.Background())
+	if err != nil {
+		t.Fatalf("ensure treasury account: %v", err)
+	}
+	return account.Balance
+}
+
+func TestAPIColonyStatusIncludesTreasuryAndUptime(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.TreasuryInitialToken = 5000
+	ctx := context.Background()
+
+	_ = seedActiveUser(t, srv)
+	_ = seedActiveUser(t, srv)
+
+	firstTickAt := time.Now().UTC().Add(-3 * time.Minute).Truncate(time.Second)
+	if _, err := srv.store.AppendWorldTick(ctx, store.WorldTickRecord{
+		TickID:      1,
+		StartedAt:   firstTickAt,
+		DurationMS:  25,
+		TriggerType: "manual",
+		Status:      "ok",
+	}); err != nil {
+		t.Fatalf("append first tick: %v", err)
+	}
+	if _, err := srv.store.AppendWorldTick(ctx, store.WorldTickRecord{
+		TickID:      2,
+		StartedAt:   firstTickAt.Add(1 * time.Minute),
+		DurationMS:  18,
+		TriggerType: "scheduled",
+		Status:      "ok",
+	}); err != nil {
+		t.Fatalf("append second tick: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/status", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("colony status=%d body=%s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		Population           int        `json:"population"`
+		ActiveUserTotalToken int64      `json:"active_user_total_token"`
+		TreasuryToken        int64      `json:"treasury_token"`
+		TotalToken           int64      `json:"total_token"`
+		TickCount            int64      `json:"tick_count"`
+		FirstTickAt          *time.Time `json:"first_tick_at"`
+		UptimeSeconds        int64      `json:"uptime_seconds"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal colony status: %v", err)
+	}
+	if payload.Population != 2 {
+		t.Fatalf("population=%d want 2", payload.Population)
+	}
+	if payload.ActiveUserTotalToken != 2000 {
+		t.Fatalf("active_user_total_token=%d want 2000", payload.ActiveUserTotalToken)
+	}
+	if payload.TreasuryToken != 5000 {
+		t.Fatalf("treasury_token=%d want 5000", payload.TreasuryToken)
+	}
+	if payload.TotalToken != 7000 {
+		t.Fatalf("total_token=%d want 7000", payload.TotalToken)
+	}
+	if payload.TickCount != 2 {
+		t.Fatalf("tick_count=%d want 2", payload.TickCount)
+	}
+	if payload.FirstTickAt == nil || !payload.FirstTickAt.Equal(firstTickAt) {
+		t.Fatalf("first_tick_at=%v want %v", payload.FirstTickAt, firstTickAt)
+	}
+	if payload.UptimeSeconds < 120 {
+		t.Fatalf("uptime_seconds=%d want >= 120", payload.UptimeSeconds)
+	}
+}
+
+func TestKBProposalApplyConsumesTreasury(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.TreasuryInitialToken = 200
+	ctx := context.Background()
+	proposer := seedActiveUser(t, srv)
+	applier := seedActiveUser(t, srv)
+	if got := treasuryBalanceForTest(t, srv); got != 200 {
+		t.Fatalf("initial treasury=%d want 200", got)
+	}
+
+	proposal, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    proposer,
+		Title:             "Treasury-funded KB upgrade",
+		Reason:            "shared",
+		Status:            "discussing",
+		VoteThresholdPct:  80,
+		VoteWindowSeconds: 300,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "knowledge/runtime",
+		Title:      "treasury",
+		NewContent: "shared result",
+		DiffText:   "+ shared result",
+	})
+	if err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+	if _, err := srv.store.CloseKBProposal(ctx, proposal.ID, "approved", "ok", 1, 1, 0, 0, 1, time.Now().UTC()); err != nil {
+		t.Fatalf("approve proposal: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
+		"proposal_id": proposal.ID,
+		"user_id":     applier,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("apply proposal status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := tokenBalanceForUser(t, srv, proposer); got != 1000+communityRewardAmountKBApply {
+		t.Fatalf("proposer balance=%d want %d", got, 1000+communityRewardAmountKBApply)
+	}
+	if got := treasuryBalanceForTest(t, srv); got != 200-communityRewardAmountKBApply {
+		t.Fatalf("treasury balance=%d want %d", got, 200-communityRewardAmountKBApply)
+	}
+}
+
+func TestTokenWishFulfillConsumesTreasury(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.TreasuryInitialToken = 25
+	userID := seedActiveUser(t, srv)
+	if got := treasuryBalanceForTest(t, srv); got != 25 {
+		t.Fatalf("initial treasury=%d want 25", got)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/wish/create", map[string]any{
+		"user_id":       userID,
+		"title":         "need shared compute",
+		"reason":        "benchmark",
+		"target_amount": 10,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("wish create status=%d body=%s", w.Code, w.Body.String())
+	}
+	var create struct {
+		Item struct {
+			WishID string `json:"wish_id"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &create); err != nil {
+		t.Fatalf("unmarshal wish create: %v", err)
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/wish/fulfill", map[string]any{
+		"wish_id":        create.Item.WishID,
+		"fulfilled_by":   clawWorldSystemID,
+		"granted_amount": 10,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("wish fulfill status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := tokenBalanceForUser(t, srv, userID); got != 1010 {
+		t.Fatalf("user balance=%d want 1010", got)
+	}
+	if got := treasuryBalanceForTest(t, srv); got != 15 {
+		t.Fatalf("treasury balance=%d want 15", got)
+	}
+}
+
+func TestTokenWishFulfillReturnsConflictWhenTreasuryInsufficient(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.TreasuryInitialToken = 5
+	userID := seedActiveUser(t, srv)
+	if got := treasuryBalanceForTest(t, srv); got != 5 {
+		t.Fatalf("initial treasury=%d want 5", got)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/wish/create", map[string]any{
+		"user_id":       userID,
+		"title":         "need more token",
+		"reason":        "benchmark",
+		"target_amount": 10,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("wish create status=%d body=%s", w.Code, w.Body.String())
+	}
+	var create struct {
+		Item struct {
+			WishID string `json:"wish_id"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &create); err != nil {
+		t.Fatalf("unmarshal wish create: %v", err)
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/wish/fulfill", map[string]any{
+		"wish_id":        create.Item.WishID,
+		"fulfilled_by":   clawWorldSystemID,
+		"granted_amount": 10,
+	})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("wish fulfill insufficient status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := tokenBalanceForUser(t, srv, userID); got != 1000 {
+		t.Fatalf("user balance=%d want 1000", got)
+	}
+	if got := treasuryBalanceForTest(t, srv); got != 5 {
+		t.Fatalf("treasury balance=%d want 5", got)
+	}
+}
+
+func TestPiTaskSubmitConsumesTreasury(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.TreasuryInitialToken = 100
+	userID := seedActiveUser(t, srv)
+	before := treasuryBalanceForTest(t, srv)
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/tasks/pi/claim", map[string]any{"user_id": userID})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("pi claim status=%d body=%s", w.Code, w.Body.String())
+	}
+	var claim struct {
+		Item struct {
+			TaskID string `json:"task_id"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &claim); err != nil {
+		t.Fatalf("unmarshal pi claim: %v", err)
+	}
+	srv.taskMu.Lock()
+	task := srv.piTasks[claim.Item.TaskID]
+	srv.taskMu.Unlock()
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/tasks/pi/submit", map[string]any{
+		"user_id": userID,
+		"task_id": task.TaskID,
+		"answer":  task.Expected,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("pi submit status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := tokenBalanceForUser(t, srv, userID); got != 1000+task.RewardToken {
+		t.Fatalf("user balance=%d want %d", got, 1000+task.RewardToken)
+	}
+	if got := treasuryBalanceForTest(t, srv); got != before-task.RewardToken {
+		t.Fatalf("treasury balance=%d want %d", got, before-task.RewardToken)
+	}
+}
+
+func TestPiTaskSubmitRejectsWhenTreasuryInsufficient(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.TreasuryInitialToken = 1
+	userID := seedActiveUser(t, srv)
+	if got := treasuryBalanceForTest(t, srv); got != 1 {
+		t.Fatalf("initial treasury=%d want 1", got)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/tasks/pi/claim", map[string]any{"user_id": userID})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("pi claim status=%d body=%s", w.Code, w.Body.String())
+	}
+	var claim struct {
+		Item struct {
+			TaskID string `json:"task_id"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &claim); err != nil {
+		t.Fatalf("unmarshal pi claim: %v", err)
+	}
+	srv.taskMu.Lock()
+	task := srv.piTasks[claim.Item.TaskID]
+	srv.taskMu.Unlock()
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/tasks/pi/submit", map[string]any{
+		"user_id": userID,
+		"task_id": task.TaskID,
+		"answer":  task.Expected,
+	})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("pi submit insufficient status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := tokenBalanceForUser(t, srv, userID); got != 1000 {
+		t.Fatalf("user balance=%d want 1000", got)
+	}
+	if got := treasuryBalanceForTest(t, srv); got != 1 {
+		t.Fatalf("treasury balance=%d want 1", got)
+	}
+	srv.taskMu.Lock()
+	restored := srv.piTasks[task.TaskID]
+	activeTaskID := srv.activeTasks[userID]
+	srv.taskMu.Unlock()
+	if restored.Status != "claimed" {
+		t.Fatalf("task status=%s want claimed", restored.Status)
+	}
+	if restored.Submitted != "" || restored.SubmittedAt != nil {
+		t.Fatalf("expected task submission to be cleared after treasury failure: %+v", restored)
+	}
+	if activeTaskID != task.TaskID {
+		t.Fatalf("active task=%s want %s", activeTaskID, task.TaskID)
+	}
+}
+
+func TestSystemAccountsCannotUseTokenUserFlows(t *testing.T) {
+	srv := newTestServer()
+	userID := seedActiveUser(t, srv)
+	if _, err := srv.ensureTreasuryAccount(context.Background()); err != nil {
+		t.Fatalf("ensure treasury: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		path    string
+		payload map[string]any
+		wantErr string
+	}{
+		{
+			name: "transfer from treasury rejected",
+			path: "/v1/token/transfer",
+			payload: map[string]any{
+				"from_user_id": clawTreasurySystemID,
+				"to_user_id":   userID,
+				"amount":       5,
+			},
+			wantErr: "system accounts cannot participate in transfer",
+		},
+		{
+			name: "tip to admin rejected",
+			path: "/v1/token/tip",
+			payload: map[string]any{
+				"from_user_id": userID,
+				"to_user_id":   clawWorldSystemID,
+				"amount":       5,
+				"reason":       "nope",
+			},
+			wantErr: "system accounts cannot participate in tip",
+		},
+		{
+			name: "wish create by treasury rejected",
+			path: "/v1/token/wish/create",
+			payload: map[string]any{
+				"user_id":       clawTreasurySystemID,
+				"target_amount": 5,
+			},
+			wantErr: "system accounts cannot create wishes",
+		},
+		{
+			name: "pi claim by admin rejected",
+			path: "/v1/tasks/pi/claim",
+			payload: map[string]any{
+				"user_id": clawWorldSystemID,
+			},
+			wantErr: "user_id is required",
+		},
+	}
+
+	for _, tc := range cases {
+		w := doJSONRequest(t, srv.mux, http.MethodPost, tc.path, tc.payload)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s status=%d body=%s", tc.name, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), tc.wantErr) {
+			t.Fatalf("%s missing %q in %s", tc.name, tc.wantErr, w.Body.String())
+		}
+	}
+}

@@ -210,7 +210,7 @@ func (s *Server) ensureCommunityRewards(ctx context.Context, spec communityRewar
 	normalizedRecipients := make(map[string]int64, len(spec.Recipients))
 	for uid, amount := range spec.Recipients {
 		uid = strings.TrimSpace(uid)
-		if uid == "" || uid == clawWorldSystemID || amount <= 0 {
+		if isExcludedTokenUserID(uid) || amount <= 0 {
 			continue
 		}
 		normalizedRecipients[uid] += amount
@@ -253,16 +253,20 @@ func (s *Server) ensureCommunityRewards(ctx context.Context, spec communityRewar
 		return buildCommunityRewardResults(results), nil
 	}
 
+	payouts := make(map[string]int64, len(pending))
+	for _, item := range pending {
+		payouts[item.userID] = item.amount
+	}
+	_, ledgers, err := s.distributeFromTreasury(ctx, payouts)
+	if err != nil {
+		return nil, err
+	}
+
 	applied := make([]communityRewardGrant, 0, len(pending))
 	for _, item := range pending {
-		ledger, err := s.store.Recharge(ctx, item.userID, item.amount)
-		if err != nil {
-			for i := len(applied) - 1; i >= 0; i-- {
-				if _, rollbackErr := s.store.Consume(ctx, applied[i].RecipientUser, applied[i].Amount); rollbackErr != nil {
-					log.Printf("community_reward_recharge_rollback_failed grant_key=%s user_id=%s amount=%d err=%v", applied[i].GrantKey, applied[i].RecipientUser, applied[i].Amount, rollbackErr)
-				}
-			}
-			return nil, err
+		ledger, ok := ledgers[item.userID]
+		if !ok {
+			return nil, fmt.Errorf("missing treasury reward ledger for %s", item.userID)
 		}
 		applied = append(applied, communityRewardGrant{
 			GrantKey:      item.key,
@@ -282,9 +286,20 @@ func (s *Server) ensureCommunityRewards(ctx context.Context, spec communityRewar
 		state.Grants[grant.GrantKey] = grant
 	}
 	if err := s.saveCommunityRewardState(ctx, state); err != nil {
+		var treasuryRefund int64
 		for i := len(applied) - 1; i >= 0; i-- {
 			if _, rollbackErr := s.store.Consume(ctx, applied[i].RecipientUser, applied[i].Amount); rollbackErr != nil {
 				log.Printf("community_reward_state_rollback_failed grant_key=%s user_id=%s amount=%d err=%v", applied[i].GrantKey, applied[i].RecipientUser, applied[i].Amount, rollbackErr)
+			}
+			var ok bool
+			treasuryRefund, ok = safeInt64Add(treasuryRefund, applied[i].Amount)
+			if !ok {
+				log.Printf("community_reward_treasury_refund_overflow grant_key=%s", applied[i].GrantKey)
+			}
+		}
+		if treasuryRefund > 0 {
+			if _, rollbackErr := s.store.Recharge(ctx, clawTreasurySystemID, treasuryRefund); rollbackErr != nil {
+				log.Printf("community_reward_treasury_refund_failed amount=%d err=%v", treasuryRefund, rollbackErr)
 			}
 		}
 		return nil, err
@@ -333,7 +348,7 @@ func (s *Server) ensureCommunityRewards(ctx context.Context, spec communityRewar
 
 func (s *Server) rewardKBProposalApplied(ctx context.Context, proposal store.KBProposal) ([]communityRewardResult, error) {
 	recipient := strings.TrimSpace(proposal.ProposerUserID)
-	if recipient == "" || recipient == clawWorldSystemID {
+	if isExcludedTokenUserID(recipient) {
 		return nil, nil
 	}
 	return s.ensureCommunityRewards(ctx, communityRewardSpec{
@@ -384,7 +399,7 @@ func (s *Server) rewardCollabClosed(ctx context.Context, session store.CollabSes
 
 func (s *Server) rewardBountyPaid(ctx context.Context, item bountyItem) ([]communityRewardResult, error) {
 	recipient := strings.TrimSpace(item.ReleasedTo)
-	if recipient == "" || recipient == clawWorldSystemID {
+	if isExcludedTokenUserID(recipient) {
 		return nil, nil
 	}
 	return s.ensureCommunityRewards(ctx, communityRewardSpec{
@@ -404,7 +419,7 @@ func (s *Server) rewardBountyPaid(ctx context.Context, item bountyItem) ([]commu
 
 func (s *Server) rewardGangliaIntegrated(ctx context.Context, integration store.GanglionIntegration, ganglion store.Ganglion) ([]communityRewardResult, error) {
 	authorID := strings.TrimSpace(ganglion.AuthorUserID)
-	if authorID == "" || authorID == clawWorldSystemID || authorID == strings.TrimSpace(integration.UserID) {
+	if isExcludedTokenUserID(authorID) || authorID == strings.TrimSpace(integration.UserID) {
 		return nil, nil
 	}
 	return s.ensureCommunityRewards(ctx, communityRewardSpec{

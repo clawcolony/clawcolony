@@ -95,6 +95,7 @@ type Server struct {
 	alertLastAmt         map[string]int64
 	lowTokenNotifyMu     sync.RWMutex
 	lowTokenLastSent     map[string]time.Time
+	treasuryInitMu       sync.Mutex
 	evolutionAlertMu     sync.Mutex
 	evolutionAlertLastAt time.Time
 	evolutionAlertDigest string
@@ -555,7 +556,7 @@ func (s *Server) evaluateExtinctionGuard(ctx context.Context) (extinctionGuardSt
 	atRisk := 0
 	for _, it := range accounts {
 		userID := strings.TrimSpace(it.BotID)
-		if userID == "" || userID == clawWorldSystemID {
+		if isExcludedTokenUserID(userID) {
 			continue
 		}
 		total++
@@ -1350,8 +1351,8 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for _, uid := range selectedUserIDs {
-		if uid == clawWorldSystemID {
-			writeError(w, http.StatusBadRequest, "claw-world-system cannot be rescued")
+		if isSystemTokenUserID(uid) {
+			writeError(w, http.StatusBadRequest, "system accounts cannot be rescued")
 			return
 		}
 	}
@@ -1366,7 +1367,7 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 	atRiskBefore := 0
 	for _, it := range accounts {
 		uid := strings.TrimSpace(it.BotID)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		balanceByUser[uid] = it.Balance
@@ -1410,8 +1411,8 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for _, uid := range targetUsers {
-		if uid == clawWorldSystemID {
-			writeError(w, http.StatusBadRequest, "claw-world-system cannot be rescued")
+		if isSystemTokenUserID(uid) {
+			writeError(w, http.StatusBadRequest, "system accounts cannot be rescued")
 			return
 		}
 	}
@@ -1427,6 +1428,8 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 	items := make([]worldFreezeRescueResultItem, 0, len(targetUsers))
 	appliedUsers := 0
 	evalErr := ""
+	itemIndex := make(map[string]int, len(targetUsers))
+	payouts := make(map[string]int64, len(targetUsers))
 	for _, uid := range targetUsers {
 		before := simulatedBalances[uid]
 		item := worldFreezeRescueResultItem{
@@ -1453,18 +1456,38 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 			items = append(items, item)
 			continue
 		}
-		ledger, err := s.store.Recharge(r.Context(), uid, req.Amount)
-		if err != nil {
-			item.Error = err.Error()
+		after, ok := safeInt64Add(before, req.Amount)
+		if !ok {
+			item.Error = "token balance overflow"
 			items = append(items, item)
 			continue
 		}
-		item.BalanceAfter = ledger.BalanceAfter
-		item.RechargeAmount = ledger.Amount
-		item.Applied = true
-		appliedUsers++
-		simulatedBalances[uid] = ledger.BalanceAfter
+		itemIndex[uid] = len(items)
+		item.BalanceAfter = after
 		items = append(items, item)
+		payouts[uid] = req.Amount
+	}
+	if !req.DryRun && len(payouts) > 0 {
+		_, credits, err := s.distributeFromTreasury(r.Context(), payouts)
+		if err != nil {
+			if errors.Is(err, store.ErrInsufficientBalance) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for uid, ledger := range credits {
+			idx, ok := itemIndex[uid]
+			if !ok {
+				continue
+			}
+			items[idx].BalanceAfter = ledger.BalanceAfter
+			items[idx].RechargeAmount = ledger.Amount
+			items[idx].Applied = true
+			appliedUsers++
+			simulatedBalances[uid] = ledger.BalanceAfter
+		}
 	}
 
 	atRiskAfter := 0
@@ -1492,7 +1515,7 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 			totalUsersAfter = 0
 			for _, it := range afterAccounts {
 				uid := strings.TrimSpace(it.BotID)
-				if uid == "" || uid == clawWorldSystemID {
+				if isExcludedTokenUserID(uid) {
 					continue
 				}
 				totalUsersAfter++
@@ -4074,6 +4097,10 @@ func (s *Server) handleTokenAccounts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "请提供你的USERID")
 		return
 	}
+	if isSystemTokenUserID(botID) {
+		writeError(w, http.StatusNotFound, "user token account not found")
+		return
+	}
 	items, err := s.store.ListTokenAccounts(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -4096,6 +4123,10 @@ func (s *Server) handleTokenBalance(w http.ResponseWriter, r *http.Request) {
 	userID := queryUserID(r)
 	if userID == "" {
 		writeError(w, http.StatusBadRequest, "请提供你的USERID")
+		return
+	}
+	if isSystemTokenUserID(userID) {
+		writeError(w, http.StatusNotFound, "user token account not found")
 		return
 	}
 	accounts, err := s.store.ListTokenAccounts(r.Context())
@@ -4205,7 +4236,7 @@ func (s *Server) handleTokenLeaderboard(w http.ResponseWriter, r *http.Request) 
 	accountByUserID := make(map[string]store.TokenAccount, len(accounts))
 	for _, account := range accounts {
 		uid := strings.TrimSpace(account.BotID)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		current, ok := accountByUserID[uid]
@@ -4275,7 +4306,7 @@ func (s *Server) handleTokenRecharge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" || req.Amount <= 0 {
+	if isExcludedTokenUserID(req.UserID) || req.Amount <= 0 {
 		writeError(w, http.StatusBadRequest, "user_id and positive amount are required")
 		return
 	}
@@ -4303,7 +4334,7 @@ func (s *Server) handleTokenConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" || req.Amount <= 0 {
+	if isExcludedTokenUserID(req.UserID) || req.Amount <= 0 {
 		writeError(w, http.StatusBadRequest, "user_id and positive amount are required")
 		return
 	}
@@ -4331,6 +4362,10 @@ func (s *Server) handleTokenHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	botID := queryUserID(r)
+	if isSystemTokenUserID(botID) {
+		writeJSON(w, http.StatusOK, map[string]any{"items": []store.TokenLedger{}})
+		return
+	}
 	limit := parseLimit(r.URL.Query().Get("limit"), 100)
 
 	items, err := s.store.ListTokenLedger(r.Context(), botID, limit)
@@ -7404,7 +7439,7 @@ func (s *Server) activeUserIDs(ctx context.Context) []string {
 	out := make([]string, 0, len(bots))
 	for _, b := range bots {
 		uid := strings.TrimSpace(b.BotID)
-		if uid == "" {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		out = append(out, uid)
@@ -9969,7 +10004,7 @@ func (s *Server) runLifeStateTransitions(ctx context.Context, tickID int64) erro
 
 	for _, b := range bots {
 		userID := strings.TrimSpace(b.BotID)
-		if userID == "" || userID == clawWorldSystemID {
+		if isExcludedTokenUserID(userID) {
 			continue
 		}
 		if !b.Initialized || strings.EqualFold(strings.TrimSpace(b.Status), "deleted") {
@@ -10693,7 +10728,7 @@ func (s *Server) runTokenDrainTick(ctx context.Context, tickID int64) error {
 func (s *Server) appendCommCostEvent(ctx context.Context, userID, costType string, units int64, meta map[string]any) {
 	userID = strings.TrimSpace(userID)
 	costType = strings.TrimSpace(costType)
-	if userID == "" || userID == clawWorldSystemID || costType == "" || units <= 0 {
+	if isExcludedTokenUserID(userID) || costType == "" || units <= 0 {
 		return
 	}
 	rateMilli := s.cfg.CommCostRateMilli
@@ -10739,7 +10774,7 @@ func (s *Server) appendCommCostEvent(ctx context.Context, userID, costType strin
 
 func (s *Server) appendThinkCostEvent(ctx context.Context, userID string, inputUnits, outputUnits int64, meta map[string]any) {
 	userID = strings.TrimSpace(userID)
-	if userID == "" || userID == clawWorldSystemID {
+	if isExcludedTokenUserID(userID) {
 		return
 	}
 	units := inputUnits + outputUnits
@@ -10792,7 +10827,7 @@ func (s *Server) appendThinkCostEvent(ctx context.Context, userID string, inputU
 func (s *Server) appendToolCostEvent(ctx context.Context, userID, costType string, units int64, meta map[string]any) {
 	userID = strings.TrimSpace(userID)
 	costType = strings.TrimSpace(costType)
-	if userID == "" || userID == clawWorldSystemID || costType == "" || units <= 0 {
+	if isExcludedTokenUserID(userID) || costType == "" || units <= 0 {
 		return
 	}
 	rateMilli := s.cfg.ToolCostRateMilli
@@ -11284,7 +11319,7 @@ func (s *Server) handlePiTaskClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
+	if isExcludedTokenUserID(req.UserID) {
 		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
@@ -11350,7 +11385,7 @@ func (s *Server) handlePiTaskSubmit(w http.ResponseWriter, r *http.Request) {
 	req.UserID = strings.TrimSpace(req.UserID)
 	req.TaskID = strings.TrimSpace(req.TaskID)
 	req.Answer = normalizeDigitAnswer(req.Answer)
-	if req.UserID == "" || req.TaskID == "" || req.Answer == "" {
+	if isExcludedTokenUserID(req.UserID) || req.TaskID == "" || req.Answer == "" {
 		writeError(w, http.StatusBadRequest, "user_id, task_id, answer are required")
 		return
 	}
@@ -11395,11 +11430,27 @@ func (s *Server) handlePiTaskSubmit(w http.ResponseWriter, r *http.Request) {
 		err      error
 	)
 	if correct {
-		ledger, err = s.store.Recharge(r.Context(), req.UserID, task.RewardToken)
+		_, ledger, err = s.transferFromTreasury(r.Context(), req.UserID, task.RewardToken)
 	} else {
 		ledger, deducted, err = s.consumeWithFloor(r.Context(), req.UserID, task.RewardToken)
 	}
 	if err != nil {
+		if correct {
+			s.taskMu.Lock()
+			restored := s.piTasks[req.TaskID]
+			if restored.TaskID != "" && restored.BotID == req.UserID && restored.Status == "success" {
+				restored.Status = "claimed"
+				restored.Submitted = ""
+				restored.SubmittedAt = nil
+				s.piTasks[req.TaskID] = restored
+				s.activeTasks[req.UserID] = req.TaskID
+			}
+			s.taskMu.Unlock()
+		}
+		if correct && errors.Is(err, store.ErrInsufficientBalance) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -11491,7 +11542,7 @@ func normalizeDigitAnswer(s string) string {
 
 func (s *Server) isUserDead(ctx context.Context, userID string) (bool, error) {
 	userID = strings.TrimSpace(userID)
-	if userID == "" || userID == clawWorldSystemID {
+	if isExcludedTokenUserID(userID) {
 		return false, nil
 	}
 	life, err := s.store.GetUserLifeState(ctx, userID)
@@ -11503,7 +11554,7 @@ func (s *Server) isUserDead(ctx context.Context, userID string) (bool, error) {
 
 func (s *Server) ensureUserAlive(ctx context.Context, userID string) error {
 	userID = strings.TrimSpace(userID)
-	if userID == "" || userID == clawWorldSystemID {
+	if isExcludedTokenUserID(userID) {
 		return nil
 	}
 	life, err := s.store.GetUserLifeState(ctx, userID)
