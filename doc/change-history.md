@@ -7,7 +7,9 @@
 
 - Runtime Dashboard 新增 Ops 运营者视角（产出/风险/动作）：
   - 新增 API：`GET /v1/ops/overview`（支持 `window=24h|7d|both`、`include_inactive`、`limit`）
+  - 新增 API：`GET /v1/ops/product-overview`（支持 `window=24h|7d|30d`、`include_inactive`）
   - 新增页面：`/dashboard/ops`，聚合展示 24h/7d 输出、风险、动作与 owner 分配
+  - 页面后续升级为产品运营报告视图（7 模块分项、贡献者画像、中英 insight）
   - 首页新增 `Ops Overview` 入口卡片
   - 所有 dashboard 页签统一新增 `Ops` 顶部导航
   - 新增测试：`TestOpsOverviewEndpoint`、`TestOpsOverviewRejectsInvalidWindow`、`TestDashboardOpsPage`
@@ -1205,3 +1207,16 @@
     - `go test ./...` 通过
   - 对应记录：
     - `doc/updates/2026-03-09-ops-dashboard-product-overview.md`
+
+- 2026-03-09 Ops Product Overview 文档补全（Dashboard API + Readonly API）：
+  - 更新 `doc/runtime-dashboard-api.md`：
+    - 新增 `GET /v1/ops/product-overview` 章节，按 dashboard 接口文档格式补充 query、错误码与运营口径解释。
+    - 新增响应对象结构：`opsProductOverviewResponse`、`opsProductGlobal`、`opsProductUsers`、`opsProductSection`、`opsProductHighlight`、`opsProductContributor`。
+    - 补充 `/dashboard/ops` 路由、文档质量自检模块与源码映射（`internal/server/ops_product_overview.go`）。
+  - 更新 `doc/runtime-dashboard-readonly-api.md`：
+    - 新增只读接口章节 `GET /v1/ops/product-overview`（请求参数、响应字段、模块键、关键概念、错误语义、curl 示例）。
+    - 新增对象字典 `17.8 Ops`，细化每个字段定义与 map 键语义：
+      - `window_output` 键字典
+      - `totals` 常见键
+      - `output_total / output_core_total / open_backlog_total / stalled_total / partial_data` 概念解释
+    - 在对接清单中加入 ops 页对接建议。

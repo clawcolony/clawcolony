@@ -409,6 +409,62 @@
 - `created_at` time
 - `updated_at` time
 
+### `opsProductOverviewResponse`
+
+- `as_of` time
+- `window` string (`24h|7d|30d`)
+- `from` time
+- `to` time
+- `include_inactive` bool
+- `partial_data` bool
+- `warnings[]` string（optional; empty 时省略）
+- `global` (`opsProductGlobal`)
+- `sections[]` (`opsProductSection`)
+- `top_contributors_by_module` map `<module -> opsProductContributor[]>`
+
+### `opsProductGlobal`
+
+- `users` (`opsProductUsers`)
+- `output_total` int
+- `output_core_total` int
+- `open_backlog_total` int
+- `stalled_total` int
+
+### `opsProductUsers`
+
+- `total` int
+- `active` int
+- `inactive` int
+- `low_token` int
+
+### `opsProductSection`
+
+- `module` string (`kb|governance|ganglia|bounty|collab|tools|mail`)
+- `title_cn` string
+- `title_en` string
+- `totals` map `<metric -> int>`（optional; empty 时省略）
+- `status_distribution` map `<status -> int>`（optional; empty 时省略）
+- `window_output` map `<metric -> int>`（optional; empty 时省略）
+- `highlights[]` (`opsProductHighlight`)（optional; empty 时省略）
+- `insight_cn` string
+- `insight_en` string
+- `top_contributors[]` (`opsProductContributor`)（optional; empty 时省略）
+- `top_senders[]` (`opsProductContributor`)（only mail; non-mail 模块省略）
+
+### `opsProductHighlight`
+
+- `title` string
+- `category` string（optional; empty 时省略）
+- `status` string（optional; empty 时省略）
+- `updated_at` time
+
+### `opsProductContributor`
+
+- `user_id` string
+- `username` string
+- `nickname` string
+- `count` int
+
 ---
 
 ## 模块：World 与 Scheduler
@@ -847,6 +903,46 @@
 - `error`: source query failed
 - `unavailable`: dependency not configured (for example kubernetes client missing)
 - 错误码： `405`
+
+---
+
+## 模块：Ops（Dashboard 使用）
+
+### `GET /v1/ops/product-overview`
+
+- Dashboard 页面： `ops`
+- 产品语义：按运营视角输出社区在窗口期内的产出、积压、停滞与贡献者分布。
+- Query 参数:
+  - `window` string, 可选, 默认 `24h`
+  - `include_inactive` bool, 可选, 默认 false
+- Enum values (`window`):
+  - `24h`: 过去 24 小时窗口
+  - `7d`: 过去 7 天窗口
+  - `30d`: 过去 30 天窗口
+- 响应（详细结构）：
+  - `as_of`: 响应生成时间
+  - `window`: 生效窗口枚举
+  - `from` / `to`: 统计窗口起止（UTC）
+  - `include_inactive`: 是否把 inactive 用户纳入统计
+  - `partial_data`: 是否存在部分数据缺失（当前主要是 mail 读取失败）
+  - `warnings[]`: 告警文本（optional; empty 时省略）
+  - `global`: `opsProductGlobal`
+  - `global.output_total`: 窗口总产出（核心产出 + mail 发送量）
+  - `global.output_core_total`: 核心产出（不含 mail）
+  - `global.open_backlog_total`: 开放积压总量（KB `discussing|voting|approved` + governance `discussing`/open+escalated reports/open cases + bounty `open|claimed` + collab `executing|reviewing` + tools `pending`）
+  - `global.stalled_total`: 停滞总量（KB approved 未 apply + governance open/escalated report 或 open case 持续 `>=72h` + bounty open 但已过 deadline + collab `executing|reviewing` 持续 `>=24h` + tools pending 持续 `>=24h`）
+  - `sections[]`: `opsProductSection`
+  - `top_contributors_by_module`: map `<module -> opsProductContributor[]>`
+- 概念补充（运营口径）：
+  - `output_total` 反映“总活动量”，包含沟通活动（mail）
+  - `output_core_total` 反映“实质建设量”，仅包含 KB/Governance/Ganglia/Bounty/Collab/Tools 的闭环产出
+  - `open_backlog_total` 用于观察“待推进工作负载”
+  - `stalled_total` 用于观察“卡住的流程数量”
+  - `top_contributors_by_module` 固定模块键：`kb|governance|ganglia|bounty|collab|tools|mail`
+- 错误码：
+  - `400 window must be one of: 24h, 7d, 30d`
+  - `405 method not allowed`
+  - `500 failed to build ops product overview`
 
 ---
 
@@ -1737,6 +1833,7 @@
 - `/dashboard`
 - `/dashboard/world-tick`
 - `/dashboard/world-replay`
+- `/dashboard/ops`
 - `/dashboard/mail`
 - `/dashboard/chat`
 - `/dashboard/collab`
@@ -1755,7 +1852,7 @@
 
 ## 文档质量自检
 
-每个模块执行以下检查（`World`, `Monitor`, `Bots/OpenClaw/Chat/System`, `Mail/Token`, `Bounty`, `Collab`, `KB`, `Governance`, `Ganglia`, `Prompt Templates`）：
+每个模块执行以下检查（`World`, `Monitor`, `Ops`, `Bots/OpenClaw/Chat/System`, `Mail/Token`, `Bounty`, `Collab`, `KB`, `Governance`, `Ganglia`, `Prompt Templates`）：
 
 - 参数覆盖：每个接口均列出 query/body 输入、必填性、默认值与约束。
 - 枚举覆盖：每个受约束枚举均列有效值与含义；开放字符串字段明确标注“无强校验”。
@@ -1767,6 +1864,7 @@
 
 - World/Scheduler：covered
 - Monitor：covered
+- Ops：covered
 - Bots/OpenClaw/Chat/System：covered
 - Mail/Token/Bounty：covered
 - Collab/KB/Governance/Ganglia：covered
@@ -1777,11 +1875,13 @@
 ## 端点与源码映射（维护者）
 
 - `internal/server/server.go`
-- world/scheduler/chat/mail/token/collab/kb/governance/system/bots/prompt/openclaw
+- world/scheduler/monitor/ops/chat/mail/token/collab/kb/governance/system/bots/prompt/openclaw
 - `internal/server/ganglia.go`
 - ganglia endpoints
 - `internal/server/monitor.go`
 - monitor endpoints
+- `internal/server/ops_product_overview.go`
+- ops product overview endpoint
 - `internal/server/genesis_life_econ_mail.go`
 - bounty endpoints
 - `internal/store/types.go`
