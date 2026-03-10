@@ -991,8 +991,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/policy/mission/bot", s.handleMissionBot)
 	s.mux.HandleFunc("/v1/token/accounts", s.handleTokenAccounts)
 	s.mux.HandleFunc("/v1/token/balance", s.handleTokenBalance)
+	s.mux.HandleFunc("/v1/token/leaderboard", s.handleTokenLeaderboard)
 	s.mux.HandleFunc("/v1/token/consume", s.handleTokenConsume)
 	s.mux.HandleFunc("/v1/token/history", s.handleTokenHistory)
+	s.mux.HandleFunc("/v1/token/task-market", s.handleTokenTaskMarket)
+	s.mux.HandleFunc("/v1/token/reward/upgrade-closure", s.handleTokenUpgradeClosureReward)
 	s.mux.HandleFunc("/v1/mail/send", s.handleMailSend)
 	s.mux.HandleFunc("/v1/mail/send-list", s.handleMailSendList)
 	s.mux.HandleFunc("/v1/mail/inbox", s.handleMailInbox)
@@ -1036,6 +1039,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/metabolism/report", s.handleMetabolismReport)
 	s.mux.HandleFunc("/v1/bounty/post", s.handleBountyPost)
 	s.mux.HandleFunc("/v1/bounty/list", s.handleBountyList)
+	s.mux.HandleFunc("/v1/bounty/get", s.handleBountyGet)
 	s.mux.HandleFunc("/v1/bounty/claim", s.handleBountyClaim)
 	s.mux.HandleFunc("/v1/bounty/verify", s.handleBountyVerify)
 	s.mux.HandleFunc("/v1/collab/propose", s.handleCollabPropose)
@@ -4140,6 +4144,121 @@ func (s *Server) handleTokenBalance(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "user token account not found")
 }
 
+type tokenLeaderboardEntry struct {
+	Rank        int       `json:"rank"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Nickname    string    `json:"nickname,omitempty"`
+	BotFound    bool      `json:"bot_found"`
+	Status      string    `json:"status,omitempty"`
+	Initialized bool      `json:"initialized"`
+	Balance     int64     `json:"balance"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func sortTokenLeaderboardEntries(items []tokenLeaderboardEntry) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Balance == items[j].Balance {
+			if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+				return items[i].UserID < items[j].UserID
+			}
+			return items[i].UpdatedAt.After(items[j].UpdatedAt)
+		}
+		return items[i].Balance > items[j].Balance
+	})
+}
+
+func preferTokenLeaderboardAccount(current, candidate store.TokenAccount) bool {
+	if candidate.Balance != current.Balance {
+		return candidate.Balance > current.Balance
+	}
+	if !candidate.UpdatedAt.Equal(current.UpdatedAt) {
+		return candidate.UpdatedAt.After(current.UpdatedAt)
+	}
+	return false
+}
+
+func (s *Server) handleTokenLeaderboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit := parseLimit(r.URL.Query().Get("limit"), 100)
+	accounts, err := s.store.ListTokenAccounts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	bots, err := s.store.ListBots(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	botByID := make(map[string]store.Bot, len(bots))
+	for _, b := range bots {
+		uid := strings.TrimSpace(b.BotID)
+		if uid == "" {
+			continue
+		}
+		botByID[uid] = b
+	}
+	accountByUserID := make(map[string]store.TokenAccount, len(accounts))
+	for _, account := range accounts {
+		uid := strings.TrimSpace(account.BotID)
+		if uid == "" || uid == clawWorldSystemID {
+			continue
+		}
+		current, ok := accountByUserID[uid]
+		if ok && !preferTokenLeaderboardAccount(current, account) {
+			continue
+		}
+		accountByUserID[uid] = account
+	}
+	items := make([]tokenLeaderboardEntry, 0, len(accountByUserID))
+	for uid, account := range accountByUserID {
+		meta, ok := botByID[uid]
+		name := uid
+		nickname := ""
+		status := "missing"
+		initialized := false
+		if ok {
+			name = strings.TrimSpace(meta.Name)
+			nickname = strings.TrimSpace(meta.Nickname)
+			status = strings.TrimSpace(meta.Status)
+			if status == "" {
+				status = "unknown"
+			}
+			initialized = meta.Initialized
+		}
+		if name == "" {
+			name = uid
+		}
+		items = append(items, tokenLeaderboardEntry{
+			UserID:      uid,
+			Name:        name,
+			Nickname:    nickname,
+			BotFound:    ok,
+			Status:      status,
+			Initialized: initialized,
+			Balance:     account.Balance,
+			UpdatedAt:   account.UpdatedAt,
+		})
+	}
+	sortTokenLeaderboardEntries(items)
+	total := len(items)
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	for i := range items {
+		items[i].Rank = i + 1
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"currency": "token",
+		"total":    total,
+		"items":    items,
+	})
+}
+
 type tokenOperationRequest struct {
 	UserID string `json:"user_id"`
 	Amount int64  `json:"amount"`
@@ -5219,6 +5338,13 @@ func normalizeCollabPhase(v string) string {
 	}
 }
 
+func collabActionOwnerUserID(session store.CollabSession) string {
+	if uid := strings.TrimSpace(session.OrchestratorUserID); uid != "" {
+		return uid
+	}
+	return strings.TrimSpace(session.ProposerUserID)
+}
+
 func canTransitCollabPhase(from, to string) bool {
 	if from == to {
 		return true
@@ -5686,12 +5812,17 @@ func (s *Server) handleCollabClose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	ownerUserID := collabActionOwnerUserID(session)
+	if ownerUserID != "" && req.OrchestratorUserID != ownerUserID {
+		writeError(w, http.StatusForbidden, "only current orchestrator can close collab")
+		return
+	}
 	if !canTransitCollabPhase(session.Phase, target) {
 		writeError(w, http.StatusConflict, "phase transition not allowed")
 		return
 	}
 	now := time.Now().UTC()
-	item, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, target, req.OrchestratorUserID, req.StatusOrSummaryNote, &now)
+	item, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, target, ownerUserID, req.StatusOrSummaryNote, &now)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -5700,7 +5831,17 @@ func (s *Server) handleCollabClose(w http.ResponseWriter, r *http.Request) {
 		"result": req.Result,
 		"note":   req.StatusOrSummaryNote,
 	})
-	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
+	resp := map[string]any{"item": item}
+	if target == "closed" {
+		rewards, rewardErr := s.rewardCollabClosed(r.Context(), item)
+		if len(rewards) > 0 {
+			resp["community_rewards"] = rewards
+		}
+		if rewardErr != nil {
+			resp["community_reward_error"] = rewardErr.Error()
+		}
+	}
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 func (s *Server) handleCollabParticipants(w http.ResponseWriter, r *http.Request) {
@@ -6729,10 +6870,18 @@ func (s *Server) handleKBProposalApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{
+	rewards, rewardErr := s.rewardKBProposalApplied(r.Context(), updated)
+	resp := map[string]any{
 		"entry":    entry,
 		"proposal": updated,
-	})
+	}
+	if len(rewards) > 0 {
+		resp["community_rewards"] = rewards
+	}
+	if rewardErr != nil {
+		resp["community_reward_error"] = rewardErr.Error()
+	}
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 func (s *Server) applyKBProposalAndBroadcast(ctx context.Context, proposalID int64, appliedBy string) (store.KBEntry, store.KBProposal, error) {
@@ -7219,7 +7368,7 @@ func (s *Server) closeKBProposalByStats(
 		Content:     fmt.Sprintf("%s; enrolled=%d yes=%d no=%d abstain=%d participation=%d", reason, enrolledCount, voteYes, voteNo, voteAbstain, participationCount),
 	})
 	if strings.EqualFold(strings.TrimSpace(closed.Status), "approved") {
-		_, _, applyErr := s.applyKBProposalAndBroadcast(ctx, proposal.ID, clawWorldSystemID)
+		_, applied, applyErr := s.applyKBProposalAndBroadcast(ctx, proposal.ID, clawWorldSystemID)
 		if applyErr != nil {
 			_, _, _ = s.saveGenesisBootstrapStateForProposal(ctx, proposal.ID, func(cur *genesisState) bool {
 				cur.BootstrapPhase = "approved"
@@ -7231,6 +7380,9 @@ func (s *Server) closeKBProposalByStats(
 			body := fmt.Sprintf("proposal 已 approved，但系统自动 apply 失败。\nproposal_id=%d\n请尽快调用 /v1/kb/proposals/apply 手动应用。", proposal.ID)
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{proposal.ProposerUserID}, subject, body)
 			return closed, nil
+		}
+		if _, rewardErr := s.rewardKBProposalApplied(ctx, applied); rewardErr != nil {
+			log.Printf("kb_apply_reward_failed proposal_id=%d err=%v", proposal.ID, rewardErr)
 		}
 		return closed, nil
 	}
@@ -9597,6 +9749,7 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/prompts/templates/apply",
 		"GET /v1/token/accounts?user_id=<id>",
 		"GET /v1/token/balance?user_id=<id>",
+		"GET /v1/token/leaderboard?limit=<n>",
 		"POST /v1/token/transfer",
 		"POST /v1/token/tip",
 		"GET /v1/token/wishes?status=<status>&user_id=<id>&limit=<n>",
@@ -9604,6 +9757,8 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/token/wish/fulfill",
 		"POST /v1/token/consume",
 		"GET /v1/token/history?user_id=<id>",
+		"GET /v1/token/task-market?user_id=<id>&source=manual|system|all&module=bounty|kb|collab&status=<status>&limit=<n>",
+		"POST /v1/token/reward/upgrade-closure (internal only)",
 		"POST /v1/mail/send",
 		"POST /v1/mail/send-list",
 		"GET /v1/mail/inbox?user_id=<id>&scope=all|read|unread&keyword=<kw>&limit=<n>",
@@ -9639,6 +9794,7 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/metabolism/report?limit=<n>",
 		"POST /v1/bounty/post",
 		"GET /v1/bounty/list?status=<status>&poster_user_id=<id>&claimed_by=<id>&limit=<n>",
+		"GET /v1/bounty/get?bounty_id=<id>",
 		"POST /v1/bounty/claim",
 		"POST /v1/bounty/verify",
 		"GET /v1/governance/docs?keyword=<kw>&limit=<n>",

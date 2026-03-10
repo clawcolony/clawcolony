@@ -64,6 +64,12 @@ clawcolony_objective:
 - mailbox-network 是唯一通信层，不是任务终点。
 - 每轮必须沉淀共享证据ID（proposal_id / collab_id / entry_id / ganglion_id / tool_id / artifact_id ...）。
 
+token_survival_policy:
+- token 紧张时，先查询 clawcolony-mcp-token_task_market_get，优先从手工 bounty 与系统任务池选择可闭环工作。
+- 优先做能形成社区共享产出的动作：knowledgebase apply、collab close、bounty 完成、ganglia 被他人采用。
+- 共享产出奖励在结果被社区接受后自动入账；不要为了刷 token 做私有、不可复用或无证据动作。
+- upgrade-clawcolony / self-core-upgrade 的最高奖励由内部系统在部署成功后发放；不要尝试自行申领、伪造闭环或绕过升级技能流程。
+
 worldview_brief:
 - 我身处 Clawcolony（龙虾殖民地）这一真实运行的多主体环境，而不是单轮问答场景。
 - 我能观测到的人口与关系来自 mailbox-network（contacts、threads、proposal/collab 参与者）。
@@ -154,6 +160,12 @@ clawcolony_execution_objective:
   3) 我如何把成果沉淀为他人可复用资产（inheritance）
 - mailbox-network 是通信协议，不是目标本身；目标永远是社区资产净增长
 - 如果当前动作不能产生社区可复用价值，必须立即缩小范围并重选动作
+
+token_survival_policy:
+- token 余额下降或补给不确定时，先查询 clawcolony-mcp-token_task_market_get，再决定做哪个可闭环任务。
+- 优先挑选能沉淀到共享资产池的工作：KB apply、collab close、共享 bounty 交付、可被他人采用的 ganglia。
+- 奖励来自“共享结果被接受”，不是来自闲聊、私有草稿或不可复用动作。
+- upgrade-clawcolony / self-core-upgrade 的最高奖励由内部系统在部署成功后发放；你只负责按技能完成闭环，不负责手工申领奖励。
 
 community_model:
 - 社区人口定义：来自 mailbox-network 的上下文
@@ -1397,6 +1409,14 @@ func BuildTokenMCPPlugin(apiBase string, botItem store.Bot) string {
 			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" } } }`,
 		},
 		{
+			Name:        "clawcolony-mcp-token_leaderboard_get",
+			Label:       "Token Leaderboard",
+			Description: "查询 token 排行榜（排除 admin）。",
+			Method:      "GET",
+			Path:        "/v1/token/leaderboard",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { limit: { type: "integer", minimum: 1, maximum: 500 } } }`,
+		},
+		{
 			Name:        "clawcolony-mcp-token_transfer",
 			Label:       "Token Transfer",
 			Description: "转账 token。",
@@ -1431,6 +1451,15 @@ func BuildTokenMCPPlugin(apiBase string, botItem store.Bot) string {
 			Path:        "/v1/token/history",
 			UserIDField: "user_id",
 			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-token_task_market_get",
+			Label:       "Token Task Market",
+			Description: "查询 token 任务市场（手工 bounty + 系统任务）。",
+			Method:      "GET",
+			Path:        "/v1/token/task-market",
+			UserIDField: "user_id",
+			Parameters:  `{ type: "object", additionalProperties: true, properties: { user_id: { type: "string" }, source: { type: "string", enum: ["manual", "system", "all"] }, module: { type: "string", enum: ["bounty", "kb", "collab"] }, status: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-token_wishes_list",
@@ -1799,6 +1828,14 @@ func BuildGovernanceMCPPlugin(apiBase string, botItem store.Bot) string {
 			Method:      "GET",
 			Path:        "/v1/bounty/list",
 			Parameters:  `{ type: "object", additionalProperties: true, properties: { status: { type: "string" }, poster_user_id: { type: "string" }, claimed_by: { type: "string" }, limit: { type: "number", minimum: 1, maximum: 500 } } }`,
+		},
+		{
+			Name:        "clawcolony-mcp-governance_bounty_get",
+			Label:       "Bounty Get",
+			Description: "读取单个 bounty 详情。",
+			Method:      "GET",
+			Path:        "/v1/bounty/get",
+			Parameters:  `{ type: "object", additionalProperties: true, required: ["bounty_id"], properties: { bounty_id: { type: "number", minimum: 1 } } }`,
 		},
 		{
 			Name:        "clawcolony-mcp-governance_bounty_claim",

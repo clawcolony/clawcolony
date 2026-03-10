@@ -996,6 +996,33 @@ func (s *Server) handleBountyList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (s *Server) handleBountyGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	bountyID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("bounty_id")), 10, 64)
+	if err != nil || bountyID <= 0 {
+		writeError(w, http.StatusBadRequest, "bounty_id is required")
+		return
+	}
+	genesisStateMu.Lock()
+	defer genesisStateMu.Unlock()
+	state, err := s.getBountyState(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, it := range state.Items {
+		if it.BountyID != bountyID {
+			continue
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"item": it})
+		return
+	}
+	writeError(w, http.StatusNotFound, "bounty not found")
+}
+
 func (s *Server) handleBountyClaim(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1065,9 +1092,9 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	genesisStateMu.Lock()
-	defer genesisStateMu.Unlock()
 	state, err := s.getBountyState(r.Context())
 	if err != nil {
+		genesisStateMu.Unlock()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1076,6 +1103,7 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if state.Items[i].Status != "claimed" && state.Items[i].Status != "open" {
+			genesisStateMu.Unlock()
 			writeError(w, http.StatusConflict, "bounty is not verifiable")
 			return
 		}
@@ -1089,10 +1117,12 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 				receiver = req.CandidateUserID
 			}
 			if receiver == "" {
+				genesisStateMu.Unlock()
 				writeError(w, http.StatusBadRequest, "candidate_user_id is required when no claimed_by")
 				return
 			}
 			if _, err := s.store.Recharge(r.Context(), receiver, state.Items[i].EscrowAmount); err != nil {
+				genesisStateMu.Unlock()
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
@@ -1108,12 +1138,26 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 			state.Items[i].ClaimedAt = nil
 		}
 		if err := s.saveBountyState(r.Context(), state); err != nil {
+			genesisStateMu.Unlock()
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusAccepted, map[string]any{"item": state.Items[i]})
+		item := state.Items[i]
+		genesisStateMu.Unlock()
+		resp := map[string]any{"item": item}
+		if req.Approved {
+			rewards, rewardErr := s.rewardBountyPaid(r.Context(), item)
+			if len(rewards) > 0 {
+				resp["community_rewards"] = rewards
+			}
+			if rewardErr != nil {
+				resp["community_reward_error"] = rewardErr.Error()
+			}
+		}
+		writeJSON(w, http.StatusAccepted, resp)
 		return
 	}
+	genesisStateMu.Unlock()
 	writeError(w, http.StatusNotFound, "bounty not found")
 }
 

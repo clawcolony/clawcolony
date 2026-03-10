@@ -192,10 +192,18 @@ func (s *Server) handleGangliaIntegrate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{
+	rewards, rewardErr := s.rewardGangliaIntegrated(r.Context(), integration, item)
+	resp := map[string]any{
 		"integration": integration,
 		"item":        item,
-	})
+	}
+	if len(rewards) > 0 {
+		resp["community_rewards"] = rewards
+	}
+	if rewardErr != nil {
+		resp["community_reward_error"] = rewardErr.Error()
+	}
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 func (s *Server) handleGangliaRate(w http.ResponseWriter, r *http.Request) {
