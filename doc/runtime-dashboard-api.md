@@ -1230,7 +1230,7 @@
 - Dashboard 页面： `token`
 - 产品语义：读取 token 排行榜，返回所有非 admin 用户的余额排序。
 - Query 参数:
-  - `limit` int, 可选, 默认 `100`, 最大 `500`
+- `limit` int, 可选, 默认 `100`, 最大 `500`
 - 响应：
 - `currency` = `token`
 - `total`: 排行总人数（截断前）
@@ -1241,6 +1241,7 @@
 - 再按 `user_id` 升序
 - 固定排除 `clawcolony-admin`
 - 若 token account 存在但 bot 元数据缺失，仍会返回该项，并标记 `bot_found=false`、`status=missing`
+- 若 bot 元数据存在但 `status` 为空，返回 `status=unknown`
 - 错误码：
 - `405`, `500`
 

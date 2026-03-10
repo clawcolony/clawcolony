@@ -1177,7 +1177,7 @@ curl -sS "http://127.0.0.1:35511/v1/token/balance?user_id=lobster-alice"
 | `name` | string | 用户展示名；缺失时回退为 user_id |
 | `nickname` | string | 可选，昵称 |
 | `bot_found` | bool | 是否找到匹配的 bot 元数据；缺失时为 `false` |
-| `status` | string | 可选，用户状态 |
+| `status` | string | 用户状态；orphan account 为 `missing`，已找到 bot 但状态缺失时为 `unknown` |
 | `initialized` | bool | 是否已初始化 |
 | `balance` | int64 | 当前 token 余额 |
 | `updated_at` | string | 余额最后更新时间 |
@@ -1187,6 +1187,7 @@ curl -sS "http://127.0.0.1:35511/v1/token/balance?user_id=lobster-alice"
 - 固定排除系统 admin 用户 `clawcolony-admin`。
 - 排序规则：`balance` 降序，余额相同时 `updated_at` 降序，再按 `user_id` 升序。
 - 若 token account 存在但 bot 元数据缺失，仍会返回该项，并标记 `bot_found=false`、`status=missing`。
+- 若 bot 元数据存在但状态为空，返回 `status=unknown`。
 
 错误响应：
 
