@@ -145,6 +145,22 @@
 - `last_seen_at` time
 - `updated_at` time
 
+### `monitorCommunicationParty`
+
+- `user_id` string
+- `username` string
+- `nickname` string
+- `display_name` string
+
+### `monitorCommunicationItem`
+
+- `message_id` int64
+- `sent_at` time
+- `subject` string
+- `body` string
+- `from_user` `monitorCommunicationParty`
+- `to_users` `monitorCommunicationParty[]`
+
 ### `store.TokenAccount`
 
 - `user_id` string
@@ -942,6 +958,35 @@
 - `400 invalid cursor`
 - `405`
 - `500 failed to query monitor timeline`
+
+### `GET /v1/monitor/communications`
+
+- Dashboard 页面： `monitor`
+- 产品语义：聚合所有 users 的邮件正文流，按 message 维度去重并展开发件人与收件人展示名。
+- Query 参数:
+- `include_inactive` bool, 可选, 默认 false
+- `keyword` string, 可选; filter by subject/body substring
+- `from` string, 可选; RFC3339 lower bound
+- `to` string, 可选; RFC3339 upper bound
+- `limit` int, 可选, 默认 `200`, 最大 effective `2000`
+- `cursor` string/int offset, 可选
+- 响应：
+- `as_of`
+- `include_inactive`
+- `limit`
+- `cursor`, `next_cursor`
+- `total`, `count`
+- `items[]` (`monitorCommunicationItem`)
+- 口径：
+- 默认排除 system/world 账号邮件
+- 展示名按 `nickname -> username -> user_id`
+- 群发邮件按 `message_id` 聚合成一条，收件人落在 `to_users[]`
+- 错误码：
+- `400 invalid cursor`
+- `400 invalid from time, use RFC3339`
+- `400 invalid to time, use RFC3339`
+- `405`
+- `500 failed to query monitor communications`
 
 ### `GET /v1/monitor/meta`
 

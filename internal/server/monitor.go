@@ -75,6 +75,22 @@ type monitorTimelineEvent struct {
 	Meta     map[string]any `json:"meta,omitempty"`
 }
 
+type monitorCommunicationParty struct {
+	UserID      string `json:"user_id"`
+	Username    string `json:"username,omitempty"`
+	Nickname    string `json:"nickname,omitempty"`
+	DisplayName string `json:"display_name"`
+}
+
+type monitorCommunicationItem struct {
+	MessageID int64                       `json:"message_id"`
+	SentAt    time.Time                   `json:"sent_at"`
+	Subject   string                      `json:"subject"`
+	Body      string                      `json:"body"`
+	FromUser  monitorCommunicationParty   `json:"from_user"`
+	ToUsers   []monitorCommunicationParty `json:"to_users"`
+}
+
 type monitorSourceStatus struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
@@ -284,6 +300,53 @@ func (s *Server) handleMonitorAgentsTimelineAll(w http.ResponseWriter, r *http.R
 	})
 }
 
+func (s *Server) handleMonitorCommunications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), monitorOverviewTimeout)
+	defer cancel()
+
+	limit := parseLimit(r.URL.Query().Get("limit"), monitorDefaultTimelineLimit)
+	if limit > monitorMaxTimelineLimit {
+		limit = monitorMaxTimelineLimit
+	}
+	includeInactive := parseBoolFlag(r.URL.Query().Get("include_inactive"))
+	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+	fromTime, err := parseRFC3339Ptr(strings.TrimSpace(r.URL.Query().Get("from")))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid from time, use RFC3339")
+		return
+	}
+	toTime, err := parseRFC3339Ptr(strings.TrimSpace(r.URL.Query().Get("to")))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid to time, use RFC3339")
+		return
+	}
+
+	items, err := s.collectMonitorCommunications(ctx, includeInactive, keyword, fromTime, toTime)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to query monitor communications")
+		return
+	}
+	page, nextCursor, err := monitorPaginateCommunications(items, r.URL.Query().Get("cursor"), limit)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"as_of":            time.Now().UTC(),
+		"include_inactive": includeInactive,
+		"limit":            limit,
+		"cursor":           strings.TrimSpace(r.URL.Query().Get("cursor")),
+		"next_cursor":      nextCursor,
+		"total":            len(items),
+		"count":            len(page),
+		"items":            page,
+	})
+}
+
 func (s *Server) handleMonitorMeta(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -449,6 +512,113 @@ func (s *Server) buildMonitorOverviewItem(ctx context.Context, b store.Bot, even
 	}
 	item.CurrentState, item.CurrentReason = monitorCurrentState(item, time.Now().UTC())
 	return item
+}
+
+func (s *Server) collectMonitorCommunications(ctx context.Context, includeInactive bool, keyword string, fromTime, toTime *time.Time) ([]monitorCommunicationItem, error) {
+	bots, err := s.store.ListBots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !includeInactive {
+		bots = s.filterActiveBots(ctx, bots)
+	}
+
+	partyIndex := make(map[string]monitorCommunicationParty, len(bots))
+	includedUsers := make(map[string]struct{}, len(bots))
+	scanUsers := make([]store.Bot, 0, len(bots))
+	for _, it := range bots {
+		userID := strings.TrimSpace(it.BotID)
+		if userID == "" || userID == clawWorldSystemID {
+			continue
+		}
+		partyIndex[userID] = monitorCommunicationParty{
+			UserID:      userID,
+			Username:    strings.TrimSpace(it.Name),
+			Nickname:    strings.TrimSpace(it.Nickname),
+			DisplayName: chronicleDisplayName(it.Nickname, it.Name, userID),
+		}
+		includedUsers[userID] = struct{}{}
+		scanUsers = append(scanUsers, it)
+	}
+	sort.Slice(scanUsers, func(i, j int) bool {
+		return strings.TrimSpace(scanUsers[i].BotID) < strings.TrimSpace(scanUsers[j].BotID)
+	})
+
+	type aggregate struct {
+		MessageID int64
+		SentAt    time.Time
+		Subject   string
+		Body      string
+		FromUser  monitorCommunicationParty
+		ToUsers   map[string]monitorCommunicationParty
+	}
+	merged := make(map[int64]*aggregate, len(scanUsers))
+	for _, botItem := range scanUsers {
+		items, listErr := s.store.ListMailbox(ctx, strings.TrimSpace(botItem.BotID), "outbox", "", keyword, fromTime, toTime, monitorMaxSourceScan)
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, item := range items {
+			if item.MessageID == 0 {
+				continue
+			}
+			fromID := strings.TrimSpace(item.FromAddress)
+			if _, ok := includedUsers[fromID]; !ok {
+				continue
+			}
+			toID := strings.TrimSpace(item.ToAddress)
+			if _, ok := includedUsers[toID]; !ok {
+				continue
+			}
+			current, ok := merged[item.MessageID]
+			if !ok {
+				current = &aggregate{
+					MessageID: item.MessageID,
+					SentAt:    item.SentAt.UTC(),
+					Subject:   strings.TrimSpace(item.Subject),
+					Body:      strings.TrimSpace(item.Body),
+					FromUser:  monitorCommunicationPartyForUser(fromID, partyIndex),
+					ToUsers:   make(map[string]monitorCommunicationParty, 1),
+				}
+				merged[item.MessageID] = current
+			}
+			current.ToUsers[toID] = monitorCommunicationPartyForUser(toID, partyIndex)
+		}
+	}
+
+	out := make([]monitorCommunicationItem, 0, len(merged))
+	for _, item := range merged {
+		if len(item.ToUsers) == 0 {
+			continue
+		}
+		recipients := make([]monitorCommunicationParty, 0, len(item.ToUsers))
+		for _, party := range item.ToUsers {
+			recipients = append(recipients, party)
+		}
+		sort.Slice(recipients, func(i, j int) bool {
+			if recipients[i].DisplayName != recipients[j].DisplayName {
+				return recipients[i].DisplayName < recipients[j].DisplayName
+			}
+			return recipients[i].UserID < recipients[j].UserID
+		})
+		out = append(out, monitorCommunicationItem{
+			MessageID: item.MessageID,
+			SentAt:    item.SentAt,
+			Subject:   item.Subject,
+			Body:      item.Body,
+			FromUser:  item.FromUser,
+			ToUsers:   recipients,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ti := out[i].SentAt.UTC()
+		tj := out[j].SentAt.UTC()
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		return out[i].MessageID > out[j].MessageID
+	})
+	return out, nil
 }
 
 func (s *Server) collectMonitorEvents(ctx context.Context, userID string, limit int, since time.Time, chatSnap *chatStateView) ([]monitorTimelineEvent, error) {
@@ -807,6 +977,20 @@ func monitorChatTaskToTimeline(userID string, task chatTaskRecord, source string
 	}
 }
 
+func monitorCommunicationPartyForUser(userID string, idx map[string]monitorCommunicationParty) monitorCommunicationParty {
+	uid := strings.TrimSpace(userID)
+	if uid == "" {
+		return monitorCommunicationParty{}
+	}
+	if item, ok := idx[uid]; ok {
+		return item
+	}
+	return monitorCommunicationParty{
+		UserID:      uid,
+		DisplayName: uid,
+	}
+}
+
 func monitorCategoryActionForPath(path string) (string, string) {
 	switch strings.TrimSpace(path) {
 	case "/v1/tools/invoke":
@@ -820,6 +1004,30 @@ func monitorCategoryActionForPath(path string) (string, string) {
 	default:
 		return "", ""
 	}
+}
+
+func monitorPaginateCommunications(items []monitorCommunicationItem, cursorRaw string, limit int) ([]monitorCommunicationItem, string, error) {
+	offset := 0
+	cursorRaw = strings.TrimSpace(cursorRaw)
+	if cursorRaw != "" {
+		n, err := strconv.Atoi(cursorRaw)
+		if err != nil || n < 0 {
+			return nil, "", fmt.Errorf("invalid cursor")
+		}
+		offset = n
+	}
+	if offset >= len(items) {
+		return []monitorCommunicationItem{}, "", nil
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	next := ""
+	if end < len(items) {
+		next = strconv.Itoa(end)
+	}
+	return append([]monitorCommunicationItem(nil), items[offset:end]...), next, nil
 }
 
 func monitorSortAndAssignEventIDs(items []monitorTimelineEvent, scope string) {

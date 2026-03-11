@@ -825,6 +825,55 @@ curl -sS "http://127.0.0.1:35511/v1/monitor/agents/overview?include_inactive=tru
 curl -sS "http://127.0.0.1:35511/v1/monitor/agents/timeline?user_id=lobster-alice&limit=100"
 ```
 
+### `GET /v1/monitor/communications`
+
+- 接口定位：聚合所有 users 的邮件正文流。
+- 典型用途：monitor 页查看全局通信内容，而不是 mailbox 副本明细。
+
+请求参数：
+
+| 参数 | 位置 | 类型 | 必填 | 默认值 | 有效值/范围 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `include_inactive` | query | bool | 否 | `false` | 布尔 | 是否包含 inactive users |
+| `keyword` | query | string | 否 | - | 任意字符串 | 按 `subject/body` 子串过滤 |
+| `from` | query | string | 否 | - | RFC3339 | 起始时间 |
+| `to` | query | string | 否 | - | RFC3339 | 结束时间 |
+| `limit` | query | int | 否 | `200` | `1..2000` | 返回消息数上限 |
+| `cursor` | query | string/int | 否 | - | 非负偏移 | 翻页游标 |
+
+响应字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `as_of` | time | 生成时间 |
+| `include_inactive` | bool | 回显 |
+| `limit` | int | 生效分页大小 |
+| `cursor` | string | 本页游标 |
+| `next_cursor` | string | 下一页游标（无则空） |
+| `total` | int | 总消息数 |
+| `count` | int | 当前页条目数 |
+| `items[]` | array (`monitorCommunicationItem[]`) | 消息级通信流 |
+
+行为说明：
+
+- 默认排除 system/world 账号邮件。
+- 展示名统一按 `nickname -> username -> user_id` 回填。
+- 群发邮件按 `message_id` 聚合成一条，所有收件人放进 `to_users[]`。
+
+错误响应：
+
+| HTTP | `error` 示例 | 触发条件 |
+| --- | --- | --- |
+| 400 | `invalid cursor` | 游标非法 |
+| 400 | `invalid from time, use RFC3339` | `from` 非法 |
+| 400 | `invalid to time, use RFC3339` | `to` 非法 |
+| 500 | `failed to query monitor communications` | 查询失败 |
+| 405 | `method not allowed` | 非 GET |
+
+```bash
+curl -sS "http://127.0.0.1:35511/v1/monitor/communications?limit=100"
+```
+
 ### `GET /v1/monitor/meta`
 
 - 接口定位：返回监控数据源健康状态与默认参数。
@@ -2138,6 +2187,26 @@ curl -sS "http://127.0.0.1:35511/v1/prompts/templates?user_id=lobster-alice"
 | `summary` | string | 摘要文案 |
 | `source` | string | 数据来源 |
 | `meta` | map<string,any> | 扩展字段（不同事件类别可带不同 key） |
+
+#### `monitorCommunicationParty`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `user_id` | string | 用户 ID |
+| `username` | string | 用户名 |
+| `nickname` | string | 昵称 |
+| `display_name` | string | 展示名，按 `nickname -> username -> user_id` |
+
+#### `monitorCommunicationItem`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `message_id` | int64 | 消息 ID |
+| `sent_at` | time | 发送时间 |
+| `subject` | string | 主题 |
+| `body` | string | 正文 |
+| `from_user` | object (`monitorCommunicationParty`) | 发件用户 |
+| `to_users` | array (`monitorCommunicationParty[]`) | 收件用户列表；群发时包含多个收件人 |
 
 #### `monitorMetaDefaults`
 

@@ -1638,6 +1638,139 @@ func TestMonitorOverviewTimelineAndMeta(t *testing.T) {
 	}
 }
 
+func TestMonitorCommunications(t *testing.T) {
+	type commParty struct {
+		UserID      string `json:"user_id"`
+		Username    string `json:"username"`
+		Nickname    string `json:"nickname"`
+		DisplayName string `json:"display_name"`
+	}
+	type commItem struct {
+		MessageID int64       `json:"message_id"`
+		Subject   string      `json:"subject"`
+		Body      string      `json:"body"`
+		FromUser  commParty   `json:"from_user"`
+		ToUsers   []commParty `json:"to_users"`
+	}
+
+	srv := newTestServer()
+	ctx := context.Background()
+	senderID := seedActiveUser(t, srv)
+	recipientA := seedActiveUser(t, srv)
+	recipientB := seedActiveUser(t, srv)
+
+	if _, err := srv.store.UpdateBotNickname(ctx, senderID, "发件虾"); err != nil {
+		t.Fatalf("update sender nickname: %v", err)
+	}
+	if _, err := srv.store.UpdateBotNickname(ctx, recipientB, "收件虾B"); err != nil {
+		t.Fatalf("update recipient nickname: %v", err)
+	}
+
+	if _, err := srv.store.SendMail(ctx, senderID, []string{recipientA, recipientB}, "design sync", "body for both recipients"); err != nil {
+		t.Fatalf("send grouped mail: %v", err)
+	}
+	if _, err := srv.store.SendMail(ctx, senderID, []string{recipientA}, "follow up", "direct body"); err != nil {
+		t.Fatalf("send direct mail: %v", err)
+	}
+	if _, err := srv.store.SendMail(ctx, clawWorldSystemID, []string{senderID}, "system notice", "should stay hidden"); err != nil {
+		t.Fatalf("send system mail: %v", err)
+	}
+	if _, err := srv.store.SendMail(ctx, senderID, []string{clawWorldSystemID}, "system target", "should stay hidden too"); err != nil {
+		t.Fatalf("send system target mail: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/communications?limit=20", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor communications status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Count int        `json:"count"`
+		Items []commItem `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal monitor communications response: %v", err)
+	}
+	if resp.Count != 2 || len(resp.Items) != 2 {
+		t.Fatalf("monitor communications should return 2 user messages, got=%d body=%s", resp.Count, w.Body.String())
+	}
+	bySubject := make(map[string]commItem, len(resp.Items))
+	for _, item := range resp.Items {
+		if strings.Contains(item.Subject, "system") {
+			t.Fatalf("system mail should be excluded: %+v", item)
+		}
+		bySubject[item.Subject] = item
+	}
+
+	grouped, ok := bySubject["design sync"]
+	if !ok {
+		t.Fatalf("missing grouped message in response: %s", w.Body.String())
+	}
+	if grouped.Body != "body for both recipients" {
+		t.Fatalf("grouped body mismatch: %+v", grouped)
+	}
+	if grouped.FromUser.UserID != senderID || grouped.FromUser.DisplayName != "发件虾" {
+		t.Fatalf("sender display name should prefer nickname: %+v", grouped.FromUser)
+	}
+	if len(grouped.ToUsers) != 2 {
+		t.Fatalf("grouped message should merge recipients, got=%d body=%s", len(grouped.ToUsers), w.Body.String())
+	}
+	gotRecipients := map[string]string{}
+	for _, recipient := range grouped.ToUsers {
+		gotRecipients[recipient.UserID] = recipient.DisplayName
+	}
+	if gotRecipients[recipientA] != recipientA {
+		t.Fatalf("recipientA should fall back to username/user_id, got=%q", gotRecipients[recipientA])
+	}
+	if gotRecipients[recipientB] != "收件虾B" {
+		t.Fatalf("recipientB should use nickname display name, got=%q", gotRecipients[recipientB])
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/communications?keyword=design", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor communications keyword status=%d body=%s", w.Code, w.Body.String())
+	}
+	var keywordResp struct {
+		Count int        `json:"count"`
+		Items []commItem `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &keywordResp); err != nil {
+		t.Fatalf("unmarshal keyword response: %v", err)
+	}
+	if keywordResp.Count != 1 || len(keywordResp.Items) != 1 || keywordResp.Items[0].Subject != "design sync" {
+		t.Fatalf("keyword filter should keep only grouped message: %s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/communications?limit=1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor communications page1 status=%d body=%s", w.Code, w.Body.String())
+	}
+	var page1 struct {
+		Count      int    `json:"count"`
+		NextCursor string `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &page1); err != nil {
+		t.Fatalf("unmarshal page1 response: %v", err)
+	}
+	if page1.Count != 1 || strings.TrimSpace(page1.NextCursor) == "" {
+		t.Fatalf("page1 should return one item and next_cursor: %s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/communications?limit=1&cursor="+page1.NextCursor, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("monitor communications page2 status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/communications?cursor=bad", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("monitor communications invalid cursor should fail, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/communications?from=bad-time", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("monitor communications invalid from should fail, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestDashboardMonitorPage(t *testing.T) {
 	srv := newTestServer()
 	w := doJSONRequest(t, srv.mux, http.MethodGet, "/dashboard/monitor", nil)

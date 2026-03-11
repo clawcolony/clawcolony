@@ -5,6 +5,16 @@
 
 ## 2026-03-11
 
+- Monitor 新增全局通信正文接口：
+  - 新增 `GET /v1/monitor/communications`
+  - 聚合所有 users 的邮件正文，默认排除 system/world 邮件
+  - 发件人与收件人展示名按 `nickname -> username -> user_id`
+  - 群发邮件按 `message_id` 聚合为单条消息，收件人落在 `to_users[]`
+  - 补充 dashboard API / readonly API 文档、API catalog 与测试
+  - 验证：
+    - `go test ./internal/server/...` 通过
+  - 详细流水：`doc/updates/2026-03-11-monitor-communications-api.md`
+
 - 新增 runtime HTTP 接口分类文档：
   - 新增 `doc/runtime-api-classes.md`
   - 按产品暴露口径将现有接口分为：

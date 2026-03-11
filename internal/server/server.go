@@ -1075,6 +1075,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/monitor/agents/overview", s.handleMonitorAgentsOverview)
 	s.mux.HandleFunc("/v1/monitor/agents/timeline", s.handleMonitorAgentsTimeline)
 	s.mux.HandleFunc("/v1/monitor/agents/timeline/all", s.handleMonitorAgentsTimelineAll)
+	s.mux.HandleFunc("/v1/monitor/communications", s.handleMonitorCommunications)
 	s.mux.HandleFunc("/v1/monitor/meta", s.handleMonitorMeta)
 	s.mux.HandleFunc("/v1/bots/dev/link", s.handleBotDevLinkProxy)
 	s.mux.HandleFunc("/v1/bots/dev/health", s.handleBotDevHealth)
@@ -9873,6 +9874,7 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/monitor/agents/overview?user_id=<id>&include_inactive=0|1&limit=<n>&event_limit=<n>&since_seconds=<n>",
 		"GET /v1/monitor/agents/timeline?user_id=<id>&limit=<n>&event_limit=<n>&cursor=<n>&since_seconds=<n>",
 		"GET /v1/monitor/agents/timeline/all?include_inactive=0|1&limit=<n>&event_limit=<n>&user_limit=<n>&cursor=<n>&since_seconds=<n>",
+		"GET /v1/monitor/communications?include_inactive=0|1&keyword=<kw>&from=<rfc3339>&to=<rfc3339>&limit=<n>&cursor=<n>",
 		"GET /v1/monitor/meta",
 		"GET /v1/system/request-logs?limit=<n>",
 	}
