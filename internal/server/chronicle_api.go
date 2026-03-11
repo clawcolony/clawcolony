@@ -565,6 +565,27 @@ func buildKnowledgeChronicleItems(sources []knowledgeProposalEventSource, actors
 	return out
 }
 
+func buildLifeChronicleItems(items []store.UserLifeStateTransition, actors map[string]colonyChronicleActor) []colonyChronicleItem {
+	apiActors := chronicleAPIActorIndex(actors)
+	detailed := buildLifeStateDetailedEvents(items, apiActors)
+	out := make([]colonyChronicleItem, 0, len(detailed))
+	for _, item := range detailed {
+		switch item.Kind {
+		case "life.dead.marked":
+			if strings.TrimSpace(item.SourceModule) == "governance.case.verdict" {
+				continue
+			}
+			out = append(out, buildChronicleItemFromAPIEvent(item, chronicleSyntheticStringID(-3200000, item.EventID)))
+		case "life.wake.succeeded":
+			out = append(out, buildChronicleItemFromAPIEvent(item, chronicleSyntheticStringID(-3210000, item.EventID)))
+		case "life.dying.recovered":
+			out = append(out, buildChronicleItemFromAPIEvent(item, chronicleSyntheticStringID(-3220000, item.EventID)))
+		}
+	}
+	sortColonyChronicleItems(out)
+	return out
+}
+
 func buildCollaborationChronicleItems(sources []collaborationEventSource, actors map[string]colonyChronicleActor) []colonyChronicleItem {
 	apiActors := chronicleAPIActorIndex(actors)
 	out := make([]colonyChronicleItem, 0, len(sources))
@@ -579,11 +600,14 @@ func buildCollaborationChronicleItems(sources []collaborationEventSource, actors
 			return events[i].CreatedAt.Before(events[j].CreatedAt)
 		})
 		for _, event := range events {
-			if !strings.EqualFold(strings.TrimSpace(event.EventType), "collab.closed") {
-				continue
+			switch strings.ToLower(strings.TrimSpace(event.EventType)) {
+			case "collab.executing":
+				item := buildCollaborationStartedEvent(src, event, selectedUserIDs, apiActors)
+				out = append(out, buildChronicleItemFromAPIEvent(item, chronicleSyntheticID(-3900000, event.ID)))
+			case "collab.closed":
+				item := buildCollaborationClosedEvent(src, event, selectedUserIDs, apiActors)
+				out = append(out, buildChronicleItemFromAPIEvent(item, chronicleSyntheticID(-4000000, event.ID)))
 			}
-			item := buildCollaborationClosedEvent(src, event, selectedUserIDs, apiActors)
-			out = append(out, buildChronicleItemFromAPIEvent(item, chronicleSyntheticID(-4000000, event.ID)))
 		}
 	}
 	sortColonyChronicleItems(out)
@@ -601,6 +625,9 @@ func buildEconomyChronicleItems(source economyEventSource, actors map[string]col
 	for _, item := range source.Bounties {
 		if event, ok := buildEconomyBountyPaidEvent(item, apiActors); ok {
 			out = append(out, buildChronicleItemFromAPIEvent(event, chronicleSyntheticID(-5100000, item.BountyID)))
+		}
+		if event, ok := buildEconomyBountyExpiredEvent(item, apiActors); ok {
+			out = append(out, buildChronicleItemFromAPIEvent(event, chronicleSyntheticID(-5110000, item.BountyID)))
 		}
 	}
 	sortColonyChronicleItems(out)

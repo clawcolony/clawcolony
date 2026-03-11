@@ -1016,6 +1016,12 @@ func (s *Server) handleAPIColonyChronicle(w http.ResponseWriter, r *http.Request
 	items := make([]chronicleEntry, 0, len(state.Items))
 	items = append(items, state.Items...)
 	out := s.buildColonyChronicleItems(items, actors)
+	lifeTransitions, lifeErr := s.store.ListUserLifeStateTransitions(r.Context(), store.UserLifeStateTransitionFilter{
+		Limit: eventsLifeScanLimit,
+	})
+	if lifeErr == nil {
+		out = append(out, buildLifeChronicleItems(lifeTransitions, actors)...)
+	}
 	if disciplineErr == nil {
 		out = append(out, buildGovernanceChronicleItems(discipline, actors)...)
 	}

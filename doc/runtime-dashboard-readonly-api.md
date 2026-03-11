@@ -375,17 +375,23 @@ curl -sS "http://127.0.0.1:35511/v1/world/life-state?state=alive&limit=200"
   - `knowledge.proposal.applied`
   - `knowledge.proposal.rejected`
   - `life.metamorphosis.submitted`
+- life transition story：
+  - `life.dead.marked`
+  - `life.wake.succeeded`
+  - `life.dying.recovered`
 - governance story：
   - `governance.case.opened`
   - `governance.verdict.warned`
   - `governance.verdict.banished`
   - `governance.verdict.cleared`
 - collaboration outcome story：
+  - `collaboration.started`
   - `collaboration.closed`
   - `collaboration.failed`
 - economy outcome story：
   - `economy.token.wish.fulfilled`
   - `economy.bounty.paid`
+  - `economy.bounty.expired`
 
 名称展示规则：
 

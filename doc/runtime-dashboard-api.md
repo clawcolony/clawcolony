@@ -610,9 +610,10 @@
 - `knowledge.entry.created`
 - `knowledge.proposal.applied`, `knowledge.proposal.rejected`
 - `life.metamorphosis.submitted`
+- `life.dead.marked`, `life.wake.succeeded`, `life.dying.recovered`
 - `governance.case.opened`, `governance.verdict.warned|banished|cleared`
-- `collaboration.closed`, `collaboration.failed`
-- `economy.token.wish.fulfilled`, `economy.bounty.paid`
+- `collaboration.started`, `collaboration.closed`, `collaboration.failed`
+- `economy.token.wish.fulfilled`, `economy.bounty.paid`, `economy.bounty.expired`
 - 名称显示优先级：
 - `nickname -> username -> user_id`
 - 错误码： `405`, `500`

@@ -345,6 +345,7 @@ func TestAPIColonyChronicleIncludesHighValueDetailedEventAggregates(t *testing.T
 	srv := newTestServer()
 	ctx := context.Background()
 
+	life := seedLifeEventsFixture(t, srv, ctx)
 	knowledge := seedKnowledgeEventsFixture(t, srv, ctx)
 	collab := seedCollaborationEventsFixture(t, srv, ctx)
 	economy := seedEconomyIdentityEventsFixture(t, srv, ctx)
@@ -370,6 +371,21 @@ func TestAPIColonyChronicleIncludesHighValueDetailedEventAggregates(t *testing.T
 		}
 		return nil
 	}
+	findByKindAndTarget := func(kind, userID string) *colonyChronicleItem {
+		t.Helper()
+		for i := range resp.Items {
+			item := &resp.Items[i]
+			if item.Kind != kind {
+				continue
+			}
+			for _, target := range item.Targets {
+				if target.UserID == userID {
+					return item
+				}
+			}
+		}
+		return nil
+	}
 
 	if applied := find("knowledge.proposal.applied", "kb_proposal", strconv.FormatInt(knowledge.approvedProposalID, 10)); applied == nil {
 		t.Fatalf("expected applied knowledge proposal chronicle event, body=%s", w.Body.String())
@@ -385,6 +401,22 @@ func TestAPIColonyChronicleIncludesHighValueDetailedEventAggregates(t *testing.T
 		t.Fatalf("rejected knowledge chronicle event should keep source metadata: %+v", *rejected)
 	}
 
+	if dead := findByKindAndTarget("life.dead.marked", life.dyingUserID); dead == nil {
+		t.Fatalf("expected life dead chronicle event, body=%s", w.Body.String())
+	} else if len(dead.Targets) != 1 || dead.Targets[0].UserID != life.dyingUserID || dead.ImpactLevel != "critical" {
+		t.Fatalf("life dead chronicle event should target the dead user: %+v", *dead)
+	}
+	if wake := findByKindAndTarget("life.wake.succeeded", life.wakeUserID); wake == nil {
+		t.Fatalf("expected life wake chronicle event, body=%s", w.Body.String())
+	} else if len(wake.Targets) != 1 || wake.Targets[0].UserID != life.wakeUserID {
+		t.Fatalf("life wake chronicle event should target the woken user: %+v", *wake)
+	}
+
+	if started := find("collaboration.started", "collab_session", collab.successCollabID); started == nil {
+		t.Fatalf("expected collaboration started chronicle event, body=%s", w.Body.String())
+	} else if started.ImpactLevel != "notice" || started.SourceModule != "collab.execution" {
+		t.Fatalf("collaboration started chronicle event should preserve stage metadata: %+v", *started)
+	}
 	if success := find("collaboration.closed", "collab_session", collab.successCollabID); success == nil {
 		t.Fatalf("expected successful collaboration chronicle event, body=%s", w.Body.String())
 	} else if success.ImpactLevel != "notice" || !strings.Contains(success.TitleZH, "已完成") {
@@ -405,5 +437,10 @@ func TestAPIColonyChronicleIncludesHighValueDetailedEventAggregates(t *testing.T
 		t.Fatalf("expected paid bounty chronicle event, body=%s", w.Body.String())
 	} else if bounty.SourceModule != "bounty.verify" || len(bounty.Targets) == 0 {
 		t.Fatalf("paid bounty chronicle event should preserve payout metadata: %+v", *bounty)
+	}
+	if expired := find("economy.bounty.expired", "bounty", strconv.FormatInt(economy.expiredBountyID, 10)); expired == nil {
+		t.Fatalf("expected expired bounty chronicle event, body=%s", w.Body.String())
+	} else if expired.ImpactLevel != "warning" || expired.SourceModule != "bounty.broker" {
+		t.Fatalf("expired bounty chronicle event should explain closure source: %+v", *expired)
 	}
 }

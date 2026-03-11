@@ -7,8 +7,8 @@
 
 - 编年史接口补高价值终局聚合：
   - `GET /v1/colony/chronicle` 新增知识提案终局事件：`knowledge.proposal.applied`、`knowledge.proposal.rejected`，并在 proposal 已 applied 时收敛掉重复的 `knowledge.proposal.approved`
-  - 新增协作终局事件：`collaboration.closed`、`collaboration.failed`
-  - 新增经济兑现事件：`economy.token.wish.fulfilled`、`economy.bounty.paid`
+  - 新增生命/协作/经济终局与阶段事件：`life.dead.marked`、`life.wake.succeeded`、`life.dying.recovered`、`collaboration.started`、`collaboration.closed`、`collaboration.failed`、`economy.token.wish.fulfilled`、`economy.bounty.paid`、`economy.bounty.expired`
+  - 对 `governance.verdict.banished` 触发的 `life.dead.marked` 做同事实去重，避免编年史里重复讲同一件事
   - 这批聚合复用 `/v1/events` 的详细事件文案与对象追溯字段，避免 chronicle 与 detailed events 再次分叉
   - 详细流水：`doc/updates/2026-03-10-chronicle-high-value-event-aggregation.md`
 
