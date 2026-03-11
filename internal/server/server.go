@@ -332,13 +332,89 @@ const defaultCostAlertCooldownSeconds int64 = int64((10 * time.Minute) / time.Se
 const defaultAgentHeartbeatEvery = "10m"
 const defaultPreviewAllowedPorts = "3000,3001,4173,5173,8000,8080,8787"
 const defaultPreviewUpstreamTemplate = "http://{{user_id}}.freewill.svc.cluster.local:{{port}}"
+const proxyRequestBodyMaxBytes int64 = 10 << 20
+const proxyResponseBodyMaxBytes int64 = 20 << 20
 const devProxyHealthTimeout = 12 * time.Second
 const devProxyParamToken = "token"
 const devProxySignedParamSig = "sig"
 const devProxySignedParamExp = "exp"
 const devProxySignedParamNonce = "nonce"
 
-var managementOnlyRouteSet = map[string]struct{}{}
+var proxyHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		MaxConnsPerHost:     50,
+		IdleConnTimeout:     90 * time.Second,
+	},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
+var proxyHopByHopHeaderSet = map[string]struct{}{
+	"Connection":          {},
+	"Keep-Alive":          {},
+	"Proxy-Authenticate":  {},
+	"Proxy-Authorization": {},
+	"Te":                  {},
+	"Trailer":             {},
+	"Transfer-Encoding":   {},
+	"Upgrade":             {},
+}
+
+var runtimeLogsExceptionRouteSet = map[string]struct{}{
+	"/v1/bots/logs":     {},
+	"/v1/bots/logs/all": {},
+}
+
+var migratedOpsRouteSet = map[string]struct{}{
+	"/v1/prompts/templates/apply":          {},
+	"/v1/bots/rule-status":                 {},
+	"/v1/bots/dev/link":                    {},
+	"/v1/bots/dev/health":                  {},
+	"/v1/bots/openclaw/status":             {},
+	"/v1/system/openclaw-dashboard-config": {},
+}
+
+var migratedOpsRoutePrefixes = []string{
+	"/v1/bots/dev",
+	"/v1/bots/openclaw",
+}
+
+var managementOnlyRouteSet = map[string]struct{}{
+	"/v1/bots/register":                    {},
+	"/v1/prompts/templates/apply":          {},
+	"/v1/bots/rule-status":                 {},
+	"/v1/bots/dev/link":                    {},
+	"/v1/bots/dev/health":                  {},
+	"/v1/bots/openclaw/status":             {},
+	"/v1/system/openclaw-dashboard-config": {},
+	"/v1/bots/upgrade":                     {},
+	"/v1/bots/upgrade/task":                {},
+	"/v1/bots/upgrade/history":             {},
+	"/v1/bots/upgrade/steps":               {},
+	"/v1/clawcolony/upgrade":               {},
+	"/v1/clawcolony/upgrade/task":          {},
+	"/v1/clawcolony/upgrade/history":       {},
+	"/v1/clawcolony/upgrade/steps":         {},
+	"/v1/openclaw/admin/overview":          {},
+	"/v1/openclaw/admin/action":            {},
+	"/v1/openclaw/admin/register/task":     {},
+	"/v1/openclaw/admin/register/history":  {},
+	"/v1/openclaw/admin/github/health":     {},
+	"/v1/github/app-token":                 {},
+}
+
+var managementOnlyRoutePrefixes = []string{
+	"/v1/dashboard-admin",
+	"/v1/bots/dev",
+	"/v1/bots/openclaw",
+}
+
+var errProxyRequestBodyTooLarge = errors.New("proxy request body exceeds limit")
+var errProxyResponseBodyTooLarge = errors.New("proxy response body exceeds limit")
 
 const (
 	chatTaskQueuedStatus    = "queued"
@@ -466,11 +542,13 @@ func (s *Server) Start() error {
 
 func (s *Server) roleAccessMiddleware(next http.Handler) http.Handler {
 	role := s.cfg.EffectiveServiceRole()
-	if role == config.ServiceRoleAll {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.pathAllowedForRole(role, r.URL.Path) {
+		path := normalizeRequestPath(r.URL.Path)
+		if s.shouldHandleMigratedOpsPath(role, path) {
+			s.handleMigratedOpsRequest(w, r, path)
+			return
+		}
+		if role == config.ServiceRoleAll || s.pathAllowedForRole(role, path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -478,16 +556,69 @@ func (s *Server) roleAccessMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) pathAllowedForRole(role, requestPath string) bool {
-	path := strings.TrimSpace(requestPath)
-	if path == "" {
-		path = "/"
+func normalizeRequestPath(requestPath string) string {
+	p := strings.TrimSpace(requestPath)
+	if p == "" {
+		return "/"
 	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	cleaned := path.Clean(p)
+	if cleaned == "." || cleaned == "" {
+		return "/"
+	}
+	return cleaned
+}
+
+func pathHasPrefix(pathValue, prefix string) bool {
+	pathValue = normalizeRequestPath(pathValue)
+	prefix = normalizeRequestPath(prefix)
+	if prefix == "/" {
+		return true
+	}
+	return pathValue == prefix || strings.HasPrefix(pathValue, prefix+"/")
+}
+
+func (s *Server) shouldHandleMigratedOpsPath(role, requestPath string) bool {
+	switch role {
+	case config.ServiceRoleRuntime, config.ServiceRoleAll:
+	default:
+		return false
+	}
+	if role == config.ServiceRoleAll && strings.TrimSpace(s.cfg.DeployerAPIBaseURL) == "" {
+		return false
+	}
+	if !s.isMigratedOpsPath(requestPath) {
+		return false
+	}
+	mode := s.cfg.EffectiveRuntimeOpsProxyMode()
+	return mode == config.OpsProxyModeCompat || mode == config.OpsProxyModeHardCut
+}
+
+func (s *Server) handleMigratedOpsRequest(w http.ResponseWriter, r *http.Request, requestPath string) {
+	mode := s.cfg.EffectiveRuntimeOpsProxyMode()
+	log.Printf("runtime_migrated_ops_request mode=%s method=%s path=%s", mode, r.Method, requestPath)
+	switch mode {
+	case config.OpsProxyModeHardCut:
+		writeError(w, http.StatusNotFound, "endpoint moved to deployer service")
+	case config.OpsProxyModeCompat:
+		s.forwardMigratedOpsRequestToDeployer(w, r, requestPath)
+	default:
+		writeError(w, http.StatusNotFound, "endpoint is disabled in this service role")
+	}
+}
+
+func (s *Server) pathAllowedForRole(role, requestPath string) bool {
+	path := normalizeRequestPath(requestPath)
 	if path == "/healthz" || path == "/v1/meta" {
 		return true
 	}
 	switch role {
 	case config.ServiceRoleRuntime:
+		if s.cfg.EffectiveRuntimeOpsProxyMode() == config.OpsProxyModeLocalLegacy && s.isMigratedOpsPath(path) {
+			return true
+		}
 		return !s.isDeployerOnlyPath(path)
 	case config.ServiceRoleAll:
 		return true
@@ -497,8 +628,37 @@ func (s *Server) pathAllowedForRole(role, requestPath string) bool {
 }
 
 func (s *Server) isDeployerOnlyPath(requestPath string) bool {
-	_, ok := managementOnlyRouteSet[strings.TrimSpace(requestPath)]
+	path := normalizeRequestPath(requestPath)
+	if _, ok := managementOnlyRouteSet[path]; ok {
+		return true
+	}
+	for _, prefix := range managementOnlyRoutePrefixes {
+		if pathHasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) isRuntimeLogsExceptionPath(requestPath string) bool {
+	_, ok := runtimeLogsExceptionRouteSet[normalizeRequestPath(requestPath)]
 	return ok
+}
+
+func (s *Server) isMigratedOpsPath(requestPath string) bool {
+	path := normalizeRequestPath(requestPath)
+	if s.isRuntimeLogsExceptionPath(path) {
+		return false
+	}
+	if _, ok := migratedOpsRouteSet[path]; ok {
+		return true
+	}
+	for _, prefix := range migratedOpsRoutePrefixes {
+		if pathHasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) worldTickInterval() time.Duration {
@@ -1118,20 +1278,23 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		lawVersion = s.tianDaoLaw.Version
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"service":              "clawcolony",
-		"service_role":         s.cfg.EffectiveServiceRole(),
-		"runtime_enabled":      s.cfg.RuntimeEnabled(),
-		"clawcolony_namespace": s.cfg.ClawWorldNamespace,
-		"bot_namespace":        s.cfg.BotNamespace,
-		"database_enabled":     s.cfg.DatabaseURL != "",
-		"action_cost_consume":  s.cfg.ActionCostConsume,
-		"tool_cost_rate_milli": s.cfg.ToolCostRateMilli,
-		"tool_runtime_exec":    s.cfg.ToolRuntimeExec,
-		"tool_sandbox_image":   strings.TrimSpace(s.cfg.ToolSandboxImage),
-		"tool_t3_allow_hosts":  strings.TrimSpace(s.cfg.ToolT3AllowHosts),
-		"tian_dao_law_key":     lawKey,
-		"tian_dao_law_version": lawVersion,
-		"world_tick_seconds":   int64(s.worldTickInterval() / time.Second),
+		"service":                  "clawcolony",
+		"service_role":             s.cfg.EffectiveServiceRole(),
+		"runtime_ops_proxy_mode":   s.cfg.EffectiveRuntimeOpsProxyMode(),
+		"runtime_enabled":          s.cfg.RuntimeEnabled(),
+		"clawcolony_namespace":     s.cfg.ClawWorldNamespace,
+		"bot_namespace":            s.cfg.BotNamespace,
+		"database_enabled":         s.cfg.DatabaseURL != "",
+		"deployer_api_configured":  strings.TrimSpace(s.cfg.DeployerAPIBaseURL) != "",
+		"deployer_public_base_url": strings.TrimSpace(s.cfg.DeployerPublicBaseURL),
+		"action_cost_consume":      s.cfg.ActionCostConsume,
+		"tool_cost_rate_milli":     s.cfg.ToolCostRateMilli,
+		"tool_runtime_exec":        s.cfg.ToolRuntimeExec,
+		"tool_sandbox_image":       strings.TrimSpace(s.cfg.ToolSandboxImage),
+		"tool_t3_allow_hosts":      strings.TrimSpace(s.cfg.ToolT3AllowHosts),
+		"tian_dao_law_key":         lawKey,
+		"tian_dao_law_version":     lawVersion,
+		"world_tick_seconds":       int64(s.worldTickInterval() / time.Second),
 	})
 }
 
@@ -8539,6 +8702,159 @@ func (s *Server) handleRequestLogs(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func readProxyRequestBody(r *http.Request) (io.Reader, error) {
+	if r.Body == nil {
+		return nil, nil
+	}
+	limited := io.LimitReader(r.Body, proxyRequestBodyMaxBytes+1)
+	payload, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > proxyRequestBodyMaxBytes {
+		return nil, errProxyRequestBodyTooLarge
+	}
+	return bytes.NewReader(payload), nil
+}
+
+func copyProxyRequestHeaders(dst, src http.Header) {
+	skip := make(map[string]struct{}, len(proxyHopByHopHeaderSet)+4)
+	for k := range proxyHopByHopHeaderSet {
+		skip[k] = struct{}{}
+	}
+	for _, connValue := range src.Values("Connection") {
+		parts := strings.Split(connValue, ",")
+		for _, p := range parts {
+			token := strings.TrimSpace(p)
+			if token == "" {
+				continue
+			}
+			skip[http.CanonicalHeaderKey(token)] = struct{}{}
+		}
+	}
+	for k, values := range src {
+		if http.CanonicalHeaderKey(k) == "Cookie" {
+			continue
+		}
+		if _, banned := skip[http.CanonicalHeaderKey(k)]; banned {
+			continue
+		}
+		for _, v := range values {
+			dst.Add(k, v)
+		}
+	}
+}
+
+func copyProxyResponseHeaders(dst, src http.Header) {
+	skip := make(map[string]struct{}, len(proxyHopByHopHeaderSet)+4)
+	for k := range proxyHopByHopHeaderSet {
+		skip[k] = struct{}{}
+	}
+	for _, connValue := range src.Values("Connection") {
+		parts := strings.Split(connValue, ",")
+		for _, p := range parts {
+			token := strings.TrimSpace(p)
+			if token == "" {
+				continue
+			}
+			skip[http.CanonicalHeaderKey(token)] = struct{}{}
+		}
+	}
+	for k, values := range src {
+		if http.CanonicalHeaderKey(k) == "Set-Cookie" {
+			continue
+		}
+		if _, banned := skip[http.CanonicalHeaderKey(k)]; banned {
+			continue
+		}
+		for _, v := range values {
+			dst.Add(k, v)
+		}
+	}
+}
+
+func readProxyResponseBody(resp *http.Response) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, nil
+	}
+	limited := io.LimitReader(resp.Body, proxyResponseBodyMaxBytes+1)
+	payload, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > proxyResponseBodyMaxBytes {
+		return nil, errProxyResponseBodyTooLarge
+	}
+	return payload, nil
+}
+
+func (s *Server) forwardMigratedOpsRequestToDeployer(w http.ResponseWriter, r *http.Request, requestPath string) {
+	base := strings.TrimSpace(s.cfg.DeployerAPIBaseURL)
+	if base == "" {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusServiceUnavailable, "deployer api base is not configured")
+		return
+	}
+	backend, err := neturl.Parse(base)
+	if err != nil || strings.TrimSpace(backend.Scheme) == "" || strings.TrimSpace(backend.Host) == "" {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusServiceUnavailable, "invalid deployer api base")
+		return
+	}
+	if !strings.EqualFold(backend.Scheme, "http") && !strings.EqualFold(backend.Scheme, "https") {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusServiceUnavailable, "unsupported deployer api scheme")
+		return
+	}
+	target := *backend
+	target.Path = joinURLPath(backend.Path, requestPath)
+	target.RawQuery = r.URL.RawQuery
+
+	bodyReader, err := readProxyRequestBody(r)
+	if err != nil {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		if errors.Is(err, errProxyRequestBodyTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bodyReader)
+	if err != nil {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusBadGateway, "failed to build proxy request")
+		return
+	}
+	copyProxyRequestHeaders(req.Header, r.Header)
+	req.Host = backend.Host
+	req.Header.Set("X-Clawcolony-Runtime-Proxy", "migrated-ops")
+
+	resp, err := proxyHTTPClient.Do(req)
+	if err != nil {
+		log.Printf("runtime_migrated_ops_proxy_error method=%s path=%s target=%s err=%v", r.Method, requestPath, target.String(), err)
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusBadGateway, "migrated endpoint proxy error")
+		return
+	}
+	defer resp.Body.Close()
+	respBody, err := readProxyResponseBody(resp)
+	if err != nil {
+		log.Printf("runtime_migrated_ops_proxy_read_error method=%s path=%s target=%s err=%v", r.Method, requestPath, target.String(), err)
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		if errors.Is(err, errProxyResponseBodyTooLarge) {
+			writeError(w, http.StatusBadGateway, "migrated endpoint response is too large")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "migrated endpoint proxy response error")
+		return
+	}
+	copyProxyResponseHeaders(w.Header(), resp.Header)
+	w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(respBody)
 }
 
 func joinURLPath(basePath, nextPath string) string {

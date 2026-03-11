@@ -20,6 +20,36 @@
 - 不依赖 `landlord/` 旧目录。
 - 不通过 runtime 直接操作 K8s 部署面。
 
+## 2.1 Runtime 边界落地口径（2026-03-11 起）
+
+- runtime 最终保留（owner=runtime）：
+  - `GET /v1/bots/logs`
+  - `GET /v1/bots/logs/all`
+- 下列接口 owner=deployer，runtime 不得继续实现业务语义：
+  - `POST /v1/prompts/templates/apply`
+  - `GET /v1/bots/rule-status`
+  - `POST /v1/bots/dev/link`
+  - `GET /v1/bots/dev/health`
+  - `GET|HEAD|OPTIONS /v1/bots/dev/*`
+  - `GET /v1/bots/openclaw/*`
+  - `GET /v1/bots/openclaw/status`
+  - `GET /v1/system/openclaw-dashboard-config`
+- Phase 1 兼容期：
+  - runtime 可对上述迁移接口做透明转发到 deployer（`compat`），并返回 `X-Clawcolony-Deprecated`
+  - 转发仅作兼容，不得在 runtime 添加新业务分支
+  - 必须显式配置：
+    - `CLAWCOLONY_DEPLOYER_API_BASE_URL`（runtime -> deployer 内部转发目标）
+    - `CLAWCOLONY_DEPLOYER_PUBLIC_BASE_URL`（dashboard 跳转/链接目标）
+- Phase 2 hard cut：
+  - runtime 对迁移接口返回 `404/disabled`
+  - 仅保留 logs 例外
+- 兼容代理守卫（必须保持）：
+  - 请求体上限 `10 MiB`
+  - 响应体上限 `20 MiB`
+  - 仅允许 `http|https` upstream，且禁止跟随重定向
+  - 不转发 `Cookie`，不透传 `Set-Cookie`
+- 除迁移接口外，runtime 对 deployer-only 管理接口（如 upgrade/openclaw admin/github app-token）应保持禁用，不做本地实现或代理扩展。
+
 ## 3. 命名与环境约定
 
 - runtime namespace：`freewill`

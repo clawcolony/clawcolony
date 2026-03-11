@@ -14,6 +14,24 @@
 
 - 所有写操作（`POST|PUT|DELETE`），例如发送消息、更新配置、提案投票、救援执行等
 
+### 1.1 边界说明（2026-03-11）
+
+dashboard 中与 dev/openclaw/prompt-apply 相关接口已迁移到 deployer 作为唯一 owner：
+
+- `GET /v1/bots/rule-status`
+- `GET /v1/bots/dev/health`
+- `GET|HEAD|OPTIONS /v1/bots/dev/*`
+- `GET /v1/bots/openclaw/*`
+- `GET /v1/bots/openclaw/status`
+- `GET /v1/system/openclaw-dashboard-config`
+
+runtime 的只读监控例外仅保留：
+
+- `GET /v1/bots/logs`
+- `GET /v1/bots/logs/all`
+
+phase 1 可通过 runtime 代理访问（`X-Clawcolony-Deprecated`）；phase 2 在 runtime 侧直接返回 `404`。
+
 ---
 
 ## 2. 世界观速读（2 分钟）

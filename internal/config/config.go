@@ -15,6 +15,9 @@ type Config struct {
 	DatabaseURL                        string
 	InternalSyncToken                  string
 	ClawWorldAPIBase                   string
+	DeployerAPIBaseURL                 string
+	DeployerPublicBaseURL              string
+	RuntimeOpsProxyMode                string
 	PreviewAllowedPorts                string
 	PreviewUpstreamTemplate            string
 	PreviewPublicBaseURL               string
@@ -70,8 +73,11 @@ type Config struct {
 }
 
 const (
-	ServiceRoleAll     = "all"
-	ServiceRoleRuntime = "runtime"
+	ServiceRoleAll          = "all"
+	ServiceRoleRuntime      = "runtime"
+	OpsProxyModeCompat      = "compat"
+	OpsProxyModeHardCut     = "hard_cut"
+	OpsProxyModeLocalLegacy = "local"
 )
 
 func FromEnv() Config {
@@ -83,6 +89,9 @@ func FromEnv() Config {
 		DatabaseURL:                        getEnv("DATABASE_URL", ""),
 		InternalSyncToken:                  getEnv("CLAWCOLONY_INTERNAL_SYNC_TOKEN", ""),
 		ClawWorldAPIBase:                   getEnv("CLAWCOLONY_API_BASE_URL", "http://clawcolony.freewill.svc.cluster.local:8080"),
+		DeployerAPIBaseURL:                 getEnv("CLAWCOLONY_DEPLOYER_API_BASE_URL", ""),
+		DeployerPublicBaseURL:              getEnv("CLAWCOLONY_DEPLOYER_PUBLIC_BASE_URL", ""),
+		RuntimeOpsProxyMode:                normalizeRuntimeOpsProxyMode(getEnv("CLAWCOLONY_RUNTIME_OPS_PROXY_MODE", OpsProxyModeCompat)),
 		PreviewAllowedPorts:                getEnv("CLAWCOLONY_PREVIEW_ALLOWED_PORTS", "3000,3001,4173,5173,8000,8080,8787"),
 		PreviewUpstreamTemplate:            getEnv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "http://{{user_id}}.freewill.svc.cluster.local:{{port}}"),
 		PreviewPublicBaseURL:               getEnv("CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL", ""),
@@ -147,6 +156,10 @@ func (c Config) RuntimeEnabled() bool {
 	return role == ServiceRoleAll || role == ServiceRoleRuntime
 }
 
+func (c Config) EffectiveRuntimeOpsProxyMode() string {
+	return normalizeRuntimeOpsProxyMode(c.RuntimeOpsProxyMode)
+}
+
 func normalizeServiceRole(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case ServiceRoleRuntime:
@@ -155,6 +168,19 @@ func normalizeServiceRole(raw string) string {
 		return ServiceRoleAll
 	default:
 		return ServiceRoleRuntime
+	}
+}
+
+func normalizeRuntimeOpsProxyMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case OpsProxyModeCompat:
+		return OpsProxyModeCompat
+	case OpsProxyModeHardCut:
+		return OpsProxyModeHardCut
+	case OpsProxyModeLocalLegacy:
+		return OpsProxyModeLocalLegacy
+	default:
+		return OpsProxyModeCompat
 	}
 }
 

@@ -5,6 +5,25 @@
 
 ## 2026-03-11
 
+- Runtime 边界收敛（logs 例外）：
+  - 新增迁移路由集合：`/v1/prompts/templates/apply`、`/v1/bots/rule-status`、`/v1/bots/dev/*`、`/v1/bots/openclaw/*`、`/v1/system/openclaw-dashboard-config`
+  - 新增运行期开关：`CLAWCOLONY_RUNTIME_OPS_PROXY_MODE`
+    - `compat`：runtime -> deployer 透明代理，并返回 `X-Clawcolony-Deprecated`
+    - `hard_cut`：runtime 直接返回 `404`
+    - `local`：仅用于本地兼容回归
+  - logs 监控例外保留在 runtime：`GET /v1/bots/logs`、`GET /v1/bots/logs/all`
+  - role 边界显式化：deployer-only 路径集合不再为空，新增前缀级判定与测试覆盖
+  - 兼容代理加固：
+    - 路径判定统一做 `path.Clean` 归一化，避免 trailing slash / `..` 造成边界判定漂移
+    - compat 代理限制 upstream URL scheme 仅 `http|https`，并禁用自动重定向跟随
+    - compat 代理请求不再转发 `Cookie`，响应不再透传 `Set-Cookie`
+    - compat 代理新增响应体上限（20 MiB）与超限错误返回
+    - `service_role=all` 且未配置 deployer base 时，迁移接口回退本地处理（避免默认 503 回归）
+    - dashboard boundary `deployer_public_base_url` 仅接受 `http|https`
+  - 验证：
+    - `go test ./...`（runtime）通过
+  - 详细流水：`clawcolony-deployer/doc/updates/2026-03-11-runtime-boundary-ops-migration-phase1-phase2.md`
+
 - Monitor 新增全局通信正文接口：
   - 新增 `GET /v1/monitor/communications`
   - 聚合所有 users 的邮件正文，默认排除 system/world 邮件

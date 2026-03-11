@@ -199,7 +199,7 @@
               </select>
               <label>镜像(可选)</label>
               <input id="applyImage" placeholder="留空=自动读取当前镜像" style="width:320px" />
-              <button onclick="applyTemplates()">保存后下发</button>
+              <button id="applyBtn" onclick="applyTemplates()">保存后下发</button>
             </div>
             <div class="hint">
               说明：下发会更新目标 USER 的模板配置（AGENTS/IDENTITY/USER/skills 等），由运行时配置加载流程生效。
@@ -221,6 +221,54 @@
       let bots = [];
       let autoRefreshTick = 0;
       let editorDirty = false;
+      let runtimeOpsProxyMode = "compat";
+      let deployerPublicBaseURL = "";
+
+      function isHardCutMode(){
+        return runtimeOpsProxyMode === "hard_cut";
+      }
+
+      function normalizeBaseURL(raw){
+        const v = String(raw || "").trim();
+        if (!v) return "";
+        try {
+          const parsed = new URL(v, window.location.origin);
+          const proto = String(parsed.protocol || "").toLowerCase();
+          if (proto !== "http:" && proto !== "https:") return "";
+          return (parsed.origin + parsed.pathname).replace(/\/+$/, "");
+        } catch (_) {
+          return "";
+        }
+      }
+
+      function toDeployerURL(path){
+        const rel = String(path || "").trim();
+        if (!rel.startsWith("/")) return rel;
+        if (!deployerPublicBaseURL) return rel;
+        return deployerPublicBaseURL + rel;
+      }
+
+      async function loadBoundaryMeta(){
+        try {
+          const meta = await j("/v1/meta");
+          runtimeOpsProxyMode = String(meta.runtime_ops_proxy_mode || "compat").trim() || "compat";
+          deployerPublicBaseURL = normalizeBaseURL(meta.deployer_public_base_url || "");
+        } catch (_) {
+          runtimeOpsProxyMode = "compat";
+          deployerPublicBaseURL = "";
+        }
+      }
+
+      function syncBoundaryUI(){
+        const applyBtn = document.getElementById("applyBtn");
+        if (!applyBtn) return;
+        if (isHardCutMode()) {
+          applyBtn.textContent = "保存后前往 Deployer 下发";
+        } else {
+          applyBtn.textContent = "保存后下发";
+        }
+      }
+
       function distinctNonEmpty(parts){
         const out = [];
         for (const part of (parts || [])) {
@@ -330,6 +378,15 @@
         const applyUser = document.getElementById("applyUser").value.trim();
         const applyImage = document.getElementById("applyImage").value.trim();
         await saveTemplate();
+        if (isHardCutMode()) {
+          const endpoint = toDeployerURL("/v1/prompts/templates/apply");
+          const dashboardURL = toDeployerURL("/dashboard/prompts");
+          setStatus(`runtime 已切到 hard_cut，apply 已迁移到 deployer。\n请改用: ${endpoint}\n可打开: ${dashboardURL}`, "warn");
+          if (dashboardURL.startsWith("http://") || dashboardURL.startsWith("https://")) {
+            window.open(dashboardURL, "_blank", "noopener");
+          }
+          return;
+        }
         const data = await j("/v1/prompts/templates/apply", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
@@ -347,7 +404,10 @@
       }
 
       document.getElementById("content").addEventListener("input", () => { editorDirty = true; });
-      loadUsers().then(() => {
+      loadBoundaryMeta().then(() => {
+        syncBoundaryUI();
+        return loadUsers();
+      }).then(() => {
         return refreshTemplates();
       }).catch(err => setStatus("加载失败: " + String(err.message || err), "bad"));
       setInterval(() => {

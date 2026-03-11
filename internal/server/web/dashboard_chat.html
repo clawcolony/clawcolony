@@ -230,6 +230,43 @@
       const OPENCLAW_TOKEN_CACHE_LIMIT = 200;
       let statusPoll = null;
       let chatStatePoll = null;
+      let runtimeOpsProxyMode = "compat";
+      let deployerPublicBaseURL = "";
+
+      function isHardCutMode(){
+        return runtimeOpsProxyMode === "hard_cut";
+      }
+
+      function normalizeBaseURL(raw){
+        const v = String(raw || "").trim();
+        if (!v) return "";
+        try {
+          const parsed = new URL(v, window.location.origin);
+          const proto = String(parsed.protocol || "").toLowerCase();
+          if (proto !== "http:" && proto !== "https:") return "";
+          return (parsed.origin + parsed.pathname).replace(/\/+$/, "");
+        } catch (_) {
+          return "";
+        }
+      }
+
+      function toDeployerURL(path){
+        const rel = String(path || "").trim();
+        if (!rel.startsWith("/")) return rel;
+        if (!deployerPublicBaseURL) return rel;
+        return deployerPublicBaseURL + rel;
+      }
+
+      async function loadBoundaryMeta(){
+        try {
+          const meta = await j("/v1/meta");
+          runtimeOpsProxyMode = String(meta.runtime_ops_proxy_mode || "compat").trim() || "compat";
+          deployerPublicBaseURL = normalizeBaseURL(meta.deployer_public_base_url || "");
+        } catch (_) {
+          runtimeOpsProxyMode = "compat";
+          deployerPublicBaseURL = "";
+        }
+      }
 
       function runeCount(input){
         return Array.from(String(input || "")).length;
@@ -396,7 +433,8 @@
 
       function openclawHref(userId){
         const uid = String(userId || "").trim();
-        const base = `/v1/bots/openclaw/${encodeURIComponent(uid)}/`;
+        const relBase = `/v1/bots/openclaw/${encodeURIComponent(uid)}/`;
+        const base = isHardCutMode() ? toDeployerURL(relBase) : relBase;
         const token = openclawTokenByUser.get(uid) || "";
         if (!token) return base;
         return `${base}#token=${encodeURIComponent(token)}`;
@@ -478,6 +516,11 @@
       async function refreshOpenClawStatus(){
         if (!selected) {
           setConnUi("down", "OpenClaw: not selected", "");
+          return;
+        }
+        if (isHardCutMode()) {
+          const tip = deployerPublicBaseURL ? `moved to deployer: ${deployerPublicBaseURL}` : "moved to deployer";
+          setConnUi("warn", "OpenClaw: moved", tip);
           return;
         }
         try {
@@ -628,6 +671,10 @@
       async function loadOpenClawDashboardConfig(userId){
         const uid = String(userId || "").trim();
         if (!uid) return;
+        if (isHardCutMode()) {
+          setOpenclawToken(uid, "");
+          return;
+        }
         try {
           const data = await j(`/v1/system/openclaw-dashboard-config?user_id=${encodeURIComponent(uid)}`);
           setOpenclawToken(uid, String(data.token || ""));
@@ -665,7 +712,9 @@
           chatStatePoll = null;
         }
       });
-      refreshAll().then(async () => {
+      (async () => {
+        await loadBoundaryMeta();
+        await refreshAll();
         if (selected) {
           await loadOpenClawDashboardConfig(selected);
           renderBots();
@@ -676,7 +725,7 @@
           await refreshOpenClawStatus();
           await refreshChatState();
         }
-      });
+      })();
     </script>
   </body>
 </html>
