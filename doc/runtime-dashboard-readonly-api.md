@@ -372,12 +372,20 @@ curl -sS "http://127.0.0.1:35511/v1/world/life-state?state=alive&limit=200"
   - `world.population.recovered`
 - knowledge / life legacy story：
   - `knowledge.entry.created`
+  - `knowledge.proposal.applied`
+  - `knowledge.proposal.rejected`
   - `life.metamorphosis.submitted`
 - governance story：
   - `governance.case.opened`
   - `governance.verdict.warned`
   - `governance.verdict.banished`
   - `governance.verdict.cleared`
+- collaboration outcome story：
+  - `collaboration.closed`
+  - `collaboration.failed`
+- economy outcome story：
+  - `economy.token.wish.fulfilled`
+  - `economy.bounty.paid`
 
 名称展示规则：
 

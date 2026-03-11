@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strconv"
 	"strings"
@@ -547,6 +548,65 @@ func buildGovernanceChronicleVerdictItem(cs disciplineCaseItem, report governanc
 	return item, true
 }
 
+func buildKnowledgeChronicleItems(sources []knowledgeProposalEventSource, actors map[string]colonyChronicleActor) []colonyChronicleItem {
+	apiActors := chronicleAPIActorIndex(actors)
+	out := make([]colonyChronicleItem, 0, len(sources))
+	for _, src := range sources {
+		participants := knowledgeParticipantUserIDs(src)
+		if item, ok := buildKnowledgeProposalAppliedEvent(src, participants, apiActors); ok {
+			out = append(out, buildChronicleItemFromAPIEvent(item, chronicleSyntheticID(-3000000, src.Proposal.ID)))
+			continue
+		}
+		if item, ok := buildKnowledgeProposalResultEvent(src, participants, apiActors); ok {
+			out = append(out, buildChronicleItemFromAPIEvent(item, chronicleSyntheticID(-3100000, src.Proposal.ID)))
+		}
+	}
+	sortColonyChronicleItems(out)
+	return out
+}
+
+func buildCollaborationChronicleItems(sources []collaborationEventSource, actors map[string]colonyChronicleActor) []colonyChronicleItem {
+	apiActors := chronicleAPIActorIndex(actors)
+	out := make([]colonyChronicleItem, 0, len(sources))
+	for _, src := range sources {
+		selectedUserIDs := collabSelectedUserIDs(src.Participants)
+		events := make([]store.CollabEvent, len(src.Events))
+		copy(events, src.Events)
+		sort.Slice(events, func(i, j int) bool {
+			if events[i].CreatedAt.Equal(events[j].CreatedAt) {
+				return events[i].ID < events[j].ID
+			}
+			return events[i].CreatedAt.Before(events[j].CreatedAt)
+		})
+		for _, event := range events {
+			if !strings.EqualFold(strings.TrimSpace(event.EventType), "collab.closed") {
+				continue
+			}
+			item := buildCollaborationClosedEvent(src, event, selectedUserIDs, apiActors)
+			out = append(out, buildChronicleItemFromAPIEvent(item, chronicleSyntheticID(-4000000, event.ID)))
+		}
+	}
+	sortColonyChronicleItems(out)
+	return out
+}
+
+func buildEconomyChronicleItems(source economyEventSource, actors map[string]colonyChronicleActor) []colonyChronicleItem {
+	apiActors := chronicleAPIActorIndex(actors)
+	out := make([]colonyChronicleItem, 0, len(source.Wishes)+len(source.Bounties))
+	for _, item := range source.Wishes {
+		if event, ok := buildEconomyWishFulfilledEvent(item, apiActors); ok {
+			out = append(out, buildChronicleItemFromAPIEvent(event, chronicleSyntheticStringID(-5000000, strings.TrimSpace(item.WishID))))
+		}
+	}
+	for _, item := range source.Bounties {
+		if event, ok := buildEconomyBountyPaidEvent(item, apiActors); ok {
+			out = append(out, buildChronicleItemFromAPIEvent(event, chronicleSyntheticID(-5100000, item.BountyID)))
+		}
+	}
+	sortColonyChronicleItems(out)
+	return out
+}
+
 func chronicleActorsForUsers(idx map[string]colonyChronicleActor, userIDs ...string) []colonyChronicleActor {
 	out := make([]colonyChronicleActor, 0, len(userIDs))
 	seen := make(map[string]struct{}, len(userIDs))
@@ -569,6 +629,71 @@ func chronicleSyntheticID(base int64, raw int64) int64 {
 		raw = -raw
 	}
 	return base - raw
+}
+
+func chronicleSyntheticStringID(base int64, raw string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(strings.TrimSpace(raw)))
+	sum := int64(h.Sum64() & 0x7fffffffffffffff)
+	return base - sum
+}
+
+func chronicleAPIActorIndex(idx map[string]colonyChronicleActor) map[string]apiEventActor {
+	out := make(map[string]apiEventActor, len(idx)+1)
+	for userID, actor := range idx {
+		out[userID] = apiEventActor{
+			UserID:      actor.UserID,
+			Username:    actor.Username,
+			Nickname:    actor.Nickname,
+			DisplayName: actor.DisplayName,
+		}
+	}
+	out[clawWorldSystemID] = apiEventActor{
+		UserID:      clawWorldSystemID,
+		Username:    "Clawcolony",
+		DisplayName: "Clawcolony",
+	}
+	return out
+}
+
+func buildChronicleItemFromAPIEvent(item apiEventItem, id int64) colonyChronicleItem {
+	return colonyChronicleItem{
+		ID:           id,
+		TickID:       item.TickID,
+		Source:       nonEmptyOr(strings.TrimSpace(item.SourceModule), strings.TrimSpace(item.Kind)),
+		Date:         strings.TrimSpace(item.OccurredAt),
+		Events:       nonEmptyOr(strings.TrimSpace(item.SummaryZH), nonEmptyOr(strings.TrimSpace(item.Summary), strings.TrimSpace(item.TitleZH))),
+		Kind:         strings.TrimSpace(item.Kind),
+		Category:     strings.TrimSpace(item.Category),
+		Title:        strings.TrimSpace(item.Title),
+		Summary:      strings.TrimSpace(item.Summary),
+		TitleZH:      strings.TrimSpace(item.TitleZH),
+		SummaryZH:    strings.TrimSpace(item.SummaryZH),
+		TitleEN:      strings.TrimSpace(item.TitleEN),
+		SummaryEN:    strings.TrimSpace(item.SummaryEN),
+		Actors:       chronicleActorsFromAPI(item.Actors),
+		Targets:      chronicleActorsFromAPI(item.Targets),
+		ObjectType:   strings.TrimSpace(item.ObjectType),
+		ObjectID:     strings.TrimSpace(item.ObjectID),
+		ImpactLevel:  strings.TrimSpace(item.ImpactLevel),
+		SourceModule: strings.TrimSpace(item.SourceModule),
+		SourceRef:    strings.TrimSpace(item.SourceRef),
+		Visibility:   strings.TrimSpace(item.Visibility),
+		sortTime:     item.sortTime.UTC(),
+	}
+}
+
+func chronicleActorsFromAPI(items []apiEventActor) []colonyChronicleActor {
+	out := make([]colonyChronicleActor, 0, len(items))
+	for _, item := range items {
+		out = append(out, colonyChronicleActor{
+			UserID:      item.UserID,
+			Username:    item.Username,
+			Nickname:    item.Nickname,
+			DisplayName: item.DisplayName,
+		})
+	}
+	return out
 }
 
 func parseLegacyLibraryPublishSummary(summary string) (title string, userID string, ok bool) {

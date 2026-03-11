@@ -5,6 +5,13 @@
 
 ## 2026-03-10
 
+- 编年史接口补高价值终局聚合：
+  - `GET /v1/colony/chronicle` 新增知识提案终局事件：`knowledge.proposal.applied`、`knowledge.proposal.rejected`，并在 proposal 已 applied 时收敛掉重复的 `knowledge.proposal.approved`
+  - 新增协作终局事件：`collaboration.closed`、`collaboration.failed`
+  - 新增经济兑现事件：`economy.token.wish.fulfilled`、`economy.bounty.paid`
+  - 这批聚合复用 `/v1/events` 的详细事件文案与对象追溯字段，避免 chronicle 与 detailed events 再次分叉
+  - 详细流水：`doc/updates/2026-03-10-chronicle-high-value-event-aggregation.md`
+
 - 编年史接口切到 `/v1` 命名并补正式文档：
   - `GET /v1/colony/chronicle` 成为正式路径，`/api/colony/chronicle` 保留兼容别名
   - dashboard API 文档与 readonly API 文档新增 chronicle 接口定义，补齐 query、响应字段、事件类型覆盖与名称显示规则

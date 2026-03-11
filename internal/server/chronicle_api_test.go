@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -337,5 +338,72 @@ func TestAPIColonyChronicleStillWorksWhenActorLookupFails(t *testing.T) {
 	item := resp.Items[0]
 	if len(item.Actors) != 1 || item.Actors[0].DisplayName != "lobster-zed" {
 		t.Fatalf("chronicle should fall back to user_id display_name when actor lookup fails: %+v", item)
+	}
+}
+
+func TestAPIColonyChronicleIncludesHighValueDetailedEventAggregates(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+
+	knowledge := seedKnowledgeEventsFixture(t, srv, ctx)
+	collab := seedCollaborationEventsFixture(t, srv, ctx)
+	economy := seedEconomyIdentityEventsFixture(t, srv, ctx)
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=200", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []colonyChronicleItem `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode chronicle response: %v", err)
+	}
+
+	find := func(kind, objectType, objectID string) *colonyChronicleItem {
+		t.Helper()
+		for i := range resp.Items {
+			item := &resp.Items[i]
+			if item.Kind == kind && item.ObjectType == objectType && item.ObjectID == objectID {
+				return item
+			}
+		}
+		return nil
+	}
+
+	if applied := find("knowledge.proposal.applied", "kb_proposal", strconv.FormatInt(knowledge.approvedProposalID, 10)); applied == nil {
+		t.Fatalf("expected applied knowledge proposal chronicle event, body=%s", w.Body.String())
+	} else if !strings.Contains(applied.SummaryZH, "写入知识库") || applied.SourceModule != "kb.apply" {
+		t.Fatalf("knowledge chronicle event should preserve applied story fields: %+v", *applied)
+	}
+	if approved := find("knowledge.proposal.approved", "kb_proposal", strconv.FormatInt(knowledge.approvedProposalID, 10)); approved != nil {
+		t.Fatalf("applied proposal should collapse to final applied chronicle event, got=%+v", *approved)
+	}
+	if rejected := find("knowledge.proposal.rejected", "kb_proposal", strconv.FormatInt(knowledge.rejectedProposalID, 10)); rejected == nil {
+		t.Fatalf("expected rejected knowledge proposal chronicle event, body=%s", w.Body.String())
+	} else if rejected.SourceModule != "kb.result" {
+		t.Fatalf("rejected knowledge chronicle event should keep source metadata: %+v", *rejected)
+	}
+
+	if success := find("collaboration.closed", "collab_session", collab.successCollabID); success == nil {
+		t.Fatalf("expected successful collaboration chronicle event, body=%s", w.Body.String())
+	} else if success.ImpactLevel != "notice" || !strings.Contains(success.TitleZH, "已完成") {
+		t.Fatalf("successful collaboration chronicle event should stay user-readable: %+v", *success)
+	}
+	if failed := find("collaboration.failed", "collab_session", collab.failedCollabID); failed == nil {
+		t.Fatalf("expected failed collaboration chronicle event, body=%s", w.Body.String())
+	} else if failed.ImpactLevel != "warning" || !strings.Contains(failed.SummaryZH, "失败") {
+		t.Fatalf("failed collaboration chronicle event should explain failure: %+v", *failed)
+	}
+
+	if wish := find("economy.token.wish.fulfilled", "token_wish", economy.wishID); wish == nil {
+		t.Fatalf("expected fulfilled wish chronicle event, body=%s", w.Body.String())
+	} else if len(wish.Targets) != 1 || wish.Targets[0].UserID != economy.wishUserID {
+		t.Fatalf("fulfilled wish chronicle event should target the wish owner: %+v", *wish)
+	}
+	if bounty := find("economy.bounty.paid", "bounty", strconv.FormatInt(economy.paidBountyID, 10)); bounty == nil {
+		t.Fatalf("expected paid bounty chronicle event, body=%s", w.Body.String())
+	} else if bounty.SourceModule != "bounty.verify" || len(bounty.Targets) == 0 {
+		t.Fatalf("paid bounty chronicle event should preserve payout metadata: %+v", *bounty)
 	}
 }

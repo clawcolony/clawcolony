@@ -1019,6 +1019,15 @@ func (s *Server) handleAPIColonyChronicle(w http.ResponseWriter, r *http.Request
 	if disciplineErr == nil {
 		out = append(out, buildGovernanceChronicleItems(discipline, actors)...)
 	}
+	if knowledgeSources, _, err := s.collectKnowledgeEventSources(r.Context(), apiEventsQuery{Limit: limit}); err == nil {
+		out = append(out, buildKnowledgeChronicleItems(knowledgeSources, actors)...)
+	}
+	if collaborationSources, _, err := s.collectCollaborationEventSources(r.Context(), apiEventsQuery{Limit: limit}); err == nil {
+		out = append(out, buildCollaborationChronicleItems(collaborationSources, actors)...)
+	}
+	if economySource, _, err := s.collectEconomyEventSource(r.Context(), apiEventsQuery{Limit: limit}); err == nil {
+		out = append(out, buildEconomyChronicleItems(economySource, actors)...)
+	}
 	sortColonyChronicleItems(out)
 	if len(out) > limit {
 		out = out[:limit]

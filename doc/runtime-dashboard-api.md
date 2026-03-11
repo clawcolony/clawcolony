@@ -608,8 +608,11 @@
 - 当前 story source 覆盖：
 - `world.freeze.entered`, `world.freeze.lifted`, `world.population.low`, `world.population.recovered`
 - `knowledge.entry.created`
+- `knowledge.proposal.applied`, `knowledge.proposal.rejected`
 - `life.metamorphosis.submitted`
 - `governance.case.opened`, `governance.verdict.warned|banished|cleared`
+- `collaboration.closed`, `collaboration.failed`
+- `economy.token.wish.fulfilled`, `economy.bounty.paid`
 - 名称显示优先级：
 - `nickname -> username -> user_id`
 - 错误码： `405`, `500`
