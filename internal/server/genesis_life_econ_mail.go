@@ -443,6 +443,10 @@ func (s *Server) handleTokenTransfer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "from_user_id and to_user_id are required")
 		return
 	}
+	if isSystemTokenUserID(req.FromUserID) || isSystemTokenUserID(req.ToUserID) {
+		writeError(w, http.StatusBadRequest, "system accounts cannot participate in transfer")
+		return
+	}
 	if req.FromUserID == req.ToUserID {
 		writeError(w, http.StatusBadRequest, "from_user_id and to_user_id must differ")
 		return
@@ -498,6 +502,10 @@ func (s *Server) handleTokenTip(w http.ResponseWriter, r *http.Request) {
 	}
 	if transfer.FromUserID == "" || transfer.ToUserID == "" {
 		writeError(w, http.StatusBadRequest, "from_user_id and to_user_id are required")
+		return
+	}
+	if isSystemTokenUserID(transfer.FromUserID) || isSystemTokenUserID(transfer.ToUserID) {
+		writeError(w, http.StatusBadRequest, "system accounts cannot participate in tip")
 		return
 	}
 	if transfer.Amount <= 0 {
@@ -562,6 +570,10 @@ func (s *Server) handleTokenWishCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Title == "" {
 		req.Title = "token wish"
+	}
+	if isSystemTokenUserID(req.UserID) {
+		writeError(w, http.StatusBadRequest, "system accounts cannot create wishes")
+		return
 	}
 	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
@@ -669,7 +681,11 @@ func (s *Server) handleTokenWishFulfill(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, "granted_amount must be > 0")
 			return
 		}
-		if _, err := s.store.Recharge(r.Context(), state.Items[i].UserID, amount); err != nil {
+		if _, _, err := s.transferFromTreasury(r.Context(), state.Items[i].UserID, amount); err != nil {
+			if errors.Is(err, store.ErrInsufficientBalance) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -1012,6 +1028,33 @@ func (s *Server) handleBountyList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (s *Server) handleBountyGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	bountyID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("bounty_id")), 10, 64)
+	if err != nil || bountyID <= 0 {
+		writeError(w, http.StatusBadRequest, "bounty_id is required")
+		return
+	}
+	genesisStateMu.Lock()
+	defer genesisStateMu.Unlock()
+	state, err := s.getBountyState(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, it := range state.Items {
+		if it.BountyID != bountyID {
+			continue
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"item": it})
+		return
+	}
+	writeError(w, http.StatusNotFound, "bounty not found")
+}
+
 func (s *Server) handleBountyClaim(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1081,9 +1124,9 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	genesisStateMu.Lock()
-	defer genesisStateMu.Unlock()
 	state, err := s.getBountyState(r.Context())
 	if err != nil {
+		genesisStateMu.Unlock()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1092,6 +1135,7 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if state.Items[i].Status != "claimed" && state.Items[i].Status != "open" {
+			genesisStateMu.Unlock()
 			writeError(w, http.StatusConflict, "bounty is not verifiable")
 			return
 		}
@@ -1105,10 +1149,12 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 				receiver = req.CandidateUserID
 			}
 			if receiver == "" {
+				genesisStateMu.Unlock()
 				writeError(w, http.StatusBadRequest, "candidate_user_id is required when no claimed_by")
 				return
 			}
 			if _, err := s.store.Recharge(r.Context(), receiver, state.Items[i].EscrowAmount); err != nil {
+				genesisStateMu.Unlock()
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
@@ -1124,12 +1170,26 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 			state.Items[i].ClaimedAt = nil
 		}
 		if err := s.saveBountyState(r.Context(), state); err != nil {
+			genesisStateMu.Unlock()
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusAccepted, map[string]any{"item": state.Items[i]})
+		item := state.Items[i]
+		genesisStateMu.Unlock()
+		resp := map[string]any{"item": item}
+		if req.Approved {
+			rewards, rewardErr := s.rewardBountyPaid(r.Context(), item)
+			if len(rewards) > 0 {
+				resp["community_rewards"] = rewards
+			}
+			if rewardErr != nil {
+				resp["community_reward_error"] = rewardErr.Error()
+			}
+		}
+		writeJSON(w, http.StatusAccepted, resp)
 		return
 	}
+	genesisStateMu.Unlock()
 	writeError(w, http.StatusNotFound, "bounty not found")
 }
 
@@ -1353,250 +1413,6 @@ func (s *Server) handleGenesisBootstrapSeal(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": st})
-}
-
-func (s *Server) handleAPIMailSend(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req struct {
-		From    string `json:"from"`
-		To      string `json:"to"`
-		Subject string `json:"subject"`
-		Body    string `json:"body"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	wreq := mailSendRequest{
-		FromUserID: strings.TrimSpace(req.From),
-		ToUserIDs:  []string{strings.TrimSpace(req.To)},
-		Subject:    strings.TrimSpace(req.Subject),
-		Body:       strings.TrimSpace(req.Body),
-	}
-	b, _ := json.Marshal(wreq)
-	r2 := r.Clone(r.Context())
-	r2.Body = ioNopCloser{strings.NewReader(string(b))}
-	s.handleMailSend(w, r2)
-}
-
-type ioNopCloser struct{ *strings.Reader }
-
-func (n ioNopCloser) Close() error { return nil }
-
-func (s *Server) handleAPIMailInbox(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	user := strings.TrimSpace(r.URL.Query().Get("user_id"))
-	if user == "" {
-		user = strings.TrimSpace(r.URL.Query().Get("owner"))
-	}
-	q := r.URL.Query()
-	q.Set("user_id", user)
-	r2 := r.Clone(r.Context())
-	r2.URL.RawQuery = q.Encode()
-	s.handleMailInbox(w, r2)
-}
-
-func (s *Server) handleAPITokenBalance(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	user := strings.TrimSpace(r.URL.Query().Get("user_id"))
-	if user == "" {
-		user = strings.TrimSpace(r.URL.Query().Get("owner"))
-	}
-	if user == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
-		return
-	}
-	accounts, err := s.store.ListTokenAccounts(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	var item *store.TokenAccount
-	for i := range accounts {
-		if accounts[i].BotID == user {
-			item = &accounts[i]
-			break
-		}
-	}
-	if item == nil {
-		writeError(w, http.StatusNotFound, "user token account not found")
-		return
-	}
-	ledger, err := s.store.ListTokenLedger(r.Context(), user, 2000)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	cutoff := time.Now().UTC().Add(-24 * time.Hour)
-	var incomeLastDay int64
-	var costLastDay int64
-	for _, it := range ledger {
-		if it.CreatedAt.Before(cutoff) {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(it.OpType)) {
-		case "recharge":
-			incomeLastDay += it.Amount
-		case "consume":
-			costLastDay += it.Amount
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"currency":        "token",
-		"user_id":         user,
-		"balance":         item.Balance,
-		"income_last_day": incomeLastDay,
-		"cost_last_day":   costLastDay,
-		"item":            item,
-	})
-}
-
-func (s *Server) handleAPITokenTransfer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req struct {
-		FromUserID string `json:"from_user_id"`
-		From       string `json:"from"`
-		ToUserID   string `json:"to_user_id"`
-		To         string `json:"to"`
-		Amount     int64  `json:"amount"`
-		Memo       string `json:"memo"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	fromUserID := strings.TrimSpace(req.FromUserID)
-	if fromUserID == "" {
-		fromUserID = strings.TrimSpace(req.From)
-	}
-	if fromUserID == "" {
-		fromUserID = queryUserID(r)
-	}
-	toUserID := strings.TrimSpace(req.ToUserID)
-	if toUserID == "" {
-		toUserID = strings.TrimSpace(req.To)
-	}
-	if fromUserID == "" || toUserID == "" || req.Amount <= 0 {
-		writeError(w, http.StatusBadRequest, "from/to/amount are required")
-		return
-	}
-	s.proxyJSONToHandler(w, r, s.handleTokenTransfer, tokenTransferRequest{
-		FromUserID: fromUserID,
-		ToUserID:   toUserID,
-		Amount:     req.Amount,
-		Memo:       strings.TrimSpace(req.Memo),
-	})
-}
-
-func (s *Server) handleAPILifeHibernate(w http.ResponseWriter, r *http.Request) {
-	s.handleLifeHibernate(w, r)
-}
-
-func (s *Server) handleAPILifeWake(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req struct {
-		UserID      string `json:"user_id"`
-		LobsterID   string `json:"lobster_id"`
-		WakerUserID string `json:"waker_user_id"`
-		Reason      string `json:"reason"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	userID := strings.TrimSpace(req.UserID)
-	if userID == "" {
-		userID = strings.TrimSpace(req.LobsterID)
-	}
-	waker := strings.TrimSpace(req.WakerUserID)
-	if waker == "" {
-		waker = queryUserID(r)
-	}
-	if userID == "" {
-		writeError(w, http.StatusBadRequest, "user_id/lobster_id is required")
-		return
-	}
-	s.proxyJSONToHandler(w, r, s.handleLifeWake, lifeWakeRequest{
-		UserID:      userID,
-		WakerUserID: waker,
-		Reason:      strings.TrimSpace(req.Reason),
-	})
-}
-
-func (s *Server) handleAPILifeSetWill(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req struct {
-		UserID        string                `json:"user_id"`
-		Beneficiaries []lifeWillBeneficiary `json:"beneficiaries"`
-		TokenSplit    map[string]int64      `json:"token_split"`
-		ToolHeirs     []string              `json:"tool_heirs"`
-		Note          string                `json:"note"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	userID := strings.TrimSpace(req.UserID)
-	if userID == "" {
-		userID = queryUserID(r)
-	}
-	beneficiaries := req.Beneficiaries
-	if len(beneficiaries) == 0 && len(req.TokenSplit) > 0 {
-		keys := make([]string, 0, len(req.TokenSplit))
-		for k := range req.TokenSplit {
-			keys = append(keys, strings.TrimSpace(k))
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			if k == "" {
-				continue
-			}
-			beneficiaries = append(beneficiaries, lifeWillBeneficiary{
-				UserID: k,
-				Ratio:  req.TokenSplit[k],
-			})
-		}
-	}
-	if userID == "" || len(beneficiaries) == 0 {
-		writeError(w, http.StatusBadRequest, "user_id and beneficiaries/token_split are required")
-		return
-	}
-	s.proxyJSONToHandler(w, r, s.handleLifeSetWill, lifeSetWillRequest{
-		UserID:        userID,
-		Note:          strings.TrimSpace(req.Note),
-		Beneficiaries: beneficiaries,
-		ToolHeirs:     req.ToolHeirs,
-	})
-}
-
-func (s *Server) handleAPIBountyPost(w http.ResponseWriter, r *http.Request) {
-	s.handleBountyPost(w, r)
-}
-
-func (s *Server) handleAPIBountyList(w http.ResponseWriter, r *http.Request) {
-	s.handleBountyList(w, r)
-}
-
-func (s *Server) handleAPIBountyVerify(w http.ResponseWriter, r *http.Request) {
-	s.handleBountyVerify(w, r)
 }
 
 func (s *Server) runGenesisBootstrapInit(ctx context.Context) {

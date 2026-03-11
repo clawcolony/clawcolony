@@ -322,6 +322,15 @@ func (s *InMemoryStore) GetWorldTick(_ context.Context, tickID int64) (WorldTick
 	return WorldTickRecord{}, fmt.Errorf("%w: %d", ErrWorldTickNotFound, tickID)
 }
 
+func (s *InMemoryStore) GetFirstWorldTick(_ context.Context) (WorldTickRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.worldTicks) == 0 {
+		return WorldTickRecord{}, false, nil
+	}
+	return s.worldTicks[0], true, nil
+}
+
 func (s *InMemoryStore) AppendWorldTickStep(_ context.Context, item WorldTickStepRecord) (WorldTickStepRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

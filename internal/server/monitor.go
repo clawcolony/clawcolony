@@ -809,13 +809,13 @@ func monitorChatTaskToTimeline(userID string, task chatTaskRecord, source string
 
 func monitorCategoryActionForPath(path string) (string, string) {
 	switch strings.TrimSpace(path) {
-	case "/v1/tools/invoke", "/api/tools/invoke":
+	case "/v1/tools/invoke":
 		return "tool", "tool.invoke.request"
 	case "/v1/chat/send":
 		return "chat", "chat.send.request"
 	case "/v1/mail/send":
 		return "mail", "mail.send.request"
-	case "/v1/mail/send-list", "/api/mail/send-list":
+	case "/v1/mail/send-list":
 		return "mail", "mail.send_list.request"
 	default:
 		return "", ""

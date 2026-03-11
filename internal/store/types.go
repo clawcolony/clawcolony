@@ -496,6 +496,7 @@ type Store interface {
 	AppendWorldTick(ctx context.Context, item WorldTickRecord) (WorldTickRecord, error)
 	GetWorldTick(ctx context.Context, tickID int64) (WorldTickRecord, error)
 	ListWorldTicks(ctx context.Context, limit int) ([]WorldTickRecord, error)
+	GetFirstWorldTick(ctx context.Context) (WorldTickRecord, bool, error)
 	AppendWorldTickStep(ctx context.Context, item WorldTickStepRecord) (WorldTickStepRecord, error)
 	ListWorldTickSteps(ctx context.Context, tickID int64, limit int) ([]WorldTickStepRecord, error)
 	UpsertUserLifeState(ctx context.Context, item UserLifeState) (UserLifeState, error)

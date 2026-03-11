@@ -24,19 +24,46 @@ import (
 
 var seedCounter int64
 
-func newTestServer() *Server {
+type leaderboardTestStore struct {
+	store.Store
+	bots     []store.Bot
+	accounts []store.TokenAccount
+}
+
+func (s *leaderboardTestStore) ListBots(_ context.Context) ([]store.Bot, error) {
+	if s.bots == nil {
+		return s.Store.ListBots(context.Background())
+	}
+	out := make([]store.Bot, len(s.bots))
+	copy(out, s.bots)
+	return out, nil
+}
+
+func (s *leaderboardTestStore) ListTokenAccounts(_ context.Context) ([]store.TokenAccount, error) {
+	if s.accounts == nil {
+		return s.Store.ListTokenAccounts(context.Background())
+	}
+	out := make([]store.TokenAccount, len(s.accounts))
+	copy(out, s.accounts)
+	return out, nil
+}
+
+func newTestServerWithStore(st store.Store) *Server {
 	cfg := config.Config{
 		ListenAddr:         ":0",
 		ClawWorldNamespace: "clawcolony",
 		BotNamespace:       "freewill",
 		DatabaseURL:        "",
 	}
-	st := store.NewInMemory()
 	bots := bot.NewManager(st, bot.NewNoopProvisioner(), "http://clawcolony.freewill.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
 	s := New(cfg, st, bots)
 	s.kubeClient = nil
 	attachRegisterShim(s)
 	return s
+}
+
+func newTestServer() *Server {
+	return newTestServerWithStore(store.NewInMemory())
 }
 
 func attachRegisterShim(s *Server) {
@@ -942,6 +969,387 @@ func TestTokenAccountsRequiresUserID(t *testing.T) {
 	}
 }
 
+func TestTokenLeaderboardExcludesAdminAndSortsByBalance(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	for _, input := range []store.BotUpsertInput{
+		{BotID: "user-alpha", Name: "Alpha", Provider: "openclaw", Status: "running", Initialized: true},
+		{BotID: "user-bravo", Name: "Bravo", Provider: "openclaw", Status: "running", Initialized: true},
+		{BotID: "user-charlie", Name: "Charlie", Provider: "openclaw", Status: "running", Initialized: false},
+		{BotID: clawWorldSystemID, Name: "Clawcolony", Provider: "system", Status: "running", Initialized: true},
+	} {
+		if _, err := srv.store.UpsertBot(ctx, input); err != nil {
+			t.Fatalf("upsert bot %s: %v", input.BotID, err)
+		}
+	}
+	if _, err := srv.store.Recharge(ctx, "user-alpha", 120); err != nil {
+		t.Fatalf("recharge alpha: %v", err)
+	}
+	if _, err := srv.store.Recharge(ctx, "user-bravo", 250); err != nil {
+		t.Fatalf("recharge bravo: %v", err)
+	}
+	if _, err := srv.store.Recharge(ctx, "user-charlie", 180); err != nil {
+		t.Fatalf("recharge charlie: %v", err)
+	}
+	if _, err := srv.store.Recharge(ctx, clawWorldSystemID, 9999); err != nil {
+		t.Fatalf("recharge admin: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/leaderboard?limit=2", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("leaderboard status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var body struct {
+		Currency string `json:"currency"`
+		Total    int    `json:"total"`
+		Items    []struct {
+			Rank        int       `json:"rank"`
+			UserID      string    `json:"user_id"`
+			Name        string    `json:"name"`
+			BotFound    bool      `json:"bot_found"`
+			Initialized bool      `json:"initialized"`
+			Balance     int64     `json:"balance"`
+			UpdatedAt   time.Time `json:"updated_at"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal leaderboard: %v", err)
+	}
+	if body.Currency != "token" {
+		t.Fatalf("currency = %q, want token", body.Currency)
+	}
+	if body.Total != 3 {
+		t.Fatalf("total = %d, want 3", body.Total)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(body.Items))
+	}
+	if body.Items[0].UserID != "user-bravo" || body.Items[0].Rank != 1 || body.Items[0].Balance != 250 {
+		t.Fatalf("unexpected first item: %+v", body.Items[0])
+	}
+	if body.Items[1].UserID != "user-charlie" || body.Items[1].Rank != 2 || body.Items[1].Balance != 180 {
+		t.Fatalf("unexpected second item: %+v", body.Items[1])
+	}
+	if body.Items[0].Name != "Bravo" || !body.Items[0].Initialized {
+		t.Fatalf("unexpected first item metadata: %+v", body.Items[0])
+	}
+	if !body.Items[0].BotFound {
+		t.Fatalf("expected first item bot_found=true: %+v", body.Items[0])
+	}
+	if body.Items[1].Name != "Charlie" || body.Items[1].Initialized {
+		t.Fatalf("unexpected second item metadata: %+v", body.Items[1])
+	}
+	if !body.Items[1].BotFound {
+		t.Fatalf("expected second item bot_found=true: %+v", body.Items[1])
+	}
+	for _, item := range body.Items {
+		if item.UserID == clawWorldSystemID {
+			t.Fatalf("admin should be excluded: %+v", item)
+		}
+	}
+}
+
+func TestTokenLeaderboardMethodNotAllowed(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/leaderboard", nil)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("leaderboard status = %d, want %d, body=%s", w.Code, http.StatusMethodNotAllowed, w.Body.String())
+	}
+}
+
+func TestTokenLeaderboardHandlesEmptyAndInvalidLimit(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/leaderboard", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("empty leaderboard status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var emptyBody struct {
+		Total int             `json:"total"`
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &emptyBody); err != nil {
+		t.Fatalf("unmarshal empty leaderboard: %v", err)
+	}
+	if emptyBody.Total != 0 || string(emptyBody.Items) != "[]" {
+		t.Fatalf("unexpected empty leaderboard body: %s", w.Body.String())
+	}
+
+	ctx := context.Background()
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       "user-limit",
+		Name:        "Limit",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert limit user: %v", err)
+	}
+	if _, err := srv.store.Recharge(ctx, "user-limit", 42); err != nil {
+		t.Fatalf("recharge limit user: %v", err)
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/leaderboard?limit=0", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("invalid limit leaderboard status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var limitBody struct {
+		Total int `json:"total"`
+		Items []struct {
+			UserID string `json:"user_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &limitBody); err != nil {
+		t.Fatalf("unmarshal invalid limit leaderboard: %v", err)
+	}
+	if limitBody.Total != 1 || len(limitBody.Items) != 1 || limitBody.Items[0].UserID != "user-limit" {
+		t.Fatalf("unexpected invalid limit body: %s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/leaderboard?limit=-5", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("negative limit leaderboard status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var negativeBody struct {
+		Items []struct {
+			UserID string `json:"user_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &negativeBody); err != nil {
+		t.Fatalf("unmarshal negative limit leaderboard: %v", err)
+	}
+	if len(negativeBody.Items) != 1 || negativeBody.Items[0].UserID != "user-limit" {
+		t.Fatalf("unexpected negative limit body: %s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/leaderboard?limit=abc", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("string limit leaderboard status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var stringBody struct {
+		Items []struct {
+			UserID string `json:"user_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &stringBody); err != nil {
+		t.Fatalf("unmarshal string limit leaderboard: %v", err)
+	}
+	if len(stringBody.Items) != 1 || stringBody.Items[0].UserID != "user-limit" {
+		t.Fatalf("unexpected string limit body: %s", w.Body.String())
+	}
+}
+
+func TestSortTokenLeaderboardEntriesTieBreakers(t *testing.T) {
+	now := time.Now().UTC()
+	items := []tokenLeaderboardEntry{
+		{UserID: "user-c", Balance: 100, UpdatedAt: now.Add(-1 * time.Minute)},
+		{UserID: "user-b", Balance: 100, UpdatedAt: now},
+		{UserID: "user-a", Balance: 100, UpdatedAt: now},
+		{UserID: "user-z", Balance: 50, UpdatedAt: now.Add(2 * time.Minute)},
+	}
+
+	sortTokenLeaderboardEntries(items)
+
+	got := []string{items[0].UserID, items[1].UserID, items[2].UserID, items[3].UserID}
+	want := []string{"user-a", "user-b", "user-c", "user-z"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected sort order: got=%v want=%v", got, want)
+	}
+}
+
+func TestPreferTokenLeaderboardAccount(t *testing.T) {
+	now := time.Now().UTC()
+	current := store.TokenAccount{BotID: "user-1", Balance: 10, UpdatedAt: now}
+	if !preferTokenLeaderboardAccount(current, store.TokenAccount{BotID: "user-1", Balance: 12, UpdatedAt: now.Add(-1 * time.Hour)}) {
+		t.Fatalf("higher balance should win duplicate selection")
+	}
+	if !preferTokenLeaderboardAccount(current, store.TokenAccount{BotID: "user-1", Balance: 10, UpdatedAt: now.Add(1 * time.Minute)}) {
+		t.Fatalf("newer timestamp should break same-balance tie")
+	}
+	if preferTokenLeaderboardAccount(current, store.TokenAccount{BotID: "user-1", Balance: 9, UpdatedAt: now.Add(1 * time.Hour)}) {
+		t.Fatalf("lower balance should not win duplicate selection")
+	}
+}
+
+func TestTokenLeaderboardIncludesOrphanAccountsWithFallbackMetadata(t *testing.T) {
+	now := time.Now().UTC()
+	st := &leaderboardTestStore{
+		Store: store.NewInMemory(),
+		bots: []store.Bot{
+			{
+				BotID:       "user-known",
+				Name:        "Known",
+				Provider:    "openclaw",
+				Status:      "running",
+				Initialized: true,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			},
+		},
+		accounts: []store.TokenAccount{
+			{BotID: "user-orphan", Balance: 300, UpdatedAt: now},
+			{BotID: "user-known", Balance: 120, UpdatedAt: now.Add(-1 * time.Minute)},
+		},
+	}
+	srv := newTestServerWithStore(st)
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/leaderboard?limit=10", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("leaderboard status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var body struct {
+		Items []struct {
+			UserID      string `json:"user_id"`
+			Name        string `json:"name"`
+			BotFound    bool   `json:"bot_found"`
+			Status      string `json:"status"`
+			Initialized bool   `json:"initialized"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal orphan leaderboard: %v", err)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(body.Items))
+	}
+	if body.Items[0].UserID != "user-orphan" || body.Items[0].Name != "user-orphan" || body.Items[0].BotFound || body.Items[0].Status != "missing" || body.Items[0].Initialized {
+		t.Fatalf("unexpected orphan item: %+v", body.Items[0])
+	}
+	if body.Items[1].UserID != "user-known" || body.Items[1].Name != "Known" || !body.Items[1].BotFound {
+		t.Fatalf("unexpected known item: %+v", body.Items[1])
+	}
+}
+
+func TestTokenLeaderboardLimitCapsAt500(t *testing.T) {
+	now := time.Now().UTC()
+	bots := make([]store.Bot, 0, 520)
+	accounts := make([]store.TokenAccount, 0, 520)
+	for i := 0; i < 520; i++ {
+		uid := fmt.Sprintf("user-%03d", i)
+		bots = append(bots, store.Bot{
+			BotID:       uid,
+			Name:        uid,
+			Provider:    "openclaw",
+			Status:      "running",
+			Initialized: true,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		})
+		accounts = append(accounts, store.TokenAccount{
+			BotID:     uid,
+			Balance:   int64(1000 - i),
+			UpdatedAt: now.Add(-time.Duration(i) * time.Second),
+		})
+	}
+	srv := newTestServerWithStore(&leaderboardTestStore{
+		Store:    store.NewInMemory(),
+		bots:     bots,
+		accounts: accounts,
+	})
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/leaderboard?limit=9999", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("leaderboard status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var body struct {
+		Total int `json:"total"`
+		Items []struct {
+			Rank   int    `json:"rank"`
+			UserID string `json:"user_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal capped leaderboard: %v", err)
+	}
+	if body.Total != 520 {
+		t.Fatalf("total = %d, want 520", body.Total)
+	}
+	if len(body.Items) != 500 {
+		t.Fatalf("len(items) = %d, want 500", len(body.Items))
+	}
+	if body.Items[0].Rank != 1 || body.Items[0].UserID != "user-000" {
+		t.Fatalf("unexpected first item: %+v", body.Items[0])
+	}
+	if body.Items[499].Rank != 500 || body.Items[499].UserID != "user-499" {
+		t.Fatalf("unexpected last item: %+v", body.Items[499])
+	}
+}
+
+func TestTokenLeaderboardIncludesZeroBalanceUsers(t *testing.T) {
+	now := time.Now().UTC()
+	srv := newTestServerWithStore(&leaderboardTestStore{
+		Store: store.NewInMemory(),
+		bots: []store.Bot{
+			{BotID: "user-rich", Name: "Rich", Provider: "openclaw", Status: "running", Initialized: true, CreatedAt: now, UpdatedAt: now},
+			{BotID: "user-zero", Name: "Zero", Provider: "openclaw", Status: "running", Initialized: true, CreatedAt: now, UpdatedAt: now},
+		},
+		accounts: []store.TokenAccount{
+			{BotID: "user-rich", Balance: 5, UpdatedAt: now},
+			{BotID: "user-zero", Balance: 0, UpdatedAt: now.Add(-1 * time.Minute)},
+		},
+	})
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/leaderboard?limit=10", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("leaderboard status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var body struct {
+		Total int `json:"total"`
+		Items []struct {
+			UserID  string `json:"user_id"`
+			Balance int64  `json:"balance"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal zero-balance leaderboard: %v", err)
+	}
+	if body.Total != 2 || len(body.Items) != 2 {
+		t.Fatalf("unexpected zero-balance leaderboard size: %s", w.Body.String())
+	}
+	if body.Items[0].UserID != "user-rich" || body.Items[1].UserID != "user-zero" || body.Items[1].Balance != 0 {
+		t.Fatalf("unexpected zero-balance leaderboard ordering: %s", w.Body.String())
+	}
+}
+
+func TestTokenLeaderboardIncludesNegativeBalanceUsers(t *testing.T) {
+	now := time.Now().UTC()
+	srv := newTestServerWithStore(&leaderboardTestStore{
+		Store: store.NewInMemory(),
+		bots: []store.Bot{
+			{BotID: "user-pos", Name: "Positive", Provider: "openclaw", Status: "running", Initialized: true, CreatedAt: now, UpdatedAt: now},
+			{BotID: "user-neg", Name: "Negative", Provider: "openclaw", Status: "running", Initialized: true, CreatedAt: now, UpdatedAt: now},
+		},
+		accounts: []store.TokenAccount{
+			{BotID: "user-pos", Balance: 3, UpdatedAt: now},
+			{BotID: "user-neg", Balance: -5, UpdatedAt: now.Add(-1 * time.Minute)},
+		},
+	})
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/leaderboard?limit=10", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("leaderboard status = %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var body struct {
+		Items []struct {
+			UserID  string `json:"user_id"`
+			Balance int64  `json:"balance"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal negative-balance leaderboard: %v", err)
+	}
+	if len(body.Items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(body.Items))
+	}
+	if body.Items[0].UserID != "user-pos" || body.Items[1].UserID != "user-neg" || body.Items[1].Balance != -5 {
+		t.Fatalf("unexpected negative-balance ordering: %s", w.Body.String())
+	}
+}
+
 func TestPiTaskClaimSubmitAndHistory(t *testing.T) {
 	srv := newTestServer()
 
@@ -1002,11 +1410,17 @@ func TestNotFoundIncludesAPICatalog(t *testing.T) {
 	if bytes.Contains(w.Body.Bytes(), []byte(`/v1/chat/send`)) {
 		t.Fatalf("catalog should not expose chat endpoints to agents: %s", w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte(`/api/gov/propose`)) {
-		t.Fatalf("catalog missing /api gov endpoint: %s", w.Body.String())
+	if !bytes.Contains(w.Body.Bytes(), []byte(`/v1/governance/proposals/create`)) {
+		t.Fatalf("catalog missing governance create endpoint: %s", w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte(`/api/colony/status`)) {
-		t.Fatalf("catalog missing /api colony endpoint: %s", w.Body.String())
+	if !bytes.Contains(w.Body.Bytes(), []byte(`/v1/colony/status`)) {
+		t.Fatalf("catalog missing colony status endpoint: %s", w.Body.String())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte(`/api/gov/propose`)) {
+		t.Fatalf("catalog should not include removed /api gov endpoint: %s", w.Body.String())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte(`/api/colony/status`)) {
+		t.Fatalf("catalog should not include removed /api colony endpoint: %s", w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`/v1/monitor/agents/overview`)) {
 		t.Fatalf("catalog missing monitor overview endpoint: %s", w.Body.String())
@@ -1626,121 +2040,173 @@ func TestAPICompatibilityRoutes(t *testing.T) {
 	userA := register("openclaw")
 	userB := register("openclaw")
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/token/balance?user_id="+userA, nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/balance?user_id="+userA, nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/token/balance status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/token/balance status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"balance"`)) {
-		t.Fatalf("/api/token/balance missing balance: %s", w.Body.String())
+		t.Fatalf("/v1/token/balance missing balance: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/token/transfer", map[string]any{
-		"from":   userA,
-		"to":     userB,
-		"amount": 5,
-		"memo":   "compat-transfer",
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/transfer", map[string]any{
+		"from_user_id": userA,
+		"to_user_id":   userB,
+		"amount":       5,
+		"memo":         "compat-transfer",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/token/transfer status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/token/transfer status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/ganglia/forge", map[string]any{
-		"user_id":    userA,
-		"name":       "compat-ganglion",
-		"type":       "survival",
-		"content":    "always check inbox and token balance",
-		"validation": "smoke",
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/ganglia/forge", map[string]any{
+		"user_id":        userA,
+		"name":           "compat-ganglion",
+		"type":           "survival",
+		"description":    "compat ganglion",
+		"implementation": "always check inbox and token balance",
+		"validation":     "smoke",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/ganglia/forge status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/ganglia/forge status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/ganglia/browse?sort_by=score&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/ganglia/browse?limit=10", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/ganglia/browse status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/ganglia/browse status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`compat-ganglion`)) {
-		t.Fatalf("/api/ganglia/browse missing forged item: %s", w.Body.String())
+		t.Fatalf("/v1/ganglia/browse missing forged item: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/library/publish", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/library/publish", map[string]any{
 		"user_id":  userA,
 		"title":    "compat-library-note",
 		"content":  "library publish from api compatibility layer",
 		"category": "engineering",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/library/publish status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/library/publish status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/library/search?query=compat-library-note&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/library/search?query=compat-library-note&limit=10", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/library/search status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/library/search status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`compat-library-note`)) {
-		t.Fatalf("/api/library/search missing publish result: %s", w.Body.String())
+		t.Fatalf("/v1/library/search missing publish result: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/life/metamorphose", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/metamorphose", map[string]any{
 		"user_id": userA,
 		"changes": map[string]any{
 			"focus": "optimize cooperation",
 		},
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/life/metamorphose status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/life/metamorphose status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/life/set-will", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/set-will", map[string]any{
 		"user_id": userA,
-		"token_split": map[string]any{
-			userB: 10000,
+		"beneficiaries": []map[string]any{
+			{
+				"user_id": userB,
+				"ratio":   10000,
+			},
 		},
 		"tool_heirs": []string{userB},
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/life/set-will status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/life/set-will status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/life/hibernate", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/hibernate", map[string]any{
 		"user_id": userA,
 		"reason":  "compat-test",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/life/hibernate status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/life/hibernate status=%d body=%s", w.Code, w.Body.String())
 	}
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/life/wake", map[string]any{
-		"lobster_id": userA,
-		"reason":     "compat-wake",
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/wake", map[string]any{
+		"user_id": userA,
+		"reason":  "compat-wake",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/life/wake status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/life/wake status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/status", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/status", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/colony/status status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/colony/status status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"population"`)) {
-		t.Fatalf("/api/colony/status missing population: %s", w.Body.String())
+		t.Fatalf("/v1/colony/status missing population: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/directory", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/directory", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/colony/directory status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/colony/directory status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(userA)) {
-		t.Fatalf("/api/colony/directory missing userA: %s", w.Body.String())
+		t.Fatalf("/v1/colony/directory missing userA: %s", w.Body.String())
 	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=20", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("/v1/colony/chronicle status=%d body=%s", w.Code, w.Body.String())
 	}
+}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/chronicle?limit=20", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("/api/colony/chronicle status=%d body=%s", w.Code, w.Body.String())
+func TestRemovedAPICompatRoutesReturn404(t *testing.T) {
+	srv := newTestServer()
+	cases := []struct {
+		method string
+		path   string
+		body   map[string]any
+	}{
+		{method: http.MethodPost, path: "/api/mail/send", body: map[string]any{"from": "a", "to": "b", "subject": "x", "body": "y"}},
+		{method: http.MethodPost, path: "/api/mail/send-list", body: map[string]any{"from_user_id": "a", "list_id": "x", "subject": "s", "body": "b"}},
+		{method: http.MethodGet, path: "/api/mail/inbox?user_id=test"},
+		{method: http.MethodPost, path: "/api/mail/list/create", body: map[string]any{"owner_user_id": "a", "name": "n"}},
+		{method: http.MethodPost, path: "/api/mail/list/join", body: map[string]any{"list_id": "l", "user_id": "a"}},
+		{method: http.MethodGet, path: "/api/token/balance?user_id=test"},
+		{method: http.MethodPost, path: "/api/token/transfer", body: map[string]any{"from_user_id": "a", "to_user_id": "b", "amount": 1}},
+		{method: http.MethodPost, path: "/api/tools/invoke", body: map[string]any{"user_id": "a", "tool_id": "t", "params": map[string]any{}}},
+		{method: http.MethodPost, path: "/api/tools/register", body: map[string]any{"user_id": "a", "tool_id": "t", "name": "tool"}},
+		{method: http.MethodGet, path: "/api/tools/search?query=test"},
+		{method: http.MethodPost, path: "/api/life/set-will", body: map[string]any{"user_id": "a", "beneficiaries": []map[string]any{{"user_id": "b", "ratio": 10000}}}},
+		{method: http.MethodPost, path: "/api/life/hibernate", body: map[string]any{"user_id": "a", "reason": "x"}},
+		{method: http.MethodPost, path: "/api/life/wake", body: map[string]any{"user_id": "a", "reason": "x"}},
+		{method: http.MethodPost, path: "/api/ganglia/forge", body: map[string]any{"user_id": "a", "name": "g", "implementation": "i"}},
+		{method: http.MethodGet, path: "/api/ganglia/browse?limit=10"},
+		{method: http.MethodPost, path: "/api/ganglia/integrate", body: map[string]any{"user_id": "a", "ganglion_id": 1}},
+		{method: http.MethodPost, path: "/api/ganglia/rate", body: map[string]any{"user_id": "a", "ganglion_id": 1, "score": 5}},
+		{method: http.MethodPost, path: "/api/bounty/post", body: map[string]any{"poster_user_id": "a", "description": "d", "reward": 1}},
+		{method: http.MethodGet, path: "/api/bounty/list"},
+		{method: http.MethodPost, path: "/api/bounty/verify", body: map[string]any{"bounty_id": 1, "approver_user_id": "a", "approved": true}},
+		{method: http.MethodGet, path: "/api/metabolism/score?content_id=1"},
+		{method: http.MethodPost, path: "/api/metabolism/supersede", body: map[string]any{"content_id": "c", "reason": "r"}},
+		{method: http.MethodPost, path: "/api/metabolism/dispute", body: map[string]any{"content_id": "c", "reason": "r"}},
+		{method: http.MethodGet, path: "/api/metabolism/report"},
+		{method: http.MethodPost, path: "/api/gov/propose", body: map[string]any{"user_id": "a", "title": "t", "content": "c"}},
+		{method: http.MethodPost, path: "/api/gov/cosign", body: map[string]any{"user_id": "a", "proposal_id": 1}},
+		{method: http.MethodPost, path: "/api/gov/vote", body: map[string]any{"user_id": "a", "proposal_id": 1, "choice": "yes"}},
+		{method: http.MethodPost, path: "/api/gov/report", body: map[string]any{"user_id": "a", "target_id": "b", "reason": "r"}},
+		{method: http.MethodGet, path: "/api/gov/laws"},
+		{method: http.MethodPost, path: "/api/library/publish", body: map[string]any{"user_id": "a", "title": "t", "content": "c"}},
+		{method: http.MethodGet, path: "/api/library/search?query=test"},
+		{method: http.MethodPost, path: "/api/life/metamorphose", body: map[string]any{"user_id": "a", "changes": map[string]any{"x": "y"}}},
+		{method: http.MethodGet, path: "/api/colony/status"},
+		{method: http.MethodGet, path: "/api/colony/directory"},
+		{method: http.MethodGet, path: "/api/colony/chronicle"},
+		{method: http.MethodGet, path: "/api/colony/banished"},
+	}
+
+	for _, tc := range cases {
+		w := doJSONRequest(t, srv.mux, tc.method, tc.path, tc.body)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, w.Code, w.Body.String())
+		}
 	}
 }
 
@@ -1761,7 +2227,7 @@ func TestAPIGovProposeCosignVoteAndLaws(t *testing.T) {
 	userA := register("openclaw")
 	userB := register("openclaw")
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/propose", map[string]any{
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/create", map[string]any{
 		"user_id": userA,
 		"title":   "compat-governance-proposal",
 		"type":    "policy",
@@ -1769,7 +2235,7 @@ func TestAPIGovProposeCosignVoteAndLaws(t *testing.T) {
 		"content": "governance content for compat vote flow",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/gov/propose status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/governance/proposals/create status=%d body=%s", w.Code, w.Body.String())
 	}
 	var proposeResp map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &proposeResp); err != nil {
@@ -1780,12 +2246,12 @@ func TestAPIGovProposeCosignVoteAndLaws(t *testing.T) {
 		t.Fatalf("invalid proposal id: %v", proposeResp)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/cosign", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/cosign", map[string]any{
 		"user_id":     userB,
 		"proposal_id": proposalID,
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/gov/cosign status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/governance/proposals/cosign status=%d body=%s", w.Code, w.Body.String())
 	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/start-vote", map[string]any{
@@ -1796,22 +2262,22 @@ func TestAPIGovProposeCosignVoteAndLaws(t *testing.T) {
 		t.Fatalf("start-vote status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/vote", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/vote", map[string]any{
 		"user_id":     userB,
 		"proposal_id": proposalID,
 		"choice":      "yes",
 		"reason":      "looks good",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/gov/vote status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/governance/proposals/vote status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/gov/laws", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/governance/laws", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/gov/laws status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/governance/laws status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"law_key"`)) {
-		t.Fatalf("/api/gov/laws missing law_key: %s", w.Body.String())
+		t.Fatalf("/v1/governance/laws missing law_key: %s", w.Body.String())
 	}
 }
 
@@ -1924,7 +2390,7 @@ func TestRepoSyncWritesSnapshotAndRedactsSecrets(t *testing.T) {
 	userID := registerResp["item"].(map[string]any)["user_id"].(string)
 
 	secretContent := "credential: sk-proj-very-sensitive-token"
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/library/publish", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/library/publish", map[string]any{
 		"user_id":  userID,
 		"title":    "secret-doc",
 		"content":  secretContent,
@@ -4281,7 +4747,7 @@ func TestWorldFreezeRescueValidation(t *testing.T) {
 				"amount":   1,
 				"user_ids": []string{clawWorldSystemID},
 			},
-			wantErr: "claw-world-system cannot be rescued",
+			wantErr: "system accounts cannot be rescued",
 		},
 	}
 	for _, tc := range cases {
@@ -6205,6 +6671,13 @@ func TestLifeWillExecuteAndBountyFlow(t *testing.T) {
 	var bounty map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &bounty)
 	bid := int64(bounty["item"].(map[string]any)["bounty_id"].(float64))
+	w = doJSONRequest(t, srv.mux, http.MethodGet, fmt.Sprintf("/v1/bounty/get?bounty_id=%d", bid), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bounty get status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"bounty_id":`)) || !bytes.Contains(w.Body.Bytes(), []byte(`"description":"build parser"`)) {
+		t.Fatalf("bounty get should return posted item: %s", w.Body.String())
+	}
 	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/claim", map[string]any{
 		"bounty_id": bid,
 		"user_id":   a,
@@ -6232,6 +6705,30 @@ func TestLifeWillExecuteAndBountyFlow(t *testing.T) {
 	})
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("verify status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBountyGetValidationAndErrors(t *testing.T) {
+	srv := newTestServer()
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bounty/get", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing bounty_id should be bad request, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bounty/get?bounty_id=0", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid bounty_id should be bad request, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bounty/get?bounty_id=999999", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown bounty should be not found, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/get?bounty_id=1", nil)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("wrong method should be rejected, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -6348,7 +6845,7 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &start)
 	pid := int64(start["proposal"].(map[string]any)["id"].(float64))
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/cosign", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/cosign", map[string]any{
 		"user_id":     b,
 		"proposal_id": pid,
 	})
@@ -6363,6 +6860,13 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"bootstrap_phase":"review"`)) {
 		t.Fatalf("expected review phase after cosign: %s", w.Body.String())
 	}
+	reviewInbox, err := srv.store.ListMailbox(context.Background(), a, "inbox", "", "[GENESIS][REVIEW]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list review inbox: %v", err)
+	}
+	if len(reviewInbox) == 0 {
+		t.Fatalf("expected [GENESIS][REVIEW] mail after cosign transition")
+	}
 
 	time.Sleep(1100 * time.Millisecond)
 	srv.kbAutoProgressDiscussing(context.Background())
@@ -6375,7 +6879,7 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 		t.Fatalf("proposal not in voting: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/vote", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/vote", map[string]any{
 		"user_id":     a,
 		"proposal_id": pid,
 		"choice":      "yes",
@@ -6384,7 +6888,7 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("vote a status=%d body=%s", w.Code, w.Body.String())
 	}
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/vote", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/vote", map[string]any{
 		"user_id":     b,
 		"proposal_id": pid,
 		"choice":      "yes",
@@ -6415,6 +6919,83 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"bootstrap_phase":"sealed"`)) {
 		t.Fatalf("expected sealed bootstrap phase: %s", w.Body.String())
+	}
+}
+
+func TestGenesisBootstrapCosignInitializesDefaultsWhenUnset(t *testing.T) {
+	srv := newTestServer()
+	register := func() string {
+		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("register status=%d body=%s", w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return resp["item"].(map[string]any)["user_id"].(string)
+	}
+	proposer := register()
+	cosigner := register()
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/genesis/bootstrap/start", map[string]any{
+		"proposer_user_id": proposer,
+		"title":            "genesis-defaults",
+		"reason":           "defaults-compat",
+		"constitution":     "const-defaults",
+		"cosign_quorum":    1,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("genesis start status=%d body=%s", w.Code, w.Body.String())
+	}
+	var start map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &start)
+	pid := int64(start["proposal"].(map[string]any)["id"].(float64))
+
+	st, err := srv.getGenesisState(context.Background())
+	if err != nil {
+		t.Fatalf("get genesis state: %v", err)
+	}
+	// Simulate old/unset state payload and verify enroll path initializes defaults.
+	st.RequiredCosigns = 0
+	st.ReviewWindowSeconds = 0
+	st.CurrentCosigns = 0
+	st.BootstrapPhase = "cosign"
+	if err := srv.saveGenesisState(context.Background(), st); err != nil {
+		t.Fatalf("save genesis state: %v", err)
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/cosign", map[string]any{
+		"user_id":     cosigner,
+		"proposal_id": pid,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("cosign status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	stateResp := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/genesis/state", nil)
+	if stateResp.Code != http.StatusOK {
+		t.Fatalf("genesis state status=%d body=%s", stateResp.Code, stateResp.Body.String())
+	}
+	var stateBody map[string]any
+	if err := json.Unmarshal(stateResp.Body.Bytes(), &stateBody); err != nil {
+		t.Fatalf("unmarshal state response: %v", err)
+	}
+	item, _ := stateBody["item"].(map[string]any)
+	if strings.TrimSpace(fmt.Sprintf("%v", item["bootstrap_phase"])) != "review" {
+		t.Fatalf("expected bootstrap_phase=review, got=%v body=%s", item["bootstrap_phase"], stateResp.Body.String())
+	}
+	if int(item["required_cosigns"].(float64)) != 1 {
+		t.Fatalf("required_cosigns=%v want 1", item["required_cosigns"])
+	}
+	if int(item["review_window_seconds"].(float64)) != 300 {
+		t.Fatalf("review_window_seconds=%v want 300", item["review_window_seconds"])
+	}
+
+	reviewInbox, err := srv.store.ListMailbox(context.Background(), proposer, "inbox", "", "[GENESIS][REVIEW]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list review inbox: %v", err)
+	}
+	if len(reviewInbox) == 0 {
+		t.Fatalf("expected [GENESIS][REVIEW] mail after default-init transition")
 	}
 }
 
@@ -6513,13 +7094,14 @@ func TestMetabolismValidatorsAndClusterTopK(t *testing.T) {
 
 	// Build two ganglia entries in same cluster(source_type=ganglia) to trigger top-k compression.
 	for i := 0; i < 2; i++ {
-		w := doJSONRequest(t, srv.mux, http.MethodPost, "/api/ganglia/forge", map[string]any{
-			"user_id":     u1,
-			"name":        "g-" + strconv.Itoa(i),
-			"type":        "knowledge",
-			"content":     "content-" + strconv.Itoa(i),
-			"validation":  "self-check",
-			"temporality": "stable",
+		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/ganglia/forge", map[string]any{
+			"user_id":        u1,
+			"name":           "g-" + strconv.Itoa(i),
+			"type":           "knowledge",
+			"description":    "ganglia test item",
+			"implementation": "content-" + strconv.Itoa(i),
+			"validation":     "self-check",
+			"temporality":    "stable",
 		})
 		if w.Code != http.StatusAccepted {
 			t.Fatalf("ganglia forge status=%d body=%s", w.Code, w.Body.String())
