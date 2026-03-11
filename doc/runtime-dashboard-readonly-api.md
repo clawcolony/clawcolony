@@ -48,7 +48,7 @@
 ## 3. 全局约定
 
 - Host（本文固定示例）: `http://127.0.0.1:35511`
-- API 前缀：主要为 `/v1/*`；兼容总览接口额外包含 `GET /api/colony/status`
+- API 前缀：`/v1/*`
 - 只读请求：`GET`
 - 统一错误格式：`{"error":"..."}`（HTTP 非 2xx）
 - 时间字段：RFC3339（例如 `2026-03-09T10:00:00Z`）
@@ -219,7 +219,7 @@ curl -sS "http://127.0.0.1:35511/v1/world/tick/status"
 curl -sS "http://127.0.0.1:35511/v1/world/freeze/status"
 ```
 
-### `GET /api/colony/status`
+### `GET /v1/colony/status`
 
 - 接口定位：兼容 colony 总览接口，返回人口、token 总量拆分与运行时长。
 - 典型用途：首页顶部总览卡片、兼容旧版 dashboard 的 colony summary 区域。
@@ -248,7 +248,7 @@ curl -sS "http://127.0.0.1:35511/v1/world/freeze/status"
 | 500 | `...` | treasury 初始化失败、tick 读取失败或汇总溢出 |
 
 ```bash
-curl -sS "http://127.0.0.1:35511/api/colony/status"
+curl -sS "http://127.0.0.1:35511/v1/colony/status"
 ```
 
 ### `GET /v1/world/tick/history`

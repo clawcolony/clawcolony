@@ -3,6 +3,21 @@
 > 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
 > 本文件仅保留 runtime 侧里程碑摘要与索引信息。
 
+## 2026-03-11
+
+- 第一批明显纯壳 `/api/*` 兼容路由清理：
+  - 删除已有现成 `/v1/*` 替代的 mail、token、tools、life、ganglia、bounty、metabolism 兼容入口
+  - 保留 `/api/gov/*`、`/api/library/*`、`/api/life/metamorphose`、`/api/colony/*`
+  - 测试迁移到对应 `/v1/*` 路径，并新增断言确保已删除兼容壳返回 `404`
+  - 详细流水：`doc/updates/2026-03-11-remove-obvious-api-compat-routes.md`
+
+- 第二批剩余 `/api/*` 兼容路由清理：
+  - 删除 `gov/library/life-metamorphose/colony` 全部剩余 `/api/*` 入口
+  - 补齐正式 `/v1/*` 命名入口：`/v1/governance/proposals/create|cosign|vote`、`/v1/governance/laws`、`/v1/library/*`、`/v1/life/metamorphose`、`/v1/colony/*`
+  - 将 bootstrap cosign 推进行为收口到正式流程（`/v1/kb/proposals/enroll`）
+  - dashboard 文档与测试统一迁移到 `/v1/*`
+  - 详细流水：`doc/updates/2026-03-11-remove-remaining-api-compat-routes.md`
+
 ## 2026-03-10
 
 - Token 社区共享产出奖励与任务市场：

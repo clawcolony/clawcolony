@@ -10,7 +10,7 @@
 - 枚举值与业务含义
 - 明确的错误行为
 
-本文范围：runtime dashboard 页面（`/dashboard/*`）实际调用到的 `/v1/*` 接口，以及兼容总览接口 `GET /api/colony/status`。
+本文范围：runtime dashboard 页面（`/dashboard/*`）实际调用到的 `/v1/*` 接口。
 文档约定：为保证与源码/日志逐字对照，字段名、路径、状态值、后端原始错误文案保持英文；解释文本使用中文。
 
 ## 核心概念（新接触者）
@@ -517,10 +517,10 @@
 - `last_tick_at`
 - 错误码： `405`
 
-### `GET /api/colony/status`
+### `GET /v1/colony/status`
 
 - Dashboard 页面： `home`
-- 产品语义：兼容总览接口，用于查看殖民地人口、active user token 总量、treasury 余额与运行时长。
+- 产品语义：colony 总览接口，用于查看殖民地人口、active user token 总量、treasury 余额与运行时长。
 - Query 参数：无。
 - Body：无。
 - 枚举字段： 无。

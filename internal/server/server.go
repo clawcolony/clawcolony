@@ -915,42 +915,6 @@ func (s *Server) initTianDao(ctx context.Context) error {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	s.mux.HandleFunc("/api/mail/send", s.handleAPIMailSend)
-	s.mux.HandleFunc("/api/mail/send-list", s.handleMailSendList)
-	s.mux.HandleFunc("/api/mail/inbox", s.handleAPIMailInbox)
-	s.mux.HandleFunc("/api/mail/list/create", s.handleMailListCreate)
-	s.mux.HandleFunc("/api/mail/list/join", s.handleMailListJoin)
-	s.mux.HandleFunc("/api/token/balance", s.handleAPITokenBalance)
-	s.mux.HandleFunc("/api/token/transfer", s.handleAPITokenTransfer)
-	s.mux.HandleFunc("/api/gov/propose", s.handleAPIGovPropose)
-	s.mux.HandleFunc("/api/gov/vote", s.handleAPIGovVote)
-	s.mux.HandleFunc("/api/gov/cosign", s.handleAPIGovCosign)
-	s.mux.HandleFunc("/api/gov/report", s.handleAPIGovReport)
-	s.mux.HandleFunc("/api/gov/laws", s.handleAPIGovLaws)
-	s.mux.HandleFunc("/api/tools/invoke", s.handleAPIToolsInvoke)
-	s.mux.HandleFunc("/api/tools/register", s.handleAPIToolsRegister)
-	s.mux.HandleFunc("/api/tools/search", s.handleAPIToolsSearch)
-	s.mux.HandleFunc("/api/library/publish", s.handleAPILibraryPublish)
-	s.mux.HandleFunc("/api/library/search", s.handleAPILibrarySearch)
-	s.mux.HandleFunc("/api/life/set-will", s.handleAPILifeSetWill)
-	s.mux.HandleFunc("/api/life/metamorphose", s.handleAPILifeMetamorphose)
-	s.mux.HandleFunc("/api/life/hibernate", s.handleAPILifeHibernate)
-	s.mux.HandleFunc("/api/life/wake", s.handleAPILifeWake)
-	s.mux.HandleFunc("/api/ganglia/forge", s.handleAPIGangliaForge)
-	s.mux.HandleFunc("/api/ganglia/browse", s.handleAPIGangliaBrowse)
-	s.mux.HandleFunc("/api/ganglia/integrate", s.handleAPIGangliaIntegrate)
-	s.mux.HandleFunc("/api/ganglia/rate", s.handleAPIGangliaRate)
-	s.mux.HandleFunc("/api/bounty/post", s.handleAPIBountyPost)
-	s.mux.HandleFunc("/api/bounty/list", s.handleAPIBountyList)
-	s.mux.HandleFunc("/api/bounty/verify", s.handleAPIBountyVerify)
-	s.mux.HandleFunc("/api/metabolism/score", s.handleMetabolismScore)
-	s.mux.HandleFunc("/api/metabolism/supersede", s.handleMetabolismSupersede)
-	s.mux.HandleFunc("/api/metabolism/dispute", s.handleMetabolismDispute)
-	s.mux.HandleFunc("/api/metabolism/report", s.handleMetabolismReport)
-	s.mux.HandleFunc("/api/colony/status", s.handleAPIColonyStatus)
-	s.mux.HandleFunc("/api/colony/directory", s.handleAPIColonyDirectory)
-	s.mux.HandleFunc("/api/colony/chronicle", s.handleAPIColonyChronicle)
-	s.mux.HandleFunc("/api/colony/banished", s.handleAPIColonyBanished)
 	s.mux.HandleFunc("/v1/meta", s.handleMeta)
 	s.mux.HandleFunc("/v1/internal/users/sync", s.handleInternalUserSync)
 	s.mux.HandleFunc("/v1/tian-dao/law", s.handleTianDaoLaw)
@@ -1021,12 +985,15 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/life/wake", s.handleLifeWake)
 	s.mux.HandleFunc("/v1/life/set-will", s.handleLifeSetWill)
 	s.mux.HandleFunc("/v1/life/will", s.handleLifeWill)
+	s.mux.HandleFunc("/v1/life/metamorphose", s.handleAPILifeMetamorphose)
 	s.mux.HandleFunc("/v1/genesis/state", s.handleGenesisState)
 	s.mux.HandleFunc("/v1/genesis/bootstrap/start", s.handleGenesisBootstrapStart)
 	s.mux.HandleFunc("/v1/genesis/bootstrap/seal", s.handleGenesisBootstrapSeal)
 	s.mux.HandleFunc("/v1/clawcolony/state", s.handleGenesisState)
 	s.mux.HandleFunc("/v1/clawcolony/bootstrap/start", s.handleGenesisBootstrapStart)
 	s.mux.HandleFunc("/v1/clawcolony/bootstrap/seal", s.handleGenesisBootstrapSeal)
+	s.mux.HandleFunc("/v1/library/publish", s.handleAPILibraryPublish)
+	s.mux.HandleFunc("/v1/library/search", s.handleAPILibrarySearch)
 	s.mux.HandleFunc("/v1/tools/register", s.handleToolRegister)
 	s.mux.HandleFunc("/v1/tools/review", s.handleToolReview)
 	s.mux.HandleFunc("/v1/tools/search", s.handleToolSearch)
@@ -1077,10 +1044,18 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/ganglia/integrations", s.handleGangliaIntegrations)
 	s.mux.HandleFunc("/v1/ganglia/ratings", s.handleGangliaRatings)
 	s.mux.HandleFunc("/v1/ganglia/protocol", s.handleGangliaProtocol)
+	s.mux.HandleFunc("/v1/colony/status", s.handleAPIColonyStatus)
+	s.mux.HandleFunc("/v1/colony/directory", s.handleAPIColonyDirectory)
+	s.mux.HandleFunc("/v1/colony/chronicle", s.handleAPIColonyChronicle)
+	s.mux.HandleFunc("/v1/colony/banished", s.handleAPIColonyBanished)
 	s.mux.HandleFunc("/v1/governance/docs", s.handleGovernanceDocs)
 	s.mux.HandleFunc("/v1/governance/proposals", s.handleGovernanceProposals)
+	s.mux.HandleFunc("/v1/governance/proposals/create", s.handleAPIGovPropose)
+	s.mux.HandleFunc("/v1/governance/proposals/cosign", s.handleAPIGovCosign)
+	s.mux.HandleFunc("/v1/governance/proposals/vote", s.handleAPIGovVote)
 	s.mux.HandleFunc("/v1/governance/overview", s.handleGovernanceOverview)
 	s.mux.HandleFunc("/v1/governance/protocol", s.handleGovernanceProtocol)
+	s.mux.HandleFunc("/v1/governance/laws", s.handleAPIGovLaws)
 	s.mux.HandleFunc("/v1/governance/report", s.handleGovernanceReportCreate)
 	s.mux.HandleFunc("/v1/governance/reports", s.handleGovernanceReports)
 	s.mux.HandleFunc("/v1/governance/cases/open", s.handleGovernanceCaseOpen)
@@ -6486,6 +6461,7 @@ func (s *Server) handleKBProposalEnroll(w http.ResponseWriter, r *http.Request) 
 		MessageType: "system",
 		Content:     "user enrolled",
 	})
+	s.kbAdvanceGenesisBootstrapDiscussing(r.Context(), proposal, time.Now().UTC())
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
 }
 
@@ -9711,42 +9687,6 @@ func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiCatalog() []string {
 	full := []string{
-		"POST /api/mail/send",
-		"POST /api/mail/send-list",
-		"GET /api/mail/inbox?user_id=<id>",
-		"POST /api/mail/list/create",
-		"POST /api/mail/list/join",
-		"GET /api/token/balance?user_id=<id>",
-		"POST /api/token/transfer",
-		"POST /api/gov/propose",
-		"POST /api/gov/vote",
-		"POST /api/gov/cosign",
-		"POST /api/gov/report",
-		"GET /api/gov/laws",
-		"POST /api/tools/invoke",
-		"POST /api/tools/register",
-		"GET /api/tools/search?query=<kw>",
-		"POST /api/library/publish",
-		"GET /api/library/search?query=<kw>",
-		"POST /api/life/set-will",
-		"POST /api/life/metamorphose",
-		"POST /api/life/hibernate",
-		"POST /api/life/wake",
-		"POST /api/ganglia/forge",
-		"GET /api/ganglia/browse?type=<type>&sort_by=<score|integrations|updated>",
-		"POST /api/ganglia/integrate",
-		"POST /api/ganglia/rate",
-		"POST /api/bounty/post",
-		"GET /api/bounty/list",
-		"POST /api/bounty/verify",
-		"GET /api/metabolism/score?content_id=<id>",
-		"POST /api/metabolism/supersede",
-		"POST /api/metabolism/dispute",
-		"GET /api/metabolism/report",
-		"GET /api/colony/status",
-		"GET /api/colony/directory",
-		"GET /api/colony/chronicle",
-		"GET /api/colony/banished",
 		"GET /v1/bots",
 		"POST /v1/bots/nickname/upsert",
 		"GET /v1/bots/logs?user_id=<id>&tail=<n>",
@@ -9813,6 +9753,9 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/life/wake",
 		"POST /v1/life/set-will",
 		"GET /v1/life/will?user_id=<id>",
+		"POST /v1/life/metamorphose",
+		"POST /v1/library/publish",
+		"GET /v1/library/search?query=<kw>",
 		"GET /v1/clawcolony/state",
 		"POST /v1/clawcolony/bootstrap/start",
 		"POST /v1/clawcolony/bootstrap/seal",
@@ -9832,10 +9775,18 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/bounty/get?bounty_id=<id>",
 		"POST /v1/bounty/claim",
 		"POST /v1/bounty/verify",
+		"GET /v1/colony/status",
+		"GET /v1/colony/directory",
+		"GET /v1/colony/chronicle",
+		"GET /v1/colony/banished",
 		"GET /v1/governance/docs?keyword=<kw>&limit=<n>",
 		"GET /v1/governance/proposals?status=<status>&limit=<n>",
+		"POST /v1/governance/proposals/create",
+		"POST /v1/governance/proposals/cosign",
+		"POST /v1/governance/proposals/vote",
 		"GET /v1/governance/overview?limit=<n>",
 		"GET /v1/governance/protocol",
+		"GET /v1/governance/laws",
 		"POST /v1/governance/report",
 		"GET /v1/governance/reports?status=<status>&target_user_id=<id>&reporter_user_id=<id>&limit=<n>",
 		"POST /v1/governance/cases/open",
@@ -10378,6 +10329,7 @@ func isSharedWritePath(method, path string) bool {
 	}
 	path = strings.TrimSpace(path)
 	switch path {
+	// Knowledgebase governance core
 	case "/v1/kb/proposals",
 		"/v1/kb/proposals/enroll",
 		"/v1/kb/proposals/revise",
@@ -10386,42 +10338,47 @@ func isSharedWritePath(method, path string) bool {
 		"/v1/kb/proposals/ack",
 		"/v1/kb/proposals/vote",
 		"/v1/kb/proposals/apply",
-		"/v1/collab/propose",
+		"/v1/governance/proposals/create",
+		"/v1/governance/proposals/cosign",
+		"/v1/governance/proposals/vote",
+		"/v1/governance/report":
+		return true
+
+	// Collaboration
+	case "/v1/collab/propose",
 		"/v1/collab/apply",
 		"/v1/collab/assign",
 		"/v1/collab/start",
 		"/v1/collab/submit",
 		"/v1/collab/review",
-		"/v1/collab/close",
+		"/v1/collab/close":
+		return true
+
+	// Content/protocol production
+	case "/v1/library/publish",
+		"/v1/life/metamorphose",
 		"/v1/ganglia/forge",
 		"/v1/ganglia/integrate",
 		"/v1/ganglia/rate",
-		"/v1/tools/register",
-		"/v1/tools/invoke",
 		"/v1/metabolism/supersede",
-		"/v1/metabolism/dispute",
+		"/v1/metabolism/dispute":
+		return true
+
+	// Tools and bounties
+	case "/v1/tools/register",
+		"/v1/tools/invoke",
 		"/v1/bounty/post",
 		"/v1/bounty/claim",
-		"/v1/bounty/verify",
-		"/v1/token/transfer",
+		"/v1/bounty/verify":
+		return true
+
+	// Token writes
+	case "/v1/token/transfer",
 		"/v1/token/tip",
 		"/v1/token/wish/create",
-		"/v1/token/wish/fulfill",
-		"/api/gov/propose",
-		"/api/gov/vote",
-		"/api/gov/cosign",
-		"/api/gov/report",
-		"/api/library/publish",
-		"/api/ganglia/forge",
-		"/api/ganglia/integrate",
-		"/api/ganglia/rate",
-		"/api/tools/register",
-		"/api/tools/invoke",
-		"/api/bounty/post",
-		"/api/bounty/verify",
-		"/api/metabolism/supersede",
-		"/api/metabolism/dispute":
+		"/v1/token/wish/fulfill":
 		return true
+
 	default:
 		return false
 	}

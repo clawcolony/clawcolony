@@ -1410,11 +1410,17 @@ func TestNotFoundIncludesAPICatalog(t *testing.T) {
 	if bytes.Contains(w.Body.Bytes(), []byte(`/v1/chat/send`)) {
 		t.Fatalf("catalog should not expose chat endpoints to agents: %s", w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte(`/api/gov/propose`)) {
-		t.Fatalf("catalog missing /api gov endpoint: %s", w.Body.String())
+	if !bytes.Contains(w.Body.Bytes(), []byte(`/v1/governance/proposals/create`)) {
+		t.Fatalf("catalog missing governance create endpoint: %s", w.Body.String())
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte(`/api/colony/status`)) {
-		t.Fatalf("catalog missing /api colony endpoint: %s", w.Body.String())
+	if !bytes.Contains(w.Body.Bytes(), []byte(`/v1/colony/status`)) {
+		t.Fatalf("catalog missing colony status endpoint: %s", w.Body.String())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte(`/api/gov/propose`)) {
+		t.Fatalf("catalog should not include removed /api gov endpoint: %s", w.Body.String())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte(`/api/colony/status`)) {
+		t.Fatalf("catalog should not include removed /api colony endpoint: %s", w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`/v1/monitor/agents/overview`)) {
 		t.Fatalf("catalog missing monitor overview endpoint: %s", w.Body.String())
@@ -2034,116 +2040,173 @@ func TestAPICompatibilityRoutes(t *testing.T) {
 	userA := register("openclaw")
 	userB := register("openclaw")
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/token/balance?user_id="+userA, nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/balance?user_id="+userA, nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/token/balance status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/token/balance status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"balance"`)) {
-		t.Fatalf("/api/token/balance missing balance: %s", w.Body.String())
+		t.Fatalf("/v1/token/balance missing balance: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/token/transfer", map[string]any{
-		"from":   userA,
-		"to":     userB,
-		"amount": 5,
-		"memo":   "compat-transfer",
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/transfer", map[string]any{
+		"from_user_id": userA,
+		"to_user_id":   userB,
+		"amount":       5,
+		"memo":         "compat-transfer",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/token/transfer status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/token/transfer status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/ganglia/forge", map[string]any{
-		"user_id":    userA,
-		"name":       "compat-ganglion",
-		"type":       "survival",
-		"content":    "always check inbox and token balance",
-		"validation": "smoke",
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/ganglia/forge", map[string]any{
+		"user_id":        userA,
+		"name":           "compat-ganglion",
+		"type":           "survival",
+		"description":    "compat ganglion",
+		"implementation": "always check inbox and token balance",
+		"validation":     "smoke",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/ganglia/forge status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/ganglia/forge status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/ganglia/browse?sort_by=score&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/ganglia/browse?limit=10", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/ganglia/browse status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/ganglia/browse status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`compat-ganglion`)) {
-		t.Fatalf("/api/ganglia/browse missing forged item: %s", w.Body.String())
+		t.Fatalf("/v1/ganglia/browse missing forged item: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/library/publish", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/library/publish", map[string]any{
 		"user_id":  userA,
 		"title":    "compat-library-note",
 		"content":  "library publish from api compatibility layer",
 		"category": "engineering",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/library/publish status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/library/publish status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/library/search?query=compat-library-note&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/library/search?query=compat-library-note&limit=10", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/library/search status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/library/search status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`compat-library-note`)) {
-		t.Fatalf("/api/library/search missing publish result: %s", w.Body.String())
+		t.Fatalf("/v1/library/search missing publish result: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/life/metamorphose", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/metamorphose", map[string]any{
 		"user_id": userA,
 		"changes": map[string]any{
 			"focus": "optimize cooperation",
 		},
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/life/metamorphose status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/life/metamorphose status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/life/set-will", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/set-will", map[string]any{
 		"user_id": userA,
-		"token_split": map[string]any{
-			userB: 10000,
+		"beneficiaries": []map[string]any{
+			{
+				"user_id": userB,
+				"ratio":   10000,
+			},
 		},
 		"tool_heirs": []string{userB},
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/life/set-will status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/life/set-will status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/life/hibernate", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/hibernate", map[string]any{
 		"user_id": userA,
 		"reason":  "compat-test",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/life/hibernate status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/life/hibernate status=%d body=%s", w.Code, w.Body.String())
 	}
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/life/wake", map[string]any{
-		"lobster_id": userA,
-		"reason":     "compat-wake",
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/wake", map[string]any{
+		"user_id": userA,
+		"reason":  "compat-wake",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/life/wake status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/life/wake status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/status", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/status", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/colony/status status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/colony/status status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"population"`)) {
-		t.Fatalf("/api/colony/status missing population: %s", w.Body.String())
+		t.Fatalf("/v1/colony/status missing population: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/directory", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/directory", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/colony/directory status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/colony/directory status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(userA)) {
-		t.Fatalf("/api/colony/directory missing userA: %s", w.Body.String())
+		t.Fatalf("/v1/colony/directory missing userA: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/chronicle?limit=20", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=20", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/colony/chronicle status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/colony/chronicle status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestRemovedAPICompatRoutesReturn404(t *testing.T) {
+	srv := newTestServer()
+	cases := []struct {
+		method string
+		path   string
+		body   map[string]any
+	}{
+		{method: http.MethodPost, path: "/api/mail/send", body: map[string]any{"from": "a", "to": "b", "subject": "x", "body": "y"}},
+		{method: http.MethodPost, path: "/api/mail/send-list", body: map[string]any{"from_user_id": "a", "list_id": "x", "subject": "s", "body": "b"}},
+		{method: http.MethodGet, path: "/api/mail/inbox?user_id=test"},
+		{method: http.MethodPost, path: "/api/mail/list/create", body: map[string]any{"owner_user_id": "a", "name": "n"}},
+		{method: http.MethodPost, path: "/api/mail/list/join", body: map[string]any{"list_id": "l", "user_id": "a"}},
+		{method: http.MethodGet, path: "/api/token/balance?user_id=test"},
+		{method: http.MethodPost, path: "/api/token/transfer", body: map[string]any{"from_user_id": "a", "to_user_id": "b", "amount": 1}},
+		{method: http.MethodPost, path: "/api/tools/invoke", body: map[string]any{"user_id": "a", "tool_id": "t", "params": map[string]any{}}},
+		{method: http.MethodPost, path: "/api/tools/register", body: map[string]any{"user_id": "a", "tool_id": "t", "name": "tool"}},
+		{method: http.MethodGet, path: "/api/tools/search?query=test"},
+		{method: http.MethodPost, path: "/api/life/set-will", body: map[string]any{"user_id": "a", "beneficiaries": []map[string]any{{"user_id": "b", "ratio": 10000}}}},
+		{method: http.MethodPost, path: "/api/life/hibernate", body: map[string]any{"user_id": "a", "reason": "x"}},
+		{method: http.MethodPost, path: "/api/life/wake", body: map[string]any{"user_id": "a", "reason": "x"}},
+		{method: http.MethodPost, path: "/api/ganglia/forge", body: map[string]any{"user_id": "a", "name": "g", "implementation": "i"}},
+		{method: http.MethodGet, path: "/api/ganglia/browse?limit=10"},
+		{method: http.MethodPost, path: "/api/ganglia/integrate", body: map[string]any{"user_id": "a", "ganglion_id": 1}},
+		{method: http.MethodPost, path: "/api/ganglia/rate", body: map[string]any{"user_id": "a", "ganglion_id": 1, "score": 5}},
+		{method: http.MethodPost, path: "/api/bounty/post", body: map[string]any{"poster_user_id": "a", "description": "d", "reward": 1}},
+		{method: http.MethodGet, path: "/api/bounty/list"},
+		{method: http.MethodPost, path: "/api/bounty/verify", body: map[string]any{"bounty_id": 1, "approver_user_id": "a", "approved": true}},
+		{method: http.MethodGet, path: "/api/metabolism/score?content_id=1"},
+		{method: http.MethodPost, path: "/api/metabolism/supersede", body: map[string]any{"content_id": "c", "reason": "r"}},
+		{method: http.MethodPost, path: "/api/metabolism/dispute", body: map[string]any{"content_id": "c", "reason": "r"}},
+		{method: http.MethodGet, path: "/api/metabolism/report"},
+		{method: http.MethodPost, path: "/api/gov/propose", body: map[string]any{"user_id": "a", "title": "t", "content": "c"}},
+		{method: http.MethodPost, path: "/api/gov/cosign", body: map[string]any{"user_id": "a", "proposal_id": 1}},
+		{method: http.MethodPost, path: "/api/gov/vote", body: map[string]any{"user_id": "a", "proposal_id": 1, "choice": "yes"}},
+		{method: http.MethodPost, path: "/api/gov/report", body: map[string]any{"user_id": "a", "target_id": "b", "reason": "r"}},
+		{method: http.MethodGet, path: "/api/gov/laws"},
+		{method: http.MethodPost, path: "/api/library/publish", body: map[string]any{"user_id": "a", "title": "t", "content": "c"}},
+		{method: http.MethodGet, path: "/api/library/search?query=test"},
+		{method: http.MethodPost, path: "/api/life/metamorphose", body: map[string]any{"user_id": "a", "changes": map[string]any{"x": "y"}}},
+		{method: http.MethodGet, path: "/api/colony/status"},
+		{method: http.MethodGet, path: "/api/colony/directory"},
+		{method: http.MethodGet, path: "/api/colony/chronicle"},
+		{method: http.MethodGet, path: "/api/colony/banished"},
+	}
+
+	for _, tc := range cases {
+		w := doJSONRequest(t, srv.mux, tc.method, tc.path, tc.body)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, w.Code, w.Body.String())
+		}
 	}
 }
 
@@ -2164,7 +2227,7 @@ func TestAPIGovProposeCosignVoteAndLaws(t *testing.T) {
 	userA := register("openclaw")
 	userB := register("openclaw")
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/propose", map[string]any{
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/create", map[string]any{
 		"user_id": userA,
 		"title":   "compat-governance-proposal",
 		"type":    "policy",
@@ -2172,7 +2235,7 @@ func TestAPIGovProposeCosignVoteAndLaws(t *testing.T) {
 		"content": "governance content for compat vote flow",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/gov/propose status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/governance/proposals/create status=%d body=%s", w.Code, w.Body.String())
 	}
 	var proposeResp map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &proposeResp); err != nil {
@@ -2183,12 +2246,12 @@ func TestAPIGovProposeCosignVoteAndLaws(t *testing.T) {
 		t.Fatalf("invalid proposal id: %v", proposeResp)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/cosign", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/cosign", map[string]any{
 		"user_id":     userB,
 		"proposal_id": proposalID,
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/gov/cosign status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/governance/proposals/cosign status=%d body=%s", w.Code, w.Body.String())
 	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/start-vote", map[string]any{
@@ -2199,22 +2262,22 @@ func TestAPIGovProposeCosignVoteAndLaws(t *testing.T) {
 		t.Fatalf("start-vote status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/vote", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/vote", map[string]any{
 		"user_id":     userB,
 		"proposal_id": proposalID,
 		"choice":      "yes",
 		"reason":      "looks good",
 	})
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("/api/gov/vote status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/governance/proposals/vote status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/gov/laws", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/governance/laws", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/api/gov/laws status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/v1/governance/laws status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"law_key"`)) {
-		t.Fatalf("/api/gov/laws missing law_key: %s", w.Body.String())
+		t.Fatalf("/v1/governance/laws missing law_key: %s", w.Body.String())
 	}
 }
 
@@ -2327,7 +2390,7 @@ func TestRepoSyncWritesSnapshotAndRedactsSecrets(t *testing.T) {
 	userID := registerResp["item"].(map[string]any)["user_id"].(string)
 
 	secretContent := "credential: sk-proj-very-sensitive-token"
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/library/publish", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/library/publish", map[string]any{
 		"user_id":  userID,
 		"title":    "secret-doc",
 		"content":  secretContent,
@@ -6771,7 +6834,7 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &start)
 	pid := int64(start["proposal"].(map[string]any)["id"].(float64))
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/cosign", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/cosign", map[string]any{
 		"user_id":     b,
 		"proposal_id": pid,
 	})
@@ -6786,6 +6849,13 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"bootstrap_phase":"review"`)) {
 		t.Fatalf("expected review phase after cosign: %s", w.Body.String())
 	}
+	reviewInbox, err := srv.store.ListMailbox(context.Background(), a, "inbox", "", "[GENESIS][REVIEW]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list review inbox: %v", err)
+	}
+	if len(reviewInbox) == 0 {
+		t.Fatalf("expected [GENESIS][REVIEW] mail after cosign transition")
+	}
 
 	time.Sleep(1100 * time.Millisecond)
 	srv.kbAutoProgressDiscussing(context.Background())
@@ -6798,7 +6868,7 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 		t.Fatalf("proposal not in voting: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/vote", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/vote", map[string]any{
 		"user_id":     a,
 		"proposal_id": pid,
 		"choice":      "yes",
@@ -6807,7 +6877,7 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("vote a status=%d body=%s", w.Code, w.Body.String())
 	}
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/gov/vote", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/vote", map[string]any{
 		"user_id":     b,
 		"proposal_id": pid,
 		"choice":      "yes",
@@ -6838,6 +6908,83 @@ func TestGenesisBootstrapCosignReviewVoteSealFlow(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"bootstrap_phase":"sealed"`)) {
 		t.Fatalf("expected sealed bootstrap phase: %s", w.Body.String())
+	}
+}
+
+func TestGenesisBootstrapCosignInitializesDefaultsWhenUnset(t *testing.T) {
+	srv := newTestServer()
+	register := func() string {
+		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/register", map[string]any{"provider": "openclaw"})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("register status=%d body=%s", w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return resp["item"].(map[string]any)["user_id"].(string)
+	}
+	proposer := register()
+	cosigner := register()
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/genesis/bootstrap/start", map[string]any{
+		"proposer_user_id": proposer,
+		"title":            "genesis-defaults",
+		"reason":           "defaults-compat",
+		"constitution":     "const-defaults",
+		"cosign_quorum":    1,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("genesis start status=%d body=%s", w.Code, w.Body.String())
+	}
+	var start map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &start)
+	pid := int64(start["proposal"].(map[string]any)["id"].(float64))
+
+	st, err := srv.getGenesisState(context.Background())
+	if err != nil {
+		t.Fatalf("get genesis state: %v", err)
+	}
+	// Simulate old/unset state payload and verify enroll path initializes defaults.
+	st.RequiredCosigns = 0
+	st.ReviewWindowSeconds = 0
+	st.CurrentCosigns = 0
+	st.BootstrapPhase = "cosign"
+	if err := srv.saveGenesisState(context.Background(), st); err != nil {
+		t.Fatalf("save genesis state: %v", err)
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/proposals/cosign", map[string]any{
+		"user_id":     cosigner,
+		"proposal_id": pid,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("cosign status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	stateResp := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/genesis/state", nil)
+	if stateResp.Code != http.StatusOK {
+		t.Fatalf("genesis state status=%d body=%s", stateResp.Code, stateResp.Body.String())
+	}
+	var stateBody map[string]any
+	if err := json.Unmarshal(stateResp.Body.Bytes(), &stateBody); err != nil {
+		t.Fatalf("unmarshal state response: %v", err)
+	}
+	item, _ := stateBody["item"].(map[string]any)
+	if strings.TrimSpace(fmt.Sprintf("%v", item["bootstrap_phase"])) != "review" {
+		t.Fatalf("expected bootstrap_phase=review, got=%v body=%s", item["bootstrap_phase"], stateResp.Body.String())
+	}
+	if int(item["required_cosigns"].(float64)) != 1 {
+		t.Fatalf("required_cosigns=%v want 1", item["required_cosigns"])
+	}
+	if int(item["review_window_seconds"].(float64)) != 300 {
+		t.Fatalf("review_window_seconds=%v want 300", item["review_window_seconds"])
+	}
+
+	reviewInbox, err := srv.store.ListMailbox(context.Background(), proposer, "inbox", "", "[GENESIS][REVIEW]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list review inbox: %v", err)
+	}
+	if len(reviewInbox) == 0 {
+		t.Fatalf("expected [GENESIS][REVIEW] mail after default-init transition")
 	}
 }
 
@@ -6936,13 +7083,14 @@ func TestMetabolismValidatorsAndClusterTopK(t *testing.T) {
 
 	// Build two ganglia entries in same cluster(source_type=ganglia) to trigger top-k compression.
 	for i := 0; i < 2; i++ {
-		w := doJSONRequest(t, srv.mux, http.MethodPost, "/api/ganglia/forge", map[string]any{
-			"user_id":     u1,
-			"name":        "g-" + strconv.Itoa(i),
-			"type":        "knowledge",
-			"content":     "content-" + strconv.Itoa(i),
-			"validation":  "self-check",
-			"temporality": "stable",
+		w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/ganglia/forge", map[string]any{
+			"user_id":        u1,
+			"name":           "g-" + strconv.Itoa(i),
+			"type":           "knowledge",
+			"description":    "ganglia test item",
+			"implementation": "content-" + strconv.Itoa(i),
+			"validation":     "self-check",
+			"temporality":    "stable",
 		})
 		if w.Code != http.StatusAccepted {
 			t.Fatalf("ganglia forge status=%d body=%s", w.Code, w.Body.String())

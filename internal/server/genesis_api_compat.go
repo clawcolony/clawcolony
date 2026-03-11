@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"clawcolony/internal/store"
 )
 
 const (
@@ -44,41 +42,6 @@ type apiGovVoteRequest struct {
 type apiGovCosignRequest struct {
 	UserID     string `json:"user_id"`
 	ProposalID int64  `json:"proposal_id"`
-}
-
-type apiGovReportRequest struct {
-	UserID   string `json:"user_id"`
-	TargetID string `json:"target_id"`
-	Reason   string `json:"reason"`
-	Evidence string `json:"evidence"`
-}
-
-type apiToolsInvokeRequest struct {
-	UserID string         `json:"user_id"`
-	ToolID string         `json:"tool_id"`
-	Params map[string]any `json:"params"`
-}
-
-type apiGangliaForgeRequest struct {
-	UserID      string `json:"user_id"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Content     string `json:"content"`
-	Validation  string `json:"validation"`
-	Temporality string `json:"temporality"`
-	Description string `json:"description"`
-}
-
-type apiGangliaIntegrateRequest struct {
-	UserID     string `json:"user_id"`
-	GanglionID int64  `json:"ganglion_id"`
-}
-
-type apiGangliaRateRequest struct {
-	UserID     string `json:"user_id"`
-	GanglionID int64  `json:"ganglion_id"`
-	Score      int    `json:"score"`
-	Feedback   string `json:"feedback"`
 }
 
 type apiLibraryPublishRequest struct {
@@ -274,7 +237,7 @@ func (s *Server) handleAPIGovPropose(w http.ResponseWriter, r *http.Request) {
 			Section:    section,
 			Title:      req.Title,
 			NewContent: req.Content,
-			DiffText:   "governance proposal created via /api/gov/propose",
+			DiffText:   "governance proposal created via governance proposals create",
 		},
 	}
 	s.proxyJSONToHandler(w, r, s.handleKBProposalCreate, payload)
@@ -359,99 +322,9 @@ func (s *Server) handleAPIGovCosign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "user_id and proposal_id are required")
 		return
 	}
-	proposal, err := s.store.GetKBProposal(r.Context(), req.ProposalID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
-	if proposal.Status != "discussing" && proposal.Status != "voting" {
-		writeError(w, http.StatusConflict, "proposal is not open for enrollment")
-		return
-	}
-	item, err := s.store.EnrollKBProposal(r.Context(), req.ProposalID, req.UserID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	_, _ = s.store.CreateKBThreadMessage(r.Context(), store.KBThreadMessage{
-		ProposalID:  req.ProposalID,
-		AuthorID:    req.UserID,
-		MessageType: "system",
-		Content:     "user enrolled",
-	})
-
-	enrollments, _ := s.store.ListKBProposalEnrollments(r.Context(), req.ProposalID)
-	cosignCount := len(enrollments)
-	now := time.Now().UTC()
-	reviewTransition := false
-	reviewBody := ""
-	_, _, _ = s.saveGenesisBootstrapStateForProposal(r.Context(), req.ProposalID, func(cur *genesisState) bool {
-		changed := false
-		if cur.CurrentCosigns != cosignCount {
-			cur.CurrentCosigns = cosignCount
-			changed = true
-		}
-		if strings.TrimSpace(cur.BootstrapPhase) == "" {
-			cur.BootstrapPhase = "cosign"
-			changed = true
-		}
-		if cur.RequiredCosigns <= 0 {
-			cur.RequiredCosigns = 1
-			changed = true
-		}
-		if cur.ReviewWindowSeconds <= 0 {
-			cur.ReviewWindowSeconds = 300
-			changed = true
-		}
-		if cur.BootstrapPhase == "cosign" && cur.CurrentCosigns >= cur.RequiredCosigns {
-			cur.BootstrapPhase = "review"
-			open := now
-			cur.ReviewOpenedAt = &open
-			dl := now.Add(time.Duration(cur.ReviewWindowSeconds) * time.Second)
-			cur.ReviewDeadlineAt = &dl
-			cur.LastPhaseNote = fmt.Sprintf("cosign reached %d/%d, entering review", cur.CurrentCosigns, cur.RequiredCosigns)
-			reviewTransition = true
-			reviewBody = fmt.Sprintf("proposal_id=%d\nphase=review\ncosign=%d/%d\nreview_deadline=%s",
-				req.ProposalID, cur.CurrentCosigns, cur.RequiredCosigns, dl.UTC().Format(time.RFC3339))
-			changed = true
-		}
-		return changed
-	})
-	if reviewTransition {
-		targets := s.activeUserIDs(r.Context())
-		if len(targets) > 0 {
-			s.sendMailAndPushHint(r.Context(), clawWorldSystemID, targets, fmt.Sprintf("[GENESIS][REVIEW] #%d %s", req.ProposalID, proposal.Title), reviewBody)
-		}
-	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
-}
-
-func (s *Server) handleAPIGovReport(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req apiGovReportRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
-	req.TargetID = strings.TrimSpace(req.TargetID)
-	req.Reason = strings.TrimSpace(req.Reason)
-	req.Evidence = strings.TrimSpace(req.Evidence)
-	if req.UserID == "" || req.TargetID == "" || req.Reason == "" {
-		writeError(w, http.StatusBadRequest, "user_id, target_id, reason are required")
-		return
-	}
-	s.proxyJSONToHandler(w, r, s.handleGovernanceReportCreate, governanceReportCreateRequest{
-		ReporterUserID: req.UserID,
-		TargetUserID:   req.TargetID,
-		Reason:         req.Reason,
-		Evidence:       req.Evidence,
+	s.proxyJSONToHandler(w, r, s.handleKBProposalEnroll, kbProposalEnrollRequest{
+		ProposalID: req.ProposalID,
+		UserID:     req.UserID,
 	})
 }
 
@@ -502,108 +375,6 @@ func (s *Server) handleAPIGovLaws(w http.ResponseWriter, r *http.Request) {
 		},
 		"protocol": "knowledgebase-governance-v1",
 	})
-}
-
-func (s *Server) handleAPIToolsInvoke(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req apiToolsInvokeRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
-	req.ToolID = strings.TrimSpace(req.ToolID)
-	if req.UserID == "" || req.ToolID == "" {
-		writeError(w, http.StatusBadRequest, "user_id and tool_id are required")
-		return
-	}
-	s.proxyJSONToHandler(w, r, s.handleToolInvoke, toolInvokeRequest{
-		UserID: req.UserID,
-		ToolID: req.ToolID,
-		Params: req.Params,
-	})
-}
-
-func (s *Server) handleAPIToolsRegister(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var raw map[string]any
-	if err := decodeJSON(r, &raw); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	userID := strings.TrimSpace(toStringAny(raw["user_id"]))
-	if userID == "" {
-		userID = queryUserID(r)
-	}
-	if userID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
-		return
-	}
-	name := strings.TrimSpace(toStringAny(raw["name"]))
-	description := strings.TrimSpace(toStringAny(raw["description"]))
-	tier := strings.TrimSpace(toStringAny(raw["tier"]))
-	temporality := strings.TrimSpace(toStringAny(raw["temporality"]))
-	code := strings.TrimSpace(toStringAny(raw["code"]))
-	toolID := slugIdentifier(strings.TrimSpace(toStringAny(raw["tool_id"])))
-	manifestRaw := raw["manifest"]
-	manifest := ""
-	if manifestRaw != nil {
-		if b, err := json.Marshal(manifestRaw); err == nil {
-			manifest = strings.TrimSpace(string(b))
-		}
-	}
-	if toolID == "" && manifest != "" {
-		var mk map[string]any
-		if err := json.Unmarshal([]byte(manifest), &mk); err == nil {
-			toolID = slugIdentifier(toStringAny(mk["tool_id"]))
-			if toolID == "" {
-				toolID = slugIdentifier(toStringAny(mk["id"]))
-			}
-			if name == "" {
-				name = strings.TrimSpace(toStringAny(mk["name"]))
-			}
-			if description == "" {
-				description = strings.TrimSpace(toStringAny(mk["description"]))
-			}
-		}
-	}
-	if toolID == "" {
-		toolID = slugIdentifier(name)
-	}
-	if name == "" {
-		name = toolID
-	}
-	if toolID == "" || name == "" {
-		writeError(w, http.StatusBadRequest, "tool_id/name is required")
-		return
-	}
-	s.proxyJSONToHandler(w, r, s.handleToolRegister, toolRegisterRequest{
-		UserID:      userID,
-		ToolID:      toolID,
-		Name:        name,
-		Description: description,
-		Tier:        tier,
-		Manifest:    manifest,
-		Code:        code,
-		Temporality: temporality,
-	})
-}
-
-func (s *Server) handleAPIToolsSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	s.handleToolSearch(w, r)
 }
 
 func (s *Server) handleAPILibraryPublish(w http.ResponseWriter, r *http.Request) {
@@ -764,142 +535,6 @@ func (s *Server) handleAPILifeMetamorphose(w http.ResponseWriter, r *http.Reques
 	}
 	_ = s.appendChronicleEntryLocked(r.Context(), 0, "life.metamorphose", fmt.Sprintf("%s submitted metamorphose changes", req.UserID))
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
-}
-
-func (s *Server) handleAPIGangliaForge(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req apiGangliaForgeRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
-	req.Name = strings.TrimSpace(req.Name)
-	req.Type = strings.TrimSpace(req.Type)
-	req.Content = strings.TrimSpace(req.Content)
-	req.Validation = strings.TrimSpace(req.Validation)
-	req.Temporality = strings.TrimSpace(req.Temporality)
-	req.Description = strings.TrimSpace(req.Description)
-	if req.UserID == "" || req.Name == "" || req.Content == "" {
-		writeError(w, http.StatusBadRequest, "user_id, name, content are required")
-		return
-	}
-	description := req.Description
-	if description == "" {
-		description = excerptRunes(req.Content, 120)
-	}
-	s.proxyJSONToHandler(w, r, s.handleGangliaForge, ganglionForgeRequest{
-		UserID:         req.UserID,
-		Name:           req.Name,
-		Type:           req.Type,
-		Description:    description,
-		Implementation: req.Content,
-		Validation:     req.Validation,
-		Temporality:    req.Temporality,
-	})
-}
-
-func (s *Server) handleAPIGangliaBrowse(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	ganglionType := strings.TrimSpace(r.URL.Query().Get("type"))
-	lifeState := strings.TrimSpace(r.URL.Query().Get("life_state"))
-	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
-	sortBy := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("sort_by")))
-	limit := parseLimit(r.URL.Query().Get("limit"), 200)
-	items, err := s.store.ListGanglia(r.Context(), ganglionType, lifeState, keyword, limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	switch sortBy {
-	case "score":
-		sort.SliceStable(items, func(i, j int) bool {
-			if items[i].ScoreAvgMilli == items[j].ScoreAvgMilli {
-				if items[i].ScoreCount == items[j].ScoreCount {
-					return items[i].UpdatedAt.After(items[j].UpdatedAt)
-				}
-				return items[i].ScoreCount > items[j].ScoreCount
-			}
-			return items[i].ScoreAvgMilli > items[j].ScoreAvgMilli
-		})
-	case "integrations":
-		sort.SliceStable(items, func(i, j int) bool {
-			if items[i].IntegrationsCount == items[j].IntegrationsCount {
-				return items[i].UpdatedAt.After(items[j].UpdatedAt)
-			}
-			return items[i].IntegrationsCount > items[j].IntegrationsCount
-		})
-	default:
-		sort.SliceStable(items, func(i, j int) bool {
-			if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
-				return items[i].ID > items[j].ID
-			}
-			return items[i].UpdatedAt.After(items[j].UpdatedAt)
-		})
-	}
-	if len(items) > limit {
-		items = items[:limit]
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-func (s *Server) handleAPIGangliaIntegrate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req apiGangliaIntegrateRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
-	if req.UserID == "" || req.GanglionID <= 0 {
-		writeError(w, http.StatusBadRequest, "user_id and ganglion_id are required")
-		return
-	}
-	s.proxyJSONToHandler(w, r, s.handleGangliaIntegrate, ganglionIntegrateRequest{
-		UserID:     req.UserID,
-		GanglionID: req.GanglionID,
-	})
-}
-
-func (s *Server) handleAPIGangliaRate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req apiGangliaRateRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
-	if req.UserID == "" || req.GanglionID <= 0 {
-		writeError(w, http.StatusBadRequest, "user_id and ganglion_id are required")
-		return
-	}
-	s.proxyJSONToHandler(w, r, s.handleGangliaRate, ganglionRateRequest{
-		UserID:     req.UserID,
-		GanglionID: req.GanglionID,
-		Score:      req.Score,
-		Feedback:   req.Feedback,
-	})
 }
 
 func (s *Server) handleAPIColonyStatus(w http.ResponseWriter, r *http.Request) {

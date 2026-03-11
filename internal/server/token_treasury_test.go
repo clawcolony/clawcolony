@@ -48,7 +48,7 @@ func TestAPIColonyStatusIncludesTreasuryAndUptime(t *testing.T) {
 		t.Fatalf("append second tick: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/status", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/status", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("colony status=%d body=%s", w.Code, w.Body.String())
 	}
