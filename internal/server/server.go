@@ -951,6 +951,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/colony/chronicle", s.handleAPIColonyChronicle)
 	s.mux.HandleFunc("/api/colony/banished", s.handleAPIColonyBanished)
 	s.mux.HandleFunc("/v1/meta", s.handleMeta)
+	s.mux.HandleFunc("/v1/events", s.handleEvents)
 	s.mux.HandleFunc("/v1/internal/users/sync", s.handleInternalUserSync)
 	s.mux.HandleFunc("/v1/tian-dao/law", s.handleTianDaoLaw)
 	s.mux.HandleFunc("/v1/world/tick/status", s.handleWorldTickStatus)
@@ -961,6 +962,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/world/tick/replay", s.handleWorldTickReplay)
 	s.mux.HandleFunc("/v1/world/tick/steps", s.handleWorldTickSteps)
 	s.mux.HandleFunc("/v1/world/life-state", s.handleWorldLifeState)
+	s.mux.HandleFunc("/v1/world/life-state/transitions", s.handleWorldLifeStateTransitions)
 	s.mux.HandleFunc("/v1/world/cost-events", s.handleWorldCostEvents)
 	s.mux.HandleFunc("/v1/world/cost-summary", s.handleWorldCostSummary)
 	s.mux.HandleFunc("/v1/world/tool-audit", s.handleWorldToolAudit)
@@ -1718,6 +1720,57 @@ func (s *Server) handleWorldLifeState(w http.ResponseWriter, r *http.Request) {
 		"state":   state,
 		"items":   items,
 	})
+}
+
+func (s *Server) handleWorldLifeStateTransitions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	fromState, err := parseLifeStateQueryValue(r.URL.Query().Get("from_state"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	toState, err := parseLifeStateQueryValue(r.URL.Query().Get("to_state"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	filter := store.UserLifeStateTransitionFilter{
+		UserID:       queryUserID(r),
+		FromState:    fromState,
+		ToState:      toState,
+		TickID:       parseInt64(r.URL.Query().Get("tick_id")),
+		SourceModule: strings.TrimSpace(r.URL.Query().Get("source_module")),
+		ActorUserID:  strings.TrimSpace(r.URL.Query().Get("actor_user_id")),
+		Limit:        parseLimit(r.URL.Query().Get("limit"), 200),
+	}
+	items, err := s.store.ListUserLifeStateTransitions(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load life-state transitions")
+		return
+	}
+	resp := map[string]any{"items": items}
+	if filter.UserID != "" {
+		resp["user_id"] = filter.UserID
+	}
+	if filter.FromState != "" {
+		resp["from_state"] = filter.FromState
+	}
+	if filter.ToState != "" {
+		resp["to_state"] = filter.ToState
+	}
+	if filter.TickID > 0 {
+		resp["tick_id"] = filter.TickID
+	}
+	if filter.SourceModule != "" {
+		resp["source_module"] = filter.SourceModule
+	}
+	if filter.ActorUserID != "" {
+		resp["actor_user_id"] = filter.ActorUserID
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleWorldCostEvents(w http.ResponseWriter, r *http.Request) {
@@ -9560,6 +9613,7 @@ func (s *Server) apiCatalog() []string {
 		"GET /api/colony/directory",
 		"GET /api/colony/chronicle",
 		"GET /api/colony/banished",
+		"GET /v1/events?user_id=<id>&kind=<kind>&category=<category>&tick_id=<id>&object_type=<type>&object_id=<id>&since=<RFC3339>&until=<RFC3339>&limit=<n>&cursor=<n>",
 		"GET /v1/bots",
 		"POST /v1/bots/nickname/upsert",
 		"GET /v1/bots/logs?user_id=<id>&tail=<n>",
@@ -9578,6 +9632,7 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/world/tick/replay",
 		"GET /v1/world/tick/steps?tick_id=<id>&limit=<n>",
 		"GET /v1/world/life-state?user_id=<id>&state=alive|dying|hibernated|dead&limit=<n>",
+		"GET /v1/world/life-state/transitions?user_id=<id>&from_state=alive|dying|hibernated|dead&to_state=alive|dying|hibernated|dead&tick_id=<id>&source_module=<module>&actor_user_id=<id>&limit=<n>",
 		"GET /v1/world/cost-events?user_id=<id>&tick_id=<id>&limit=<n>",
 		"GET /v1/world/cost-summary?user_id=<id>&limit=<n>",
 		"GET /v1/world/tool-audit?user_id=<id>&tier=T0|T1|T2|T3&limit=<n>",
@@ -9782,6 +9837,29 @@ func normalizeLifeStateForServer(raw string) string {
 	}
 }
 
+func parseLifeStateQueryValue(raw string) (string, error) {
+	trimmed := strings.TrimSpace(strings.ToLower(raw))
+	if trimmed == "" {
+		return "", nil
+	}
+	switch trimmed {
+	case "alive", "dying", "hibernated", "dead":
+		return trimmed, nil
+	default:
+		return "", fmt.Errorf("life state must be one of: alive,dying,hibernated,dead")
+	}
+}
+
+func (s *Server) applyUserLifeState(ctx context.Context, item store.UserLifeState, audit store.UserLifeStateAuditMeta) (store.UserLifeState, *store.UserLifeStateTransition, error) {
+	if audit.SourceModule == "" {
+		audit.SourceModule = "life.state"
+	}
+	if audit.SourceRef == "" && audit.TickID > 0 {
+		audit.SourceRef = fmt.Sprintf("world_tick:%d", audit.TickID)
+	}
+	return s.store.ApplyUserLifeState(ctx, item, audit)
+}
+
 func (s *Server) runLifeStateTransitions(ctx context.Context, tickID int64) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -9821,7 +9899,10 @@ func (s *Server) runLifeStateTransitions(ctx context.Context, tickID int64) erro
 		}
 		balance := balanceByUser[userID]
 		current, getErr := s.store.GetUserLifeState(ctx, userID)
-		missing := getErr != nil
+		missing := errors.Is(getErr, store.ErrUserLifeStateNotFound)
+		if getErr != nil && !missing {
+			return getErr
+		}
 		if missing {
 			current = store.UserLifeState{
 				UserID: userID,
@@ -9835,12 +9916,15 @@ func (s *Server) runLifeStateTransitions(ctx context.Context, tickID int64) erro
 		}
 		if state == "hibernated" {
 			if balance <= 0 {
-				if _, err := s.store.UpsertUserLifeState(ctx, store.UserLifeState{
+				if _, _, err := s.applyUserLifeState(ctx, store.UserLifeState{
 					UserID:         userID,
 					State:          "dying",
 					DyingSinceTick: tickID,
 					DeadAtTick:     0,
 					Reason:         "hibernated_balance_zero",
+				}, store.UserLifeStateAuditMeta{
+					TickID:       tickID,
+					SourceModule: "world.life_state_transition",
 				}); err != nil {
 					return err
 				}
@@ -9850,24 +9934,30 @@ func (s *Server) runLifeStateTransitions(ctx context.Context, tickID int64) erro
 		if state == "alive" {
 			if balance > 0 {
 				if missing {
-					if _, err := s.store.UpsertUserLifeState(ctx, store.UserLifeState{
+					if _, _, err := s.applyUserLifeState(ctx, store.UserLifeState{
 						UserID:         userID,
 						State:          "alive",
 						DyingSinceTick: 0,
 						DeadAtTick:     0,
 						Reason:         "initialized",
+					}, store.UserLifeStateAuditMeta{
+						TickID:       tickID,
+						SourceModule: "world.life_state_transition",
 					}); err != nil {
 						return err
 					}
 				}
 				continue
 			}
-			if _, err := s.store.UpsertUserLifeState(ctx, store.UserLifeState{
+			if _, _, err := s.applyUserLifeState(ctx, store.UserLifeState{
 				UserID:         userID,
 				State:          "dying",
 				DyingSinceTick: tickID,
 				DeadAtTick:     0,
 				Reason:         "balance_zero",
+			}, store.UserLifeStateAuditMeta{
+				TickID:       tickID,
+				SourceModule: "world.life_state_transition",
 			}); err != nil {
 				return err
 			}
@@ -9880,36 +9970,45 @@ func (s *Server) runLifeStateTransitions(ctx context.Context, tickID int64) erro
 			dyingSince = tickID
 		}
 		if balance > 0 {
-			if _, err := s.store.UpsertUserLifeState(ctx, store.UserLifeState{
+			if _, _, err := s.applyUserLifeState(ctx, store.UserLifeState{
 				UserID:         userID,
 				State:          "alive",
 				DyingSinceTick: 0,
 				DeadAtTick:     0,
 				Reason:         "recovered",
+			}, store.UserLifeStateAuditMeta{
+				TickID:       tickID,
+				SourceModule: "world.life_state_transition",
 			}); err != nil {
 				return err
 			}
 			continue
 		}
 		if tickID-dyingSince >= int64(graceTicks) {
-			if _, err := s.store.UpsertUserLifeState(ctx, store.UserLifeState{
+			if _, _, err := s.applyUserLifeState(ctx, store.UserLifeState{
 				UserID:         userID,
 				State:          "dead",
 				DyingSinceTick: dyingSince,
 				DeadAtTick:     tickID,
 				Reason:         "grace_expired",
+			}, store.UserLifeStateAuditMeta{
+				TickID:       tickID,
+				SourceModule: "world.life_state_transition",
 			}); err != nil {
 				return err
 			}
 			s.executeWillIfNeeded(ctx, userID, tickID, balance)
 			continue
 		}
-		if _, err := s.store.UpsertUserLifeState(ctx, store.UserLifeState{
+		if _, _, err := s.applyUserLifeState(ctx, store.UserLifeState{
 			UserID:         userID,
 			State:          "dying",
 			DyingSinceTick: dyingSince,
 			DeadAtTick:     0,
 			Reason:         "awaiting_grace",
+		}, store.UserLifeStateAuditMeta{
+			TickID:       tickID,
+			SourceModule: "world.life_state_transition",
 		}); err != nil {
 			return err
 		}

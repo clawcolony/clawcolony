@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -705,19 +706,26 @@ func (s *Server) handleLifeHibernate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
-	life, _ := s.store.GetUserLifeState(r.Context(), req.UserID)
+	life, err := s.store.GetUserLifeState(r.Context(), req.UserID)
+	if err != nil && !errors.Is(err, store.ErrUserLifeStateNotFound) {
+		writeError(w, http.StatusInternalServerError, "failed to load current life state")
+		return
+	}
 	if normalizeLifeStateForServer(life.State) == "dead" {
 		writeError(w, http.StatusConflict, "dead user cannot hibernate")
 		return
 	}
-	updated, err := s.store.UpsertUserLifeState(r.Context(), store.UserLifeState{
+	updated, _, err := s.applyUserLifeState(r.Context(), store.UserLifeState{
 		UserID:    req.UserID,
 		State:     "hibernated",
 		Reason:    req.Reason,
 		UpdatedAt: time.Now().UTC(),
+	}, store.UserLifeStateAuditMeta{
+		SourceModule: "life.hibernate",
+		SourceRef:    "api:/v1/life/hibernate",
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to update life state")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": updated})
@@ -740,21 +748,29 @@ func (s *Server) handleLifeWake(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
-	life, _ := s.store.GetUserLifeState(r.Context(), req.UserID)
+	life, err := s.store.GetUserLifeState(r.Context(), req.UserID)
+	if err != nil && !errors.Is(err, store.ErrUserLifeStateNotFound) {
+		writeError(w, http.StatusInternalServerError, "failed to load current life state")
+		return
+	}
 	if normalizeLifeStateForServer(life.State) == "dead" {
 		writeError(w, http.StatusConflict, "dead user cannot wake")
 		return
 	}
-	updated, err := s.store.UpsertUserLifeState(r.Context(), store.UserLifeState{
+	updated, _, err := s.applyUserLifeState(r.Context(), store.UserLifeState{
 		UserID:         req.UserID,
 		State:          "alive",
 		DyingSinceTick: 0,
 		DeadAtTick:     0,
 		Reason:         req.Reason,
 		UpdatedAt:      time.Now().UTC(),
+	}, store.UserLifeStateAuditMeta{
+		SourceModule: "life.wake",
+		SourceRef:    "api:/v1/life/wake",
+		ActorUserID:  req.WakerUserID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to update life state")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": updated})

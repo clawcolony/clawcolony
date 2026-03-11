@@ -636,10 +636,11 @@ func (s *Server) collectMonitorEvents(ctx context.Context, userID string, limit 
 				),
 				Source: "request_logs",
 				Meta: map[string]any{
-					"path":        it.Path,
-					"method":      it.Method,
-					"status_code": it.StatusCode,
-					"duration_ms": it.DurationMS,
+					"request_log_id": it.ID,
+					"path":           it.Path,
+					"method":         it.Method,
+					"status_code":    it.StatusCode,
+					"duration_ms":    it.DurationMS,
 				},
 			})
 		}

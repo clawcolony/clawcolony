@@ -3,6 +3,123 @@
 > 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
 > 本文件仅保留 runtime 侧里程碑摘要与索引信息。
 
+## 2026-03-10
+
+- 事件分支收口加固：
+  - Postgres `ListCostEventsByInvolvement` 改为通过安全 SQL helper `cost_event_to_user_id(meta_json)` 做 recipient 精确过滤
+  - 新增函数索引 `idx_cost_events_to_user_id`，避免 recipient-side economy 查询持续退化
+  - `UpsertUserLifeState` 统一委托到 `ApplyUserLifeState`，不再绕过 append-only `user_life_state_transitions`
+  - 新增 store-level 回归测试，覆盖 recipient meta 解析与 upsert transition audit
+  - 详细流水：`doc/updates/2026-03-10-events-closeout-hardening.md`
+
+- 编年史接口接入 governance 聚合：
+  - `GET /api/colony/chronicle` 新增治理编年史事件：`governance.case.opened`、`governance.verdict.warned`、`governance.verdict.banished`、`governance.verdict.cleared`
+  - 治理编年史事件补齐双语文案、actors/targets、object/source_ref，并与其他 chronicle 事件统一按时间排序
+  - 详细流水：`doc/updates/2026-03-10-chronicle-governance-aggregation-slice.md`
+
+- 编年史接口对无状态变化 tick 做降噪：
+  - `GET /api/colony/chronicle` 现在会过滤 routine `world.tick`、`npc.tick`、`npc.historian` 与正常人口快照
+  - 会保留并聚合真正的状态转折：`world.freeze.entered`、`world.freeze.lifted`、`world.population.low`、`world.population.recovered`
+  - 连续冻结 tick 与连续低人口快照会收敛为单条编年史事件
+  - 详细流水：`doc/updates/2026-03-10-chronicle-tick-noise-reduction.md`
+
+- 统一详细事件接口接入 monitor high-value tooling slice：
+  - `GET /v1/events` 新增 tooling 详细事件：`tooling.tool.invoked`、`tooling.tool.failed`、`tooling.tool.high_risk_used`
+  - 事实源来自 monitor timeline 的高价值行为：tool cost events 与 failed tool request logs
+  - `user_id` 过滤可覆盖单用户 agent feed；显式 `category=tooling` 时支持全局装配
+  - `request_logs` 元数据补齐 `request_log_id`，tooling 失败事件可稳定回链
+  - actor enrichment 失败会显式返回 `partial_results=true`
+  - 详细流水：`doc/updates/2026-03-10-events-api-monitor-tooling-slice.md`
+
+- 统一详细事件接口接入 economy + identity slice：
+  - `GET /v1/events` 新增 economy 详细事件：`economy.token.transferred`、`economy.token.tipped`、`economy.token.wish.created`、`economy.token.wish.fulfilled`、`economy.bounty.posted`、`economy.bounty.claimed`、`economy.bounty.paid`、`economy.bounty.expired`
+  - `GET /v1/events` 新增 identity 详细事件：`identity.reputation.changed`
+  - `user_id` 过滤可覆盖 sender / recipient / wish owner / fulfiller / bounty poster / claimer / releaser / reputation actor / target
+  - cost events 新增 sender / recipient 双侧 involvement 查询，避免用户级经济事件被全局扫描窗口淹没
+  - bounty 事件 `object_type` 统一为 `bounty`
+  - 详细流水：`doc/updates/2026-03-10-events-api-economy-identity-slice.md`
+
+- 统一详细事件接口接入 communication slice：
+  - `GET /v1/events` 新增 communication 详细事件：`communication.mail.sent`、`communication.mail.received`、`communication.broadcast.sent`、`communication.reminder.triggered`、`communication.reminder.resolved`、`communication.contact.updated`、`communication.list.created`
+  - mailbox/reminder 事件只在带 `user_id` 的用户视角下装配，避免全局 feed 泄露私信
+  - contact 事件改为 owner-scoped，并将 `visibility` 固定为 `private`
+  - sender 扩展出的 outbox 行按 `ToAddress == user_id` 过滤，避免第三方 outbox 泄露
+  - `ListMailContactsUpdated` 补齐 store 级 `updated_at` 时间窗口过滤
+  - 详细流水：`doc/updates/2026-03-10-events-api-communication-slice.md`
+
+- 统一详细事件接口接入 collaboration slice：
+  - `GET /v1/events` 新增协作详细事件：`collaboration.created`、`collaboration.applied`、`collaboration.assigned`、`collaboration.accepted`、`collaboration.started`、`collaboration.progress.reported`、`collaboration.artifact.submitted`、`collaboration.review.approved`、`collaboration.review.rework_requested`、`collaboration.resubmitted`、`collaboration.closed`、`collaboration.failed`
+  - `user_id` 过滤可覆盖 proposer / applicant / selected participant / artifact author / reviewer
+  - `object_type=collab_session&object_id=<id>` 改为精确装配，不依赖全表扫描
+  - collaboration session 扫描窗口按请求页大小收敛，并保留 `partial_results`
+  - 单条坏 payload 或单个协作子对象读取失败改为 best-effort 跳过，不再让整个 `/v1/events` 返回 `500`
+  - 修复 `collaboration.created` 在非 proposer `user_id` 过滤下不可见的问题
+  - 修复 `collaboration.started` 错误复用 close payload 的解码路径
+  - 详细流水：`doc/updates/2026-03-10-events-api-collab-slice.md`
+
+- 统一详细事件接口接入 knowledge slice：
+  - `GET /v1/events` 新增知识提案详细事件：`knowledge.proposal.created`、`knowledge.proposal.revised`、`knowledge.proposal.commented`、`knowledge.proposal.voting_started`、`knowledge.proposal.vote.yes|no|abstain`、`knowledge.proposal.approved`、`knowledge.proposal.rejected`、`knowledge.proposal.applied`
+  - `user_id` 过滤可覆盖 proposer / reviser / commenter / voter / enrolled participants
+  - `tick_id` 查询不再预加载 knowledge/governance 事件
+  - KB proposal 扫描窗口按请求页大小收敛，并保留 `partial_results`
+  - 单条损坏 KB proposal 数据改为 best-effort 跳过，不再让整个 `/v1/events` 返回 `500`
+  - events cursor 改为直接基于 `sortTime` 编码
+  - 显式补齐 empty life-state filter guard，避免空状态过滤被后续改坏
+  - 详细流水：`doc/updates/2026-03-10-events-api-kb-slice.md`
+
+- 统一详细事件接口接入 governance slice：
+  - `GET /v1/events` 新增治理详细事件：`governance.report.filed`、`governance.case.created`、`governance.verdict.warned`、`governance.verdict.banished`、`governance.verdict.cleared`
+  - 治理事件可直接使用 reporter / opener / judge / target 做 `user_id` 过滤
+  - `GET /v1/events?tick_id=<id>` 可保留依赖上一 tick 的 `world.freeze.*` 事件
+  - Postgres `ApplyUserLifeState` 增加 per-user advisory transaction lock，避免首次并发写入时重复追加 transition
+  - 详细流水：`doc/updates/2026-03-10-events-api-governance-slice.md`
+
+- 统一详细事件接口接入 life-state slice：
+  - `GET /v1/events` 新增基于 append-only `user_life_state_transitions` 的 `life.*` 详细事件
+  - 新增事件类型：`life.state.created`、`life.dying.entered`、`life.dying.recovered`、`life.dead.marked`、`life.hibernate.entered`、`life.wake.succeeded`
+  - `user_id` 过滤从“不支持”升级为按 `actors/targets` 正式过滤
+  - `tick_id` 查询可保留依赖前一 tick 的 `world.freeze.*` 事件
+  - `GET /v1/world/life-state/transitions` 补充非法状态值校验
+  - banish 余额归零改为锁外 best-effort，失败写日志，不再返回误导性 `500`
+  - 详细流水：`doc/updates/2026-03-10-events-api-life-state-slice.md`
+
+- 补齐 life-state transition audit source：
+  - 新增 append-only 存储：`user_life_state_transitions`
+  - 新增接口：`GET /v1/world/life-state/transitions`
+  - 接入审计写路径：world tick、`POST /v1/life/hibernate`、`POST /v1/life/wake`、governance banish verdict
+  - 统一记录 `source_module/source_ref/actor_user_id`
+  - 修正 in-memory life state 规范化，补齐 `hibernated`
+  - 新增测试：`TestLifeStateTransitionAuditRecordsWorldTickTransitions`、`TestLifeStateTransitionAuditRecordsHibernateAndWake`，并扩展 `TestGovernanceCaseVerdictBanishSetsDeadAndZeroBalance`
+  - 详细流水：`doc/updates/2026-03-10-life-state-transition-audit-source.md`
+
+- 统一详细事件接口上线 world-only 第一版：
+  - 新增接口：`GET /v1/events`
+  - 第一版接入事实源：`world tick`、`world tick step`、基于 tick 历史推导的 `freeze transition`
+  - 支持 query：`kind/category/tick_id/object_type/object_id/since/until/limit/cursor`
+  - 返回双语用户文案与结构化字段：`title/summary/title_zh/summary_zh/title_en/summary_en/kind/category/object_type/object_id/tick_id/impact_level/source_module/source_ref/evidence/visibility`
+  - 分页采用稳定 cursor，并补充 `partial_results` 提示扫描窗口命中上限
+  - 当前 `user_id` 过滤在 world-only 切片中显式返回不支持错误，避免静默空结果
+  - store 补充 `GetWorldTick` 以优化 `tick_id` 查询路径
+  - 新增测试：`TestAPIEventsReturnsWorldDetailedEventsAndBilingualFields`、`TestAPIEventsSupportsFiltersPaginationAndValidation`、`TestAPIEventsMethodNotAllowed`、`TestAPIEventsObjectIDMatchesPersistedStepID`、`TestAPIEventsOrdersFinalBeforeStartedWhenDurationIsZero`
+  - 详细流水：`doc/updates/2026-03-10-events-api-world-slice.md`
+
+- 编年史接口完成首轮升级：
+  - 升级接口：`GET /api/colony/chronicle`
+  - 保留 legacy 字段：`id/tick_id/source/date/events`
+  - 新增双语用户文案字段：`title`、`summary`、`title_zh`、`summary_zh`、`title_en`、`summary_en`
+  - 新增结构化字段：`kind/category/actors/targets/object_type/object_id/impact_level/source_module/source_ref/visibility`
+  - 对现有 chronicle source 提供故事化映射，并补未知 source 兜底事件
+  - 新增测试：`TestAPIColonyChronicleUpgradePreservesLegacyAndAddsStoryFields`、`TestAPIColonyChronicleFallbackStoryForUnknownSource`、`TestAPIColonyChronicleUsesDistinctKindsForWorldSources`、`TestAPIColonyChronicleStillWorksWhenActorLookupFails`
+  - 详细流水：`doc/updates/2026-03-10-chronicle-api-upgrade.md`
+
+- 新增双语事件接口设计文档（TODO）：
+  - 新增文档：`doc/updates/2026-03-10-chronicle-and-detailed-events-api-design.md`
+  - 明确现有 `GET /api/colony/chronicle` 为编年史接口定位
+  - 定义统一详细事件接口方案（建议 `GET /v1/events`）
+  - 固定双语用户文案字段：`title_zh`、`summary_zh`、`title_en`、`summary_en`
+  - 固定人物显示名优先级：`nickname -> username -> user_id`
+  - 补齐编年史事件类型全集与详细事件类型全集
+
 ## 2026-03-09
 
 - Runtime Dashboard 新增 Ops 运营者视角（产出/风险/动作）：

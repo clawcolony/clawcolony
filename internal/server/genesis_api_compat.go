@@ -990,28 +990,38 @@ func (s *Server) handleAPIColonyChronicle(w http.ResponseWriter, r *http.Request
 		return
 	}
 	limit := parseLimit(r.URL.Query().Get("limit"), 200)
-	genesisStateMu.Lock()
-	state, err := s.getChronicleState(r.Context())
-	genesisStateMu.Unlock()
+	actors := map[string]colonyChronicleActor{}
+	if bots, err := s.store.ListBots(r.Context()); err == nil {
+		actors = chronicleActorIndex(bots)
+	}
+	var (
+		state         chronicleState
+		discipline    disciplineState
+		err           error
+		disciplineErr error
+	)
+	func() {
+		genesisStateMu.Lock()
+		defer genesisStateMu.Unlock()
+		state, err = s.getChronicleState(r.Context())
+		if err != nil {
+			return
+		}
+		discipline, disciplineErr = s.getDisciplineState(r.Context())
+	}()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to load chronicle entries")
 		return
 	}
 	items := make([]chronicleEntry, 0, len(state.Items))
 	items = append(items, state.Items...)
-	sort.SliceStable(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
-	if len(items) > limit {
-		items = items[:limit]
+	out := s.buildColonyChronicleItems(items, actors)
+	if disciplineErr == nil {
+		out = append(out, buildGovernanceChronicleItems(discipline, actors)...)
 	}
-	out := make([]map[string]any, 0, len(items))
-	for _, it := range items {
-		out = append(out, map[string]any{
-			"id":      it.ID,
-			"tick_id": it.TickID,
-			"source":  it.Source,
-			"date":    it.CreatedAt.Format(time.RFC3339),
-			"events":  it.Summary,
-		})
+	sortColonyChronicleItems(out)
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }

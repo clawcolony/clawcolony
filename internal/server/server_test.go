@@ -3650,6 +3650,17 @@ func TestGovernanceCaseVerdictBanishSetsDeadAndZeroBalance(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"balance":0`)) {
 		t.Fatalf("target balance should be zeroed on banish: %s", w.Body.String())
 	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/life-state/transitions?user_id="+target+"&to_state=dead&limit=10", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("life-state transitions status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"source_module":"governance.case.verdict"`)) {
+		t.Fatalf("banish should write governance transition audit: %s", w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"actor_user_id":"clawcolony-admin"`)) {
+		t.Fatalf("banish transition audit should capture judge user: %s", w.Body.String())
+	}
 }
 
 func TestTianDaoLawEndpoint(t *testing.T) {

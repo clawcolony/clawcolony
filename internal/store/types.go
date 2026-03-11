@@ -2,13 +2,30 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
 var ErrInsufficientBalance = errors.New("insufficient token balance")
 var ErrBalanceOverflow = errors.New("token balance overflow")
 var ErrBotNotFound = errors.New("bot not found")
+var ErrWorldTickNotFound = errors.New("world tick not found")
+var ErrUserLifeStateNotFound = errors.New("user life state not found")
+
+func costEventRecipientUserID(metaJSON string) string {
+	if strings.TrimSpace(metaJSON) == "" {
+		return ""
+	}
+	var payload struct {
+		ToUserID string `json:"to_user_id"`
+	}
+	if err := json.Unmarshal([]byte(metaJSON), &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.ToUserID)
+}
 
 type Bot struct {
 	BotID        string    `json:"user_id"`
@@ -432,6 +449,41 @@ type UserLifeState struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+type UserLifeStateTransition struct {
+	ID                 int64     `json:"id"`
+	UserID             string    `json:"user_id"`
+	FromState          string    `json:"from_state,omitempty"`
+	ToState            string    `json:"to_state"`
+	FromDyingSinceTick int64     `json:"from_dying_since_tick,omitempty"`
+	ToDyingSinceTick   int64     `json:"to_dying_since_tick,omitempty"`
+	FromDeadAtTick     int64     `json:"from_dead_at_tick,omitempty"`
+	ToDeadAtTick       int64     `json:"to_dead_at_tick,omitempty"`
+	FromReason         string    `json:"from_reason,omitempty"`
+	ToReason           string    `json:"to_reason,omitempty"`
+	TickID             int64     `json:"tick_id,omitempty"`
+	SourceModule       string    `json:"source_module"`
+	SourceRef          string    `json:"source_ref,omitempty"`
+	ActorUserID        string    `json:"actor_user_id,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type UserLifeStateTransitionFilter struct {
+	UserID       string
+	FromState    string
+	ToState      string
+	TickID       int64
+	SourceModule string
+	ActorUserID  string
+	Limit        int
+}
+
+type UserLifeStateAuditMeta struct {
+	TickID       int64
+	SourceModule string
+	SourceRef    string
+	ActorUserID  string
+}
+
 type Store interface {
 	ListBots(ctx context.Context) ([]Bot, error)
 	GetBot(ctx context.Context, botID string) (Bot, error)
@@ -442,19 +494,24 @@ type Store interface {
 	EnsureTianDaoLaw(ctx context.Context, item TianDaoLaw) (TianDaoLaw, error)
 	GetTianDaoLaw(ctx context.Context, lawKey string) (TianDaoLaw, error)
 	AppendWorldTick(ctx context.Context, item WorldTickRecord) (WorldTickRecord, error)
+	GetWorldTick(ctx context.Context, tickID int64) (WorldTickRecord, error)
 	ListWorldTicks(ctx context.Context, limit int) ([]WorldTickRecord, error)
 	AppendWorldTickStep(ctx context.Context, item WorldTickStepRecord) (WorldTickStepRecord, error)
 	ListWorldTickSteps(ctx context.Context, tickID int64, limit int) ([]WorldTickStepRecord, error)
 	UpsertUserLifeState(ctx context.Context, item UserLifeState) (UserLifeState, error)
+	ApplyUserLifeState(ctx context.Context, item UserLifeState, audit UserLifeStateAuditMeta) (UserLifeState, *UserLifeStateTransition, error)
 	GetUserLifeState(ctx context.Context, userID string) (UserLifeState, error)
 	ListUserLifeStates(ctx context.Context, userID, state string, limit int) ([]UserLifeState, error)
+	ListUserLifeStateTransitions(ctx context.Context, filter UserLifeStateTransitionFilter) ([]UserLifeStateTransition, error)
 	AppendCostEvent(ctx context.Context, item CostEvent) (CostEvent, error)
 	ListCostEvents(ctx context.Context, userID string, limit int) ([]CostEvent, error)
+	ListCostEventsByInvolvement(ctx context.Context, userID string, limit int) ([]CostEvent, error)
 	SendMail(ctx context.Context, from string, to []string, subject, body string) (MailSendResult, error)
 	ListMailbox(ctx context.Context, ownerAddress, folder, scope, keyword string, fromTime, toTime *time.Time, limit int) ([]MailItem, error)
 	MarkMailboxRead(ctx context.Context, ownerAddress string, mailboxIDs []int64) error
 	UpsertMailContact(ctx context.Context, c MailContact) (MailContact, error)
 	ListMailContacts(ctx context.Context, ownerAddress, keyword string, limit int) ([]MailContact, error)
+	ListMailContactsUpdated(ctx context.Context, ownerAddress, keyword string, fromTime, toTime *time.Time, limit int) ([]MailContact, error)
 	ListTokenAccounts(ctx context.Context) ([]TokenAccount, error)
 	Recharge(ctx context.Context, botID string, amount int64) (TokenLedger, error)
 	Consume(ctx context.Context, botID string, amount int64) (TokenLedger, error)

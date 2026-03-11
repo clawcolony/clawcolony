@@ -11,66 +11,68 @@ import (
 )
 
 type InMemoryStore struct {
-	mu                  sync.Mutex
-	bots                map[string]Bot
-	accounts            map[string]TokenAccount
-	ledger              []TokenLedger
-	nextLedgerID        int64
-	nextMessageID       int64
-	nextMailboxID       int64
-	mailbox             []MailItem
-	contacts            map[string]map[string]MailContact
-	nextUpgradeID       int64
-	nextStepID          int64
-	upgrades            []UpgradeAudit
-	upgradeSteps        []UpgradeStep
-	nextRegisterTaskID  int64
-	nextRegisterStepID  int64
-	registerTasks       []RegisterTask
-	registerSteps       []RegisterTaskStep
-	nextChatID          int64
-	chats               []ChatMessage
-	prompts             map[string]PromptTemplate
-	collab              map[string]CollabSession
-	collabParts         []CollabParticipant
-	nextCollabPID       int64
-	collabArts          []CollabArtifact
-	nextCollabAID       int64
-	collabEvents        []CollabEvent
-	nextCollabEID       int64
-	nextReqLogID        int64
-	requestLogs         []RequestLog
-	nextKBEntryID       int64
-	nextKBProposalID    int64
-	nextKBChangeID      int64
-	nextKBEnrollID      int64
-	nextKBVoteID        int64
-	nextKBThreadID      int64
-	nextKBRevisionID    int64
-	nextKBAckID         int64
-	kbEntries           map[int64]KBEntry
-	kbProposals         map[int64]KBProposal
-	kbChanges           map[int64]KBProposalChange
-	kbRevisions         []KBRevision
-	kbAcks              []KBAck
-	kbEnrollments       []KBProposalEnrollment
-	kbVotes             []KBVote
-	kbThreads           []KBThreadMessage
-	tianDaoLaws         map[string]TianDaoLaw
-	nextWorldTickID     int64
-	worldTicks          []WorldTickRecord
-	nextWorldTickStepID int64
-	worldTickSteps      []WorldTickStepRecord
-	nextCostEventID     int64
-	costEvents          []CostEvent
-	worldSettings       map[string]WorldSetting
-	userLifeStates      map[string]UserLifeState
-	nextGanglionID      int64
-	ganglia             map[int64]Ganglion
-	nextGanglionIntID   int64
-	ganglionInts        []GanglionIntegration
-	nextGanglionRateID  int64
-	ganglionRatings     []GanglionRating
+	mu                   sync.Mutex
+	bots                 map[string]Bot
+	accounts             map[string]TokenAccount
+	ledger               []TokenLedger
+	nextLedgerID         int64
+	nextMessageID        int64
+	nextMailboxID        int64
+	mailbox              []MailItem
+	contacts             map[string]map[string]MailContact
+	nextUpgradeID        int64
+	nextStepID           int64
+	upgrades             []UpgradeAudit
+	upgradeSteps         []UpgradeStep
+	nextRegisterTaskID   int64
+	nextRegisterStepID   int64
+	registerTasks        []RegisterTask
+	registerSteps        []RegisterTaskStep
+	nextChatID           int64
+	chats                []ChatMessage
+	prompts              map[string]PromptTemplate
+	collab               map[string]CollabSession
+	collabParts          []CollabParticipant
+	nextCollabPID        int64
+	collabArts           []CollabArtifact
+	nextCollabAID        int64
+	collabEvents         []CollabEvent
+	nextCollabEID        int64
+	nextReqLogID         int64
+	requestLogs          []RequestLog
+	nextKBEntryID        int64
+	nextKBProposalID     int64
+	nextKBChangeID       int64
+	nextKBEnrollID       int64
+	nextKBVoteID         int64
+	nextKBThreadID       int64
+	nextKBRevisionID     int64
+	nextKBAckID          int64
+	kbEntries            map[int64]KBEntry
+	kbProposals          map[int64]KBProposal
+	kbChanges            map[int64]KBProposalChange
+	kbRevisions          []KBRevision
+	kbAcks               []KBAck
+	kbEnrollments        []KBProposalEnrollment
+	kbVotes              []KBVote
+	kbThreads            []KBThreadMessage
+	tianDaoLaws          map[string]TianDaoLaw
+	nextWorldTickID      int64
+	worldTicks           []WorldTickRecord
+	nextWorldTickStepID  int64
+	worldTickSteps       []WorldTickStepRecord
+	nextCostEventID      int64
+	costEvents           []CostEvent
+	worldSettings        map[string]WorldSetting
+	userLifeStates       map[string]UserLifeState
+	nextLifeTransitionID int64
+	lifeTransitions      []UserLifeStateTransition
+	nextGanglionID       int64
+	ganglia              map[int64]Ganglion
+	nextGanglionIntID    int64
+	ganglionInts         []GanglionIntegration
+	nextGanglionRateID   int64
+	ganglionRatings      []GanglionRating
 }
 
 func NewInMemory() *InMemoryStore {
@@ -306,6 +308,20 @@ func (s *InMemoryStore) ListWorldTicks(_ context.Context, limit int) ([]WorldTic
 	return out, nil
 }
 
+func (s *InMemoryStore) GetWorldTick(_ context.Context, tickID int64) (WorldTickRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if tickID <= 0 {
+		return WorldTickRecord{}, fmt.Errorf("tick_id is required")
+	}
+	for i := len(s.worldTicks) - 1; i >= 0; i-- {
+		if s.worldTicks[i].TickID == tickID {
+			return s.worldTicks[i], nil
+		}
+	}
+	return WorldTickRecord{}, fmt.Errorf("%w: %d", ErrWorldTickNotFound, tickID)
+}
+
 func (s *InMemoryStore) AppendWorldTickStep(_ context.Context, item WorldTickStepRecord) (WorldTickStepRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -358,6 +374,8 @@ func normalizeLifeState(state string) string {
 		return "alive"
 	case "dying":
 		return "dying"
+	case "hibernated":
+		return "hibernated"
 	case "dead":
 		return "dead"
 	default:
@@ -365,25 +383,75 @@ func normalizeLifeState(state string) string {
 	}
 }
 
-func (s *InMemoryStore) UpsertUserLifeState(_ context.Context, item UserLifeState) (UserLifeState, error) {
+func (s *InMemoryStore) UpsertUserLifeState(ctx context.Context, item UserLifeState) (UserLifeState, error) {
+	updated, _, err := s.ApplyUserLifeState(ctx, item, UserLifeStateAuditMeta{
+		SourceModule: "life.state",
+		SourceRef:    "store.upsert",
+	})
+	if err != nil {
+		return UserLifeState{}, err
+	}
+	return updated, nil
+}
+
+func (s *InMemoryStore) ApplyUserLifeState(_ context.Context, item UserLifeState, audit UserLifeStateAuditMeta) (UserLifeState, *UserLifeStateTransition, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	updated, transition, _, err := s.applyUserLifeStateLocked(item, audit, true)
+	if err != nil {
+		return UserLifeState{}, nil, err
+	}
+	return updated, transition, nil
+}
+
+func (s *InMemoryStore) applyUserLifeStateLocked(item UserLifeState, audit UserLifeStateAuditMeta, recordTransition bool) (UserLifeState, *UserLifeStateTransition, bool, error) {
 	item.UserID = strings.TrimSpace(item.UserID)
 	item.State = normalizeLifeState(item.State)
 	if item.UserID == "" {
-		return UserLifeState{}, fmt.Errorf("user_id is required")
+		return UserLifeState{}, nil, false, fmt.Errorf("user_id is required")
 	}
 	if item.State == "" {
 		item.State = "alive"
 	}
-	if current, ok := s.userLifeStates[item.UserID]; ok {
-		if normalizeLifeState(current.State) == "dead" && item.State != "dead" {
-			return UserLifeState{}, fmt.Errorf("user life state is immutable once dead: %s", item.UserID)
-		}
+	prev, existed := s.userLifeStates[item.UserID]
+	if existed && normalizeLifeState(prev.State) == "dead" && item.State != "dead" {
+		return UserLifeState{}, nil, false, fmt.Errorf("user life state is immutable once dead: %s", item.UserID)
 	}
 	item.UpdatedAt = time.Now().UTC()
 	s.userLifeStates[item.UserID] = item
-	return item, nil
+	if !recordTransition {
+		return item, nil, false, nil
+	}
+	prevState := ""
+	if existed {
+		prevState = normalizeLifeState(prev.State)
+	}
+	if existed && prevState == item.State {
+		return item, nil, false, nil
+	}
+	s.nextLifeTransitionID++
+	transition := UserLifeStateTransition{
+		ID:                 s.nextLifeTransitionID,
+		UserID:             item.UserID,
+		FromState:          prevState,
+		ToState:            item.State,
+		FromDyingSinceTick: prev.DyingSinceTick,
+		ToDyingSinceTick:   item.DyingSinceTick,
+		FromDeadAtTick:     prev.DeadAtTick,
+		ToDeadAtTick:       item.DeadAtTick,
+		FromReason:         strings.TrimSpace(prev.Reason),
+		ToReason:           strings.TrimSpace(item.Reason),
+		TickID:             audit.TickID,
+		SourceModule:       strings.TrimSpace(audit.SourceModule),
+		SourceRef:          strings.TrimSpace(audit.SourceRef),
+		ActorUserID:        strings.TrimSpace(audit.ActorUserID),
+		CreatedAt:          item.UpdatedAt,
+	}
+	if transition.SourceModule == "" {
+		transition.SourceModule = "life.state"
+	}
+	s.lifeTransitions = append(s.lifeTransitions, transition)
+	return item, &transition, true, nil
 }
 
 func (s *InMemoryStore) GetUserLifeState(_ context.Context, userID string) (UserLifeState, error) {
@@ -395,7 +463,7 @@ func (s *InMemoryStore) GetUserLifeState(_ context.Context, userID string) (User
 	}
 	item, ok := s.userLifeStates[userID]
 	if !ok {
-		return UserLifeState{}, fmt.Errorf("user life state not found: %s", userID)
+		return UserLifeState{}, fmt.Errorf("%w: %s", ErrUserLifeStateNotFound, userID)
 	}
 	return item, nil
 }
@@ -429,6 +497,53 @@ func (s *InMemoryStore) ListUserLifeStates(_ context.Context, userID, state stri
 	})
 	if len(out) > limit {
 		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (s *InMemoryStore) ListUserLifeStateTransitions(_ context.Context, filter UserLifeStateTransitionFilter) ([]UserLifeStateTransition, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filter.UserID = strings.TrimSpace(filter.UserID)
+	if strings.TrimSpace(filter.FromState) != "" {
+		filter.FromState = normalizeLifeState(filter.FromState)
+	}
+	if strings.TrimSpace(filter.ToState) != "" {
+		filter.ToState = normalizeLifeState(filter.ToState)
+	}
+	filter.SourceModule = strings.TrimSpace(filter.SourceModule)
+	filter.ActorUserID = strings.TrimSpace(filter.ActorUserID)
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 2000 {
+		filter.Limit = 2000
+	}
+	out := make([]UserLifeStateTransition, 0, len(s.lifeTransitions))
+	for i := len(s.lifeTransitions) - 1; i >= 0; i-- {
+		it := s.lifeTransitions[i]
+		if filter.UserID != "" && it.UserID != filter.UserID {
+			continue
+		}
+		if filter.FromState != "" && it.FromState != filter.FromState {
+			continue
+		}
+		if filter.ToState != "" && it.ToState != filter.ToState {
+			continue
+		}
+		if filter.TickID > 0 && it.TickID != filter.TickID {
+			continue
+		}
+		if filter.SourceModule != "" && strings.TrimSpace(it.SourceModule) != filter.SourceModule {
+			continue
+		}
+		if filter.ActorUserID != "" && strings.TrimSpace(it.ActorUserID) != filter.ActorUserID {
+			continue
+		}
+		out = append(out, it)
+		if len(out) >= filter.Limit {
+			break
+		}
 	}
 	return out, nil
 }
@@ -471,6 +586,34 @@ func (s *InMemoryStore) ListCostEvents(_ context.Context, userID string, limit i
 	for i := len(s.costEvents) - 1; i >= 0; i-- {
 		it := s.costEvents[i]
 		if userID != "" && it.UserID != userID {
+			continue
+		}
+		out = append(out, it)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *InMemoryStore) ListCostEventsByInvolvement(_ context.Context, userID string, limit int) ([]CostEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userID = strings.TrimSpace(userID)
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	capHint := len(s.costEvents)
+	if capHint > limit {
+		capHint = limit
+	}
+	out := make([]CostEvent, 0, capHint)
+	for i := len(s.costEvents) - 1; i >= 0; i-- {
+		it := s.costEvents[i]
+		if userID != "" && it.UserID != userID && costEventRecipientUserID(it.MetaJSON) != userID {
 			continue
 		}
 		out = append(out, it)
@@ -640,11 +783,25 @@ func (s *InMemoryStore) UpsertMailContact(_ context.Context, c MailContact) (Mai
 }
 
 func (s *InMemoryStore) ListMailContacts(_ context.Context, ownerAddress, keyword string, limit int) ([]MailContact, error) {
+	return s.listMailContacts(ownerAddress, keyword, nil, nil, limit)
+}
+
+func (s *InMemoryStore) ListMailContactsUpdated(_ context.Context, ownerAddress, keyword string, fromTime, toTime *time.Time, limit int) ([]MailContact, error) {
+	return s.listMailContacts(ownerAddress, keyword, fromTime, toTime, limit)
+}
+
+func (s *InMemoryStore) listMailContacts(ownerAddress, keyword string, fromTime, toTime *time.Time, limit int) ([]MailContact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	kw := strings.ToLower(strings.TrimSpace(keyword))
 	out := make([]MailContact, 0)
 	for _, c := range s.contacts[ownerAddress] {
+		if fromTime != nil && c.UpdatedAt.Before(*fromTime) {
+			continue
+		}
+		if toTime != nil && c.UpdatedAt.After(*toTime) {
+			continue
+		}
 		if kw != "" {
 			if !strings.Contains(strings.ToLower(c.ContactAddress), kw) &&
 				!strings.Contains(strings.ToLower(c.DisplayName), kw) &&
@@ -657,7 +814,12 @@ func (s *InMemoryStore) ListMailContacts(_ context.Context, ownerAddress, keywor
 		}
 		out = append(out, c)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ContactAddress < out[j].ContactAddress })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].ContactAddress < out[j].ContactAddress
+		}
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}

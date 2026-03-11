@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -279,17 +281,18 @@ func (s *Server) handleGovernanceCaseVerdict(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	now := time.Now().UTC()
+	zeroBalanceAfterUnlock := false
 	genesisStateMu.Lock()
 	state, err := s.getDisciplineState(r.Context())
 	if err != nil {
 		genesisStateMu.Unlock()
-		writeError(w, 500, err.Error())
+		writeError(w, 500, "failed to load discipline state")
 		return
 	}
 	rep, err := s.getReputationState(r.Context())
 	if err != nil {
 		genesisStateMu.Unlock()
-		writeError(w, 500, err.Error())
+		writeError(w, 500, "failed to load reputation state")
 		return
 	}
 	caseIdx := -1
@@ -324,27 +327,26 @@ func (s *Server) handleGovernanceCaseVerdict(w http.ResponseWriter, r *http.Requ
 
 	targetUserID := state.Cases[caseIdx].TargetUserID
 	if req.Verdict == "banish" {
-		if accounts, err := s.store.ListTokenAccounts(r.Context()); err == nil {
-			for _, acc := range accounts {
-				if strings.TrimSpace(acc.BotID) != targetUserID {
-					continue
-				}
-				if acc.Balance > 0 {
-					_, _ = s.store.Consume(r.Context(), targetUserID, acc.Balance)
-				}
-				break
-			}
-		}
 		s.worldTickMu.Lock()
 		currentTick := s.worldTickID
 		s.worldTickMu.Unlock()
-		_, _ = s.store.UpsertUserLifeState(r.Context(), store.UserLifeState{
+		if _, _, err := s.applyUserLifeState(r.Context(), store.UserLifeState{
 			UserID:         targetUserID,
 			State:          "dead",
 			DyingSinceTick: currentTick,
 			DeadAtTick:     currentTick,
 			Reason:         fmt.Sprintf("banished_case_%d", req.CaseID),
-		})
+		}, store.UserLifeStateAuditMeta{
+			TickID:       currentTick,
+			SourceModule: "governance.case.verdict",
+			SourceRef:    fmt.Sprintf("governance_case:%d", req.CaseID),
+			ActorUserID:  req.JudgeUserID,
+		}); err != nil {
+			genesisStateMu.Unlock()
+			writeError(w, http.StatusInternalServerError, "failed to apply banish verdict")
+			return
+		}
+		zeroBalanceAfterUnlock = true
 		s.adjustReputationLocked(&rep, state.Reports[reportIdx].ReporterUserID, 3, "report accepted (banish)", "discipline_case", strconv.FormatInt(req.CaseID, 10), req.JudgeUserID, now)
 		s.adjustReputationLocked(&rep, targetUserID, -20, "banished", "discipline_case", strconv.FormatInt(req.CaseID, 10), req.JudgeUserID, now)
 		state.Reports[reportIdx].Status = "resolved_accepted"
@@ -373,15 +375,20 @@ func (s *Server) handleGovernanceCaseVerdict(w http.ResponseWriter, r *http.Requ
 
 	if err := s.saveDisciplineState(r.Context(), state); err != nil {
 		genesisStateMu.Unlock()
-		writeError(w, 500, err.Error())
+		writeError(w, 500, "failed to save discipline state")
 		return
 	}
 	if err := s.saveReputationState(r.Context(), rep); err != nil {
 		genesisStateMu.Unlock()
-		writeError(w, 500, err.Error())
+		writeError(w, 500, "failed to save reputation state")
 		return
 	}
 	genesisStateMu.Unlock()
+	if zeroBalanceAfterUnlock {
+		if err := s.zeroUserBalance(r.Context(), targetUserID); err != nil {
+			log.Printf("governance_banish_zero_balance_failed target=%s case_id=%d err=%v", targetUserID, req.CaseID, err)
+		}
+	}
 
 	subject := "[DISCIPLINE VERDICT] case closed"
 	body := fmt.Sprintf("case_id=%d\nverdict=%s\ntarget=%s\njudge=%s\nnote=%s", req.CaseID, req.Verdict, targetUserID, req.JudgeUserID, req.Note)
@@ -389,6 +396,24 @@ func (s *Server) handleGovernanceCaseVerdict(w http.ResponseWriter, r *http.Requ
 	s.sendMailAndPushHint(r.Context(), clawWorldSystemID, receivers, subject, body)
 
 	writeJSON(w, 202, map[string]any{"item": state.Cases[caseIdx]})
+}
+
+func (s *Server) zeroUserBalance(ctx context.Context, userID string) error {
+	accounts, err := s.store.ListTokenAccounts(ctx)
+	if err != nil {
+		return err
+	}
+	for _, acc := range accounts {
+		if strings.TrimSpace(acc.BotID) != strings.TrimSpace(userID) {
+			continue
+		}
+		if acc.Balance <= 0 {
+			return nil
+		}
+		_, err := s.store.Consume(ctx, userID, acc.Balance)
+		return err
+	}
+	return nil
 }
 
 func (s *Server) handleReputationScore(w http.ResponseWriter, r *http.Request) {

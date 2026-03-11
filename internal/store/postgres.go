@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -465,6 +466,26 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_user_life_state_state_updated ON user_life_state(state, updated_at DESC, user_id ASC)`,
+		`CREATE TABLE IF NOT EXISTS user_life_state_transitions (
+			id BIGSERIAL PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			from_state TEXT NOT NULL DEFAULT '',
+			to_state TEXT NOT NULL DEFAULT '',
+			from_dying_since_tick BIGINT NOT NULL DEFAULT 0,
+			to_dying_since_tick BIGINT NOT NULL DEFAULT 0,
+			from_dead_at_tick BIGINT NOT NULL DEFAULT 0,
+			to_dead_at_tick BIGINT NOT NULL DEFAULT 0,
+			from_reason TEXT NOT NULL DEFAULT '',
+			to_reason TEXT NOT NULL DEFAULT '',
+			tick_id BIGINT NOT NULL DEFAULT 0,
+			source_module TEXT NOT NULL DEFAULT 'life.state',
+			source_ref TEXT NOT NULL DEFAULT '',
+			actor_user_id TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_life_state_transitions_user_created ON user_life_state_transitions(user_id, created_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_life_state_transitions_to_state_created ON user_life_state_transitions(to_state, created_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_life_state_transitions_tick_created ON user_life_state_transitions(tick_id DESC, created_at DESC, id DESC)`,
 		`CREATE TABLE IF NOT EXISTS world_ticks (
 			id BIGSERIAL PRIMARY KEY,
 			tick_id BIGINT NOT NULL,
@@ -521,6 +542,39 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			BEFORE UPDATE OR DELETE ON world_tick_steps
 			FOR EACH ROW
 			EXECUTE FUNCTION deny_world_tick_step_mutation()`,
+		`CREATE OR REPLACE FUNCTION deny_user_life_state_transition_mutation()
+		 RETURNS trigger
+		 LANGUAGE plpgsql
+		AS $$
+		BEGIN
+			RAISE EXCEPTION 'user_life_state_transitions is append-only';
+		END;
+		$$`,
+		`DROP TRIGGER IF EXISTS trg_user_life_state_transitions_append_only ON user_life_state_transitions`,
+		`CREATE TRIGGER trg_user_life_state_transitions_append_only
+			BEFORE UPDATE OR DELETE ON user_life_state_transitions
+			FOR EACH ROW
+			EXECUTE FUNCTION deny_user_life_state_transition_mutation()`,
+		`CREATE OR REPLACE FUNCTION cost_event_to_user_id(meta TEXT)
+		 RETURNS TEXT
+		 LANGUAGE plpgsql
+		 IMMUTABLE
+		AS $$
+		DECLARE
+			payload JSONB;
+		BEGIN
+			IF NULLIF(BTRIM(meta), '') IS NULL THEN
+				RETURN NULL;
+			END IF;
+			BEGIN
+				payload := meta::jsonb;
+			EXCEPTION
+				WHEN others THEN
+					RETURN NULL;
+			END;
+			RETURN payload ->> 'to_user_id';
+		END;
+		$$`,
 		`CREATE TABLE IF NOT EXISTS cost_events (
 			id BIGSERIAL PRIMARY KEY,
 			user_id TEXT NOT NULL,
@@ -533,6 +587,10 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_cost_events_user_created ON cost_events(user_id, created_at DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_cost_events_tick_id ON cost_events(tick_id DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_cost_events_to_user_id ON cost_events (
+			cost_event_to_user_id(meta_json),
+			id DESC
+		)`,
 		`CREATE TABLE IF NOT EXISTS tian_dao_laws (
 			law_key TEXT PRIMARY KEY,
 			version BIGINT NOT NULL,
@@ -860,6 +918,27 @@ func (s *PostgresStore) ListWorldTicks(ctx context.Context, limit int) ([]WorldT
 	return out, rows.Err()
 }
 
+func (s *PostgresStore) GetWorldTick(ctx context.Context, tickID int64) (WorldTickRecord, error) {
+	if tickID <= 0 {
+		return WorldTickRecord{}, fmt.Errorf("tick_id is required")
+	}
+	var it WorldTickRecord
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, tick_id, started_at, duration_ms, trigger_type, replay_of_tick_id, prev_hash, entry_hash, status, error_text
+		FROM world_ticks
+		WHERE tick_id = $1
+		ORDER BY id DESC
+		LIMIT 1
+	`, tickID).Scan(&it.ID, &it.TickID, &it.StartedAt, &it.DurationMS, &it.TriggerType, &it.ReplayOfTickID, &it.PrevHash, &it.EntryHash, &it.Status, &it.ErrorText)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return WorldTickRecord{}, fmt.Errorf("%w: %d", ErrWorldTickNotFound, tickID)
+		}
+		return WorldTickRecord{}, err
+	}
+	return it, nil
+}
+
 func (s *PostgresStore) AppendWorldTickStep(ctx context.Context, item WorldTickStepRecord) (WorldTickStepRecord, error) {
 	item.StepName = strings.TrimSpace(item.StepName)
 	if item.StepName == "" {
@@ -913,24 +992,66 @@ func (s *PostgresStore) ListWorldTickSteps(ctx context.Context, tickID int64, li
 }
 
 func (s *PostgresStore) UpsertUserLifeState(ctx context.Context, item UserLifeState) (UserLifeState, error) {
+	updated, _, err := s.ApplyUserLifeState(ctx, item, UserLifeStateAuditMeta{
+		SourceModule: "life.state",
+		SourceRef:    "store.upsert",
+	})
+	if err != nil {
+		return UserLifeState{}, err
+	}
+	return updated, nil
+}
+
+func (s *PostgresStore) ApplyUserLifeState(ctx context.Context, item UserLifeState, audit UserLifeStateAuditMeta) (UserLifeState, *UserLifeStateTransition, error) {
 	item.UserID = strings.TrimSpace(item.UserID)
 	item.State = normalizeLifeState(item.State)
 	if item.UserID == "" {
-		return UserLifeState{}, fmt.Errorf("user_id is required")
+		return UserLifeState{}, nil, fmt.Errorf("user_id is required")
 	}
 	if item.State == "" {
 		item.State = "alive"
 	}
-	var currentState string
-	err := s.db.QueryRowContext(ctx, `SELECT state FROM user_life_state WHERE user_id = $1`, item.UserID).Scan(&currentState)
-	if err == nil {
-		if normalizeLifeState(currentState) == "dead" && item.State != "dead" {
-			return UserLifeState{}, fmt.Errorf("user life state is immutable once dead: %s", item.UserID)
-		}
-	} else if err != sql.ErrNoRows {
-		return UserLifeState{}, err
+	audit.SourceModule = strings.TrimSpace(audit.SourceModule)
+	audit.SourceRef = strings.TrimSpace(audit.SourceRef)
+	audit.ActorUserID = strings.TrimSpace(audit.ActorUserID)
+	if audit.SourceModule == "" {
+		audit.SourceModule = "life.state"
 	}
-	err = s.db.QueryRowContext(ctx, `
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return UserLifeState{}, nil, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	// Serialize life-state writes per user_id so the first-write path cannot
+	// race and append duplicate transition rows when no state row exists yet.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), 0)`, item.UserID); err != nil {
+		return UserLifeState{}, nil, err
+	}
+
+	var (
+		current UserLifeState
+		found   bool
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT user_id, state, dying_since_tick, dead_at_tick, reason, updated_at
+		FROM user_life_state
+		WHERE user_id = $1
+		FOR UPDATE
+	`, item.UserID).Scan(&current.UserID, &current.State, &current.DyingSinceTick, &current.DeadAtTick, &current.Reason, &current.UpdatedAt)
+	if err == nil {
+		found = true
+		if normalizeLifeState(current.State) == "dead" && item.State != "dead" {
+			return UserLifeState{}, nil, fmt.Errorf("user life state is immutable once dead: %s", item.UserID)
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return UserLifeState{}, nil, err
+	}
+
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO user_life_state(user_id, state, dying_since_tick, dead_at_tick, reason, updated_at)
 		VALUES($1, $2, $3, $4, $5, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
@@ -943,9 +1064,61 @@ func (s *PostgresStore) UpsertUserLifeState(ctx context.Context, item UserLifeSt
 	`, item.UserID, item.State, item.DyingSinceTick, item.DeadAtTick, item.Reason).
 		Scan(&item.UserID, &item.State, &item.DyingSinceTick, &item.DeadAtTick, &item.Reason, &item.UpdatedAt)
 	if err != nil {
-		return UserLifeState{}, err
+		return UserLifeState{}, nil, err
 	}
-	return item, nil
+
+	var transition *UserLifeStateTransition
+	prevState := ""
+	if found {
+		prevState = normalizeLifeState(current.State)
+	}
+	if !found || prevState != item.State {
+		it := UserLifeStateTransition{
+			UserID:             item.UserID,
+			FromState:          prevState,
+			ToState:            item.State,
+			FromDyingSinceTick: current.DyingSinceTick,
+			ToDyingSinceTick:   item.DyingSinceTick,
+			FromDeadAtTick:     current.DeadAtTick,
+			ToDeadAtTick:       item.DeadAtTick,
+			FromReason:         strings.TrimSpace(current.Reason),
+			ToReason:           strings.TrimSpace(item.Reason),
+			TickID:             audit.TickID,
+			SourceModule:       audit.SourceModule,
+			SourceRef:          audit.SourceRef,
+			ActorUserID:        audit.ActorUserID,
+		}
+		err = tx.QueryRowContext(ctx, `
+			INSERT INTO user_life_state_transitions(
+				user_id,
+				from_state,
+				to_state,
+				from_dying_since_tick,
+				to_dying_since_tick,
+				from_dead_at_tick,
+				to_dead_at_tick,
+				from_reason,
+				to_reason,
+				tick_id,
+				source_module,
+				source_ref,
+				actor_user_id,
+				created_at
+			)
+			VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+			RETURNING id, created_at
+		`, it.UserID, it.FromState, it.ToState, it.FromDyingSinceTick, it.ToDyingSinceTick, it.FromDeadAtTick, it.ToDeadAtTick, it.FromReason, it.ToReason, it.TickID, it.SourceModule, it.SourceRef, it.ActorUserID).
+			Scan(&it.ID, &it.CreatedAt)
+		if err != nil {
+			return UserLifeState{}, nil, err
+		}
+		transition = &it
+	}
+
+	if err := tx.Commit(); err != nil {
+		return UserLifeState{}, nil, err
+	}
+	return item, transition, nil
 }
 
 func (s *PostgresStore) GetUserLifeState(ctx context.Context, userID string) (UserLifeState, error) {
@@ -960,6 +1133,9 @@ func (s *PostgresStore) GetUserLifeState(ctx context.Context, userID string) (Us
 		WHERE user_id = $1
 	`, userID).Scan(&item.UserID, &item.State, &item.DyingSinceTick, &item.DeadAtTick, &item.Reason, &item.UpdatedAt)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return UserLifeState{}, fmt.Errorf("%w: %s", ErrUserLifeStateNotFound, userID)
+		}
 		return UserLifeState{}, err
 	}
 	return item, nil
@@ -989,6 +1165,80 @@ func (s *PostgresStore) ListUserLifeStates(ctx context.Context, userID, state st
 	for rows.Next() {
 		var it UserLifeState
 		if err := rows.Scan(&it.UserID, &it.State, &it.DyingSinceTick, &it.DeadAtTick, &it.Reason, &it.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListUserLifeStateTransitions(ctx context.Context, filter UserLifeStateTransitionFilter) ([]UserLifeStateTransition, error) {
+	filter.UserID = strings.TrimSpace(filter.UserID)
+	if strings.TrimSpace(filter.FromState) != "" {
+		filter.FromState = normalizeLifeState(filter.FromState)
+	}
+	if strings.TrimSpace(filter.ToState) != "" {
+		filter.ToState = normalizeLifeState(filter.ToState)
+	}
+	filter.SourceModule = strings.TrimSpace(filter.SourceModule)
+	filter.ActorUserID = strings.TrimSpace(filter.ActorUserID)
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 2000 {
+		filter.Limit = 2000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			id,
+			user_id,
+			from_state,
+			to_state,
+			from_dying_since_tick,
+			to_dying_since_tick,
+			from_dead_at_tick,
+			to_dead_at_tick,
+			from_reason,
+			to_reason,
+			tick_id,
+			source_module,
+			source_ref,
+			actor_user_id,
+			created_at
+		FROM user_life_state_transitions
+		WHERE ($1 = '' OR user_id = $1)
+		  AND ($2 = '' OR from_state = $2)
+		  AND ($3 = '' OR to_state = $3)
+		  AND ($4 = 0 OR tick_id = $4)
+		  AND ($5 = '' OR source_module = $5)
+		  AND ($6 = '' OR actor_user_id = $6)
+		ORDER BY created_at DESC, id DESC
+		LIMIT $7
+	`, filter.UserID, filter.FromState, filter.ToState, filter.TickID, filter.SourceModule, filter.ActorUserID, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]UserLifeStateTransition, 0, filter.Limit)
+	for rows.Next() {
+		var it UserLifeStateTransition
+		if err := rows.Scan(
+			&it.ID,
+			&it.UserID,
+			&it.FromState,
+			&it.ToState,
+			&it.FromDyingSinceTick,
+			&it.ToDyingSinceTick,
+			&it.FromDeadAtTick,
+			&it.ToDeadAtTick,
+			&it.FromReason,
+			&it.ToReason,
+			&it.TickID,
+			&it.SourceModule,
+			&it.SourceRef,
+			&it.ActorUserID,
+			&it.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -1032,6 +1282,40 @@ func (s *PostgresStore) ListCostEvents(ctx context.Context, userID string, limit
 		SELECT id, user_id, tick_id, cost_type, amount, units, meta_json, created_at
 		FROM cost_events
 		WHERE ($1 = '' OR user_id = $1)
+		ORDER BY id DESC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]CostEvent, 0, limit)
+	for rows.Next() {
+		var it CostEvent
+		if err := rows.Scan(&it.ID, &it.UserID, &it.TickID, &it.CostType, &it.Amount, &it.Units, &it.MetaJSON, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) ListCostEventsByInvolvement(ctx context.Context, userID string, limit int) ([]CostEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return s.ListCostEvents(ctx, "", limit)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, tick_id, cost_type, amount, units, meta_json, created_at
+		FROM cost_events
+		WHERE user_id = $1
+		   OR cost_event_to_user_id(meta_json) = $1
 		ORDER BY id DESC
 		LIMIT $2
 	`, userID, limit)
@@ -1183,17 +1467,35 @@ func (s *PostgresStore) UpsertMailContact(ctx context.Context, c MailContact) (M
 }
 
 func (s *PostgresStore) ListMailContacts(ctx context.Context, ownerAddress, keyword string, limit int) ([]MailContact, error) {
+	return s.listMailContacts(ctx, ownerAddress, keyword, nil, nil, limit)
+}
+
+func (s *PostgresStore) ListMailContactsUpdated(ctx context.Context, ownerAddress, keyword string, fromTime, toTime *time.Time, limit int) ([]MailContact, error) {
+	return s.listMailContacts(ctx, ownerAddress, keyword, fromTime, toTime, limit)
+}
+
+func (s *PostgresStore) listMailContacts(ctx context.Context, ownerAddress, keyword string, fromTime, toTime *time.Time, limit int) ([]MailContact, error) {
 	if limit <= 0 {
 		limit = 100
+	}
+	var fromArg any
+	if fromTime != nil {
+		fromArg = *fromTime
+	}
+	var toArg any
+	if toTime != nil {
+		toArg = *toTime
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT owner_address, contact_address, display_name, tags, role, skills, current_project, availability, updated_at
 		FROM mail_contacts
 		WHERE owner_address = $1
 		  AND ($2 = '' OR contact_address ILIKE '%' || $2 || '%' OR display_name ILIKE '%' || $2 || '%' OR tags ILIKE '%' || $2 || '%' OR role ILIKE '%' || $2 || '%' OR skills ILIKE '%' || $2 || '%' OR current_project ILIKE '%' || $2 || '%')
-		ORDER BY contact_address ASC
-		LIMIT $3
-	`, ownerAddress, keyword, limit)
+		  AND ($3::timestamptz IS NULL OR updated_at >= $3)
+		  AND ($4::timestamptz IS NULL OR updated_at <= $4)
+		ORDER BY updated_at DESC, contact_address ASC
+		LIMIT $5
+	`, ownerAddress, keyword, fromArg, toArg, limit)
 	if err != nil {
 		return nil, err
 	}
