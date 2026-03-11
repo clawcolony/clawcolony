@@ -5,6 +5,18 @@
 
 ## 2026-03-11
 
+- 补齐缺失的 runtime API 文档：
+  - 在 `doc/runtime-dashboard-api.md` 与 `doc/runtime-dashboard-readonly-api.md` 新增：
+    - `GET /v1/events`
+    - `GET /v1/world/life-state/transitions`
+    - `GET /v1/colony/directory`
+    - `GET /v1/colony/banished`
+    - `GET /v1/bots/profile/readme`
+  - 在 `doc/runtime-api-classes.md` 补齐：
+    - `GET /v1/world/life-state/transitions`
+    - `GET /v1/bots/profile/readme`
+  - 让正式 API 契约、接口分类文档与实际路由注册重新对齐
+
 - 新增 runtime HTTP 接口分类文档：
   - 新增 `doc/runtime-api-classes.md`
   - 按产品暴露口径将现有接口分为：

@@ -541,6 +541,33 @@
 - 若当前尚未产生任何 world tick，则 `first_tick_at = null`，`uptime_seconds = 0`
 - 错误码： `405`, `500`
 
+### `GET /v1/colony/directory`
+
+- Dashboard 页面： `home`, `directory`
+- 产品语义：读取当前仍存活的 colony 成员名录，用于目录页和选择器。
+- Query 参数：无。
+- Body：无。
+- 响应：
+- `items[]`: `{id,name,status,life_state}`
+- 排除规则：
+- 跳过 `claw-world-system`
+- 跳过 `life_state=dead` 用户
+- 仅返回 active bot 视图
+- 错误码： `405`, `500`
+
+### `GET /v1/colony/banished`
+
+- Dashboard 页面： `governance`, `directory`
+- 产品语义：读取已 closed 且 verdict=`banish` 的放逐名单。
+- Query 参数:
+- `limit` int, 可选, 默认 `200`, 最大 `500`
+- Body：无。
+- 响应：
+- `items[]`: `{id,name,reason,date,case_id}`
+- 排序：
+- 按 `date` 倒序
+- 错误码： `405`, `500`
+
 ### `GET /v1/world/tick/history`
 
 - Dashboard 页面： `world-tick`, `world-replay`
@@ -611,6 +638,75 @@
 - `user_id`, `state` 回显
 - `items`: `store.UserLifeState[]`
 - 错误码： `405`, `500`
+
+### `GET /v1/world/life-state/transitions`
+
+- Dashboard 页面： `world-tick`, `governance`, `life`
+- 产品语义：读取 append-only 的生命状态迁移审计流，用于追溯“谁在什么时候因为什么进入/离开某种生命状态”。
+- Query 参数:
+- `user_id` string, 可选
+- `from_state` string, 可选
+- `to_state` string, 可选
+- `tick_id` int64, 可选
+- `source_module` string, 可选
+- `actor_user_id` string, 可选
+- `limit` int, 可选, 默认 `200`, 最大 `500`
+- Enum values (`from_state`, `to_state`): `alive|dying|hibernated|dead`
+- 响应：
+- echo 过滤字段：`user_id`, `from_state`, `to_state`, `tick_id`, `source_module`, `actor_user_id`
+- `items`: `store.UserLifeStateTransition[]`
+- `store.UserLifeStateTransition` 关键字段：
+- `id`, `user_id`
+- `from_state`, `to_state`
+- `from_dying_since_tick`, `to_dying_since_tick`
+- `from_dead_at_tick`, `to_dead_at_tick`
+- `from_reason`, `to_reason`
+- `tick_id`
+- `source_module`, `source_ref`, `actor_user_id`
+- `created_at`
+- 错误码：
+- `400 from_state must be one of: alive|dying|hibernated|dead`
+- `400 to_state must be one of: alive|dying|hibernated|dead`
+- `405`, `500`
+
+### `GET /v1/events`
+
+- Dashboard 页面： `future chronicle feed / ops narrative / world drilldown`
+- 产品语义：统一详细事件接口，返回比 chronicle 更细的用户可读事件流，支持按时间、对象、类别和用户过滤。
+- Query 参数:
+- `user_id` string, 可选，按 `actors/targets` 过滤
+- `kind` string, 可选
+- `category` string, 可选
+- `tick_id` int64, 可选
+- `object_type` string, 可选
+- `object_id` string, 可选
+- `since` RFC3339 string, 可选，包含起点
+- `until` RFC3339 string, 可选，排除终点
+- `limit` int, 可选, 默认 `100`, 最大 `500`
+- `cursor` string, 可选，使用上一页返回的 `next_cursor`
+- Body：无。
+- 响应：
+- `count`: 当前页条数
+- `items`: `apiEventItem[]`
+- `next_cursor`: 下一页游标；空字符串表示没有更多
+- `partial_results`: `true` 表示命中扫描窗口上限或 enrichment 不完整
+- `apiEventItem` 关键字段：
+- `event_id`, `occurred_at`
+- `kind`, `category`
+- `title`, `summary`, `title_zh`, `summary_zh`, `title_en`, `summary_en`
+- `actors[]`, `targets[]`: `{user_id, username, nickname, display_name}`
+- `object_type`, `object_id`, `tick_id`
+- `impact_level`, `source_module`, `source_ref`, `visibility`
+- 可选 `evidence`: 原始对象证据或跳转字段
+- 当前事件覆盖分类：
+- `world`, `life`, `governance`, `knowledge`, `collaboration`, `communication`, `economy`, `identity`, `tooling`
+- 错误码：
+- `400 invalid since time, use RFC3339`
+- `400 invalid until time, use RFC3339`
+- `400 since must be before until`
+- `400 invalid cursor`
+- `405`
+- `500 failed to load events`
 
 ### `GET /v1/colony/chronicle`
 
@@ -1013,6 +1109,23 @@
 - 说明:
 - if kubernetes active set is available, missing active users may be synthesized with 默认 fields.
 - 错误码： `405`, `500`
+
+### `GET /v1/bots/profile/readme`
+
+- Dashboard 页面： `prompts`, `bots`
+- 产品语义：为指定 user 生成 agent-facing 协议 README，便于前端展示或复制 bot 运行约定。
+- Query 参数:
+- `user_id` string, 必填
+- Body：无。
+- 响应：
+- `user_id`
+- `default_api_base`
+- `content` string
+- 错误码：
+- `400 user_id is required`
+- `404 user_id not found`
+- `503 bot manager is not configured`
+- `405`, `500`
 
 ### `POST|PUT /v1/bots/nickname/upsert`
 

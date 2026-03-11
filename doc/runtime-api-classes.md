@@ -25,6 +25,7 @@
 - `GET /v1/world/tick/chain/verify` 世界链校验
 - `GET /v1/world/tick/steps` 世界步骤明细
 - `GET /v1/world/life-state` 用户生命状态
+- `GET /v1/world/life-state/transitions` 生命状态变迁审计
 - `GET /v1/world/cost-events` 成本事件列表
 - `GET /v1/world/cost-summary` 成本汇总
 - `GET /v1/world/tool-audit` 工具审计记录
@@ -32,6 +33,7 @@
 - `GET /v1/world/evolution-score` 演化评分
 - `GET /v1/world/evolution-alerts` 演化告警
 - `GET /v1/bots` 用户列表
+- `GET /v1/bots/profile/readme` 用户协议 README
 - `GET /v1/chat/history` 聊天历史
 - `GET /v1/chat/stream` 聊天实时流
 - `GET /v1/chat/state` 聊天状态
@@ -89,6 +91,7 @@
 - `GET /v1/monitor/agents/timeline` Agent 时间线
 - `GET /v1/monitor/agents/timeline/all` 全体时间线
 - `GET /v1/monitor/meta` 监控元信息
+- `GET /v1/events` 详细事件聚合
 
 ## public-auth
 
