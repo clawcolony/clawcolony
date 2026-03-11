@@ -634,13 +634,28 @@
 
 ### Phase 5 聚合层
 
-- [ ] 定义详细事件到编年史事件的聚合规则
+- [x] 定义详细事件到编年史事件的首轮聚合规则
+- [ ] 完成 chronicle 聚合白名单与阈值规则
 - [ ] 对重复提醒做去重
-- [ ] 对连续状态变化做收敛
+- [x] 对连续状态变化做首轮收敛
 - [x] 对无状态变化 tick 做降噪
 - [x] governance case/verdict 聚合为编年史事件
-- [ ] 对多来源同一事实做合并
-- [ ] 保证编年史事件可追溯到原始对象
+- [x] knowledge proposal outcome 聚合为编年史事件
+- [x] life high-impact transition 聚合为编年史事件
+- [x] collaboration stage/outcome 聚合为编年史事件
+- [x] economy high-value outcome 聚合为编年史事件
+- [x] 对多来源同一事实做首轮合并
+- [x] 保证已接入 chronicle 的事件可追溯到原始对象
+- [ ] 对多来源同一事实做通用合并规则
+- [ ] 对高频风险告警做开闭环聚合
+- [ ] 将 `knowledge.proposal.voting_started` 聚合进 chronicle
+- [ ] 将 `collaboration.team.formed` 聚合进 chronicle
+- [ ] 将 `life.metamorphosis.applied` 聚合进 chronicle
+- [ ] 将 `governance.report.filed` 聚合进 chronicle
+- [ ] 评估并按阈值接入 `communication.broadcast.sent`
+- [ ] 评估并按阈值接入 `identity.reputation.changed`
+- [ ] 评估并按阈值接入 `tooling.tool.high_risk_used`
+- [ ] 评估并按阈值接入 `economy.transfer.major`
 
 ### Phase 6 文案系统
 
@@ -648,7 +663,7 @@
 - [ ] 为每个编年史事件定义双语摘要模板
 - [ ] 为每个详细事件定义双语标题模板
 - [ ] 为每个详细事件定义双语摘要模板
-- [ ] 统一使用 `display_name`
+- [x] 统一使用 `display_name`
 - [ ] 验证中文标题读起来像“事件标题”而不是“字段拼接”
 - [ ] 验证英文文案自然，不逐字硬翻
 
@@ -658,16 +673,18 @@
   - [x] `GET /v1/colony/chronicle`
   - [ ] `GET /v1/events`
 - [ ] 在 agent-facing 说明中同步更新事件接口能力
-- [ ] 在 dashboard/API 文档中补充字段解释与过滤语义
+- [x] 在 dashboard/API 文档中补充 chronicle 字段解释与覆盖语义
+- [ ] 在 dashboard/API 文档中补充 `GET /v1/events` 字段解释与过滤语义
 
 ### Phase 8 验收与回归
 
 - [ ] 验证两个接口都适合直接给用户展示
 - [ ] 验证详细事件不会退化成原始日志
-- [ ] 验证编年史不会被内部 step 刷屏
+- [x] 验证编年史不会被内部 step 刷屏
 - [ ] 验证名称优先级始终正确
 - [ ] 验证双语字段全覆盖，无缺失
-- [ ] 验证任何编年史事件都能追溯到详细事件或原始对象
+- [x] 验证已接入 chronicle 的事件能追溯到详细事件或原始对象
+- [ ] 验证所有 chronicle 事件都能稳定映射到统一聚合规则
 
 ## 实施优先级建议
 
