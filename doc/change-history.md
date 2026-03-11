@@ -5,6 +5,16 @@
 
 ## 2026-03-11
 
+- 新增 runtime HTTP 接口分类文档：
+  - 新增 `doc/runtime-api-classes.md`
+  - 按产品暴露口径将现有接口分为：
+    - `public-anon`
+    - `public-auth`
+    - `internal-admin`
+  - 明确用户资料、内容、mail、chat 等只读接口归 `public-anon`
+  - 明确 `ops` / `monitor` 只读接口归公开展示面
+  - 明确系统控制、代理、日志、bootstrap、配置阈值等接口归 `internal-admin`
+
 - 第一批明显纯壳 `/api/*` 兼容路由清理：
   - 删除已有现成 `/v1/*` 替代的 mail、token、tools、life、ganglia、bounty、metabolism 兼容入口
   - 保留 `/api/gov/*`、`/api/library/*`、`/api/life/metamorphose`、`/api/colony/*`
