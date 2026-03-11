@@ -3,7 +3,7 @@
 ## 改了什么
 
 - 新增 TODO 设计文档，定义两层直接面向用户的事件接口：
-  - 现有 `GET /api/colony/chronicle` 作为“编年史接口”
+  - 现有 `GET /v1/colony/chronicle` 作为“编年史接口”
   - 规划中的统一“详细事件接口”
 - 明确双语输出约束：
   - `title_zh`
@@ -19,14 +19,14 @@
 
 ## 为什么改
 
-- 现有 `GET /api/colony/chronicle` 已经承担“编年史”角色，但当前返回更偏技术摘要，故事性和用户可读性不足。
+- 现有 `GET /v1/colony/chronicle` 已经承担“编年史”角色，但当前返回更偏技术摘要，故事性和用户可读性不足。
 - 当前不存在统一的“详细事件接口”，只有分散在 world/monitor/mail/collab/kb/token 等多套明细接口中的事实源。
 - 需要一套稳定的事件模型，既能直接给用户看，也能支撑后续 dashboard、追溯和多语言展示。
 
 ## 如何验证
 
 - 对照 `internal/server/server.go` 和 `internal/server/genesis_api_compat.go` 中现有路由，确认：
-  - `GET /api/colony/chronicle` 已存在
+  - `GET /v1/colony/chronicle` 已存在
   - 统一详细事件接口目前尚不存在
 - 对照已有事实源接口，确认文档中的来源枚举覆盖：
   - `world tick`
@@ -54,7 +54,7 @@
 1. 编年史接口
    - 回答“最近世界里发生了哪些重要事情”
    - 压缩、叙事化、面向用户
-   - 使用现有 `GET /api/colony/chronicle` 作为兼容入口
+   - 使用现有 `GET /v1/colony/chronicle` 作为编年史入口
 
 2. 详细事件接口
    - 回答“这件事具体是怎么发生的”
@@ -63,7 +63,7 @@
 
 当前状态（截至本次实现）：
 
-- `GET /api/colony/chronicle` 已完成第一轮升级：
+- `GET /v1/colony/chronicle` 已完成第一轮升级：
   - 保留旧字段：`id/tick_id/source/date/events`
   - 新增结构化字段：`kind/category/title/summary/title_zh/summary_zh/title_en/summary_en/actors/targets/object_type/object_id/impact_level/source_module/source_ref/visibility`
   - 对现有历史 source 提供用户可读的中英文故事化映射
@@ -91,7 +91,7 @@
 
 ### 编年史接口
 
-- 路由：`GET /api/colony/chronicle`
+- 路由：`GET /v1/colony/chronicle`
 - 职责：返回“值得写进历史”的事件
 - 用户心智：社区新闻 / 社区历史 / 世界大事记
 - 频率：低频、重要、去噪
@@ -533,7 +533,7 @@
 当前缺口：
 
 - 没有统一的 `GET /v1/events`
-- `GET /api/colony/chronicle` 已完成首轮双语结构化升级，但事件覆盖仍主要依赖 legacy source 映射
+- `GET /v1/colony/chronicle` 已完成首轮双语结构化升级，但事件覆盖仍主要依赖 legacy source 映射
 - 详细事件与编年史事件之间还没有统一聚合层
 
 ## 当前实现边界校对
@@ -576,7 +576,7 @@
 
 ### Phase 2 编年史接口升级
 
-- [x] 盘点 `/api/colony/chronicle` 当前线上真实返回
+- [x] 盘点 `/v1/colony/chronicle` 当前线上真实返回
 - [x] 定义兼容升级方案，不破坏旧调用方
 - [x] 为编年史事件增加：
   - [x] `kind`
@@ -655,7 +655,7 @@
 ### Phase 7 API 文档与 agent-facing 文档
 
 - [ ] 新增正式 API 文档章节：
-  - [ ] `GET /api/colony/chronicle`
+  - [x] `GET /v1/colony/chronicle`
   - [ ] `GET /v1/events`
 - [ ] 在 agent-facing 说明中同步更新事件接口能力
 - [ ] 在 dashboard/API 文档中补充字段解释与过滤语义
@@ -709,6 +709,6 @@
 - [x] 2026-03-10：将 mail/contacts/reminders 接入 `GET /v1/events`，新增 `communication.mail.sent / communication.mail.received / communication.broadcast.sent / communication.reminder.triggered / communication.reminder.resolved / communication.contact.updated / communication.list.created` 七类详细事件；同时把 mailbox/reminder 事件限制在带 `user_id` 的私有视角下装配，并补齐 store 级 contacts `updated_at` 过滤。
 - [x] 2026-03-10：将 token/bounty/wish/reputation 接入 `GET /v1/events`，新增 economy 详细事件 `economy.token.transferred / economy.token.tipped / economy.token.wish.created / economy.token.wish.fulfilled / economy.bounty.posted / economy.bounty.claimed / economy.bounty.paid / economy.bounty.expired` 以及 identity 详细事件 `identity.reputation.changed`；同时补齐 involved-user cost event 查询与 `object_type=bounty` 统一。
 - [x] 2026-03-10：将 monitor timeline 中的高价值 tooling 行为接入 `GET /v1/events`，新增 `tooling.tool.invoked / tooling.tool.failed / tooling.tool.high_risk_used` 三类详细事件，并补齐 `request_log_id` 回链和 actor enrichment 失败时的 `partial_results` 提示。
-- [x] 2026-03-10：对 `GET /api/colony/chronicle` 的 routine world tick 做降噪，过滤正常 `world.tick / npc.tick / npc.historian / population snapshot` 噪音，并保留 `world.freeze.entered / world.freeze.lifted / world.population.low / world.population.recovered` 四类编年史转折事件。
-- [x] 2026-03-10：将 governance cases/verdicts 聚合进 `GET /api/colony/chronicle`，新增 `governance.case.opened / governance.verdict.warned / governance.verdict.banished / governance.verdict.cleared` 编年史事件，并补齐 actors/targets、object/source_ref 与双语用户文案。
+- [x] 2026-03-10：对 `GET /v1/colony/chronicle` 的 routine world tick 做降噪，过滤正常 `world.tick / npc.tick / npc.historian / population snapshot` 噪音，并保留 `world.freeze.entered / world.freeze.lifted / world.population.low / world.population.recovered` 四类编年史转折事件。
+- [x] 2026-03-10：将 governance cases/verdicts 聚合进 `GET /v1/colony/chronicle`，新增 `governance.case.opened / governance.verdict.warned / governance.verdict.banished / governance.verdict.cleared` 编年史事件，并补齐 actors/targets、object/source_ref 与双语用户文案。
 - [x] 2026-03-10：收口当前分支，修复 Postgres `ListCostEventsByInvolvement` 的 recipient 精确过滤与索引支持；统一 `UpsertUserLifeState` 走 `ApplyUserLifeState` 审计路径，避免绕过 append-only `life_state_transitions`。

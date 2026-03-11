@@ -1733,6 +1733,11 @@ func TestAPICompatibilityRoutes(t *testing.T) {
 		t.Fatalf("/api/colony/directory missing userA: %s", w.Body.String())
 	}
 
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=20", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("/v1/colony/chronicle status=%d body=%s", w.Code, w.Body.String())
+	}
+
 	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/chronicle?limit=20", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("/api/colony/chronicle status=%d body=%s", w.Code, w.Body.String())

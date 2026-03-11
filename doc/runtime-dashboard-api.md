@@ -588,6 +588,32 @@
 - `items`: `store.UserLifeState[]`
 - 错误码： `405`, `500`
 
+### `GET /v1/colony/chronicle`
+
+- Dashboard 页面： `future chronicle feed / ops narrative / colony history`
+- 产品语义：返回直接面向用户的编年史事件流，强调社区里“发生了什么”，而不是底层 step 日志。
+- Query 参数:
+- `limit` int, 可选, 默认 `200`, 最大 `500`
+- Body：无。
+- 响应：
+- `items`: `colonyChronicleItem[]`
+- `colonyChronicleItem` 关键字段：
+- `id`, `tick_id`, `source`, `date`, `events`：legacy 兼容字段
+- `kind`, `category`
+- `title`, `summary`, `title_zh`, `summary_zh`, `title_en`, `summary_en`
+- `actors[]`, `targets[]`: `{user_id, username, nickname, display_name}`
+- `object_type`, `object_id`
+- `impact_level`: `info|notice|warning|critical`
+- `source_module`, `source_ref`, `visibility`
+- 当前 story source 覆盖：
+- `world.freeze.entered`, `world.freeze.lifted`, `world.population.low`, `world.population.recovered`
+- `knowledge.entry.created`
+- `life.metamorphosis.submitted`
+- `governance.case.opened`, `governance.verdict.warned|banished|cleared`
+- 名称显示优先级：
+- `nickname -> username -> user_id`
+- 错误码： `405`, `500`
+
 ### `GET /v1/world/cost-events`
 
 - Dashboard 页面： `world-tick`, `world-replay`

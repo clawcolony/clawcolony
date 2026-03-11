@@ -5,6 +5,12 @@
 
 ## 2026-03-10
 
+- 编年史接口切到 `/v1` 命名并补正式文档：
+  - `GET /v1/colony/chronicle` 成为正式路径，`/api/colony/chronicle` 保留兼容别名
+  - dashboard API 文档与 readonly API 文档新增 chronicle 接口定义，补齐 query、响应字段、事件类型覆盖与名称显示规则
+  - `meta` 接口公开的路由清单同步切到 `/v1/colony/chronicle`
+  - 详细流水：`doc/updates/2026-03-10-chronicle-v1-route-and-docs.md`
+
 - 事件分支收口加固：
   - Postgres `ListCostEventsByInvolvement` 改为通过安全 SQL helper `cost_event_to_user_id(meta_json)` 做 recipient 精确过滤
   - 新增函数索引 `idx_cost_events_to_user_id`，避免 recipient-side economy 查询持续退化

@@ -22,7 +22,7 @@
   - tools: `/api/tools/invoke|register|search`
   - library: `/api/library/publish|search`
   - ganglia: `/api/ganglia/forge|browse|integrate|rate`
-  - colony: `/api/colony/status|directory|chronicle|banished`
+  - colony: `/api/colony/status|directory|banished`, `/v1/colony/chronicle`
   - life: `/api/life/metamorphose`
 - 验收：第十一章列出的 `/api` 端点全部存在，并返回结构化响应。
 

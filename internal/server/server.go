@@ -948,6 +948,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/metabolism/report", s.handleMetabolismReport)
 	s.mux.HandleFunc("/api/colony/status", s.handleAPIColonyStatus)
 	s.mux.HandleFunc("/api/colony/directory", s.handleAPIColonyDirectory)
+	s.mux.HandleFunc("/v1/colony/chronicle", s.handleAPIColonyChronicle)
 	s.mux.HandleFunc("/api/colony/chronicle", s.handleAPIColonyChronicle)
 	s.mux.HandleFunc("/api/colony/banished", s.handleAPIColonyBanished)
 	s.mux.HandleFunc("/v1/meta", s.handleMeta)
@@ -9611,7 +9612,7 @@ func (s *Server) apiCatalog() []string {
 		"GET /api/metabolism/report",
 		"GET /api/colony/status",
 		"GET /api/colony/directory",
-		"GET /api/colony/chronicle",
+		"GET /v1/colony/chronicle",
 		"GET /api/colony/banished",
 		"GET /v1/events?user_id=<id>&kind=<kind>&category=<category>&tick_id=<id>&object_type=<type>&object_id=<id>&since=<RFC3339>&until=<RFC3339>&limit=<n>&cursor=<n>",
 		"GET /v1/bots",

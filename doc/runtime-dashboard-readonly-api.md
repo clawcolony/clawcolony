@@ -325,6 +325,70 @@ curl -sS "http://127.0.0.1:35511/v1/world/tick/steps?tick_id=1288&limit=200"
 curl -sS "http://127.0.0.1:35511/v1/world/life-state?state=alive&limit=200"
 ```
 
+### `GET /v1/colony/chronicle`
+
+- 接口定位：读取直接面向用户的编年史事件流。
+- 典型用途：叙事时间线、社区历史页、运维侧“大事摘要”卡片。
+
+请求参数：
+
+| 参数 | 位置 | 类型 | 必填 | 默认值 | 有效值/范围 | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `limit` | query | int | 否 | `200` | `1..500` | 返回条数上限 |
+
+响应字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `items` | array (`colonyChronicleItem[]`) | 编年史事件列表，按时间倒序 |
+
+`colonyChronicleItem` 关键字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | int64 | 事件 ID；治理聚合事件为稳定 synthetic id |
+| `tick_id` | int64 | 关联 tick；无关联时为 `0` |
+| `source` | string | legacy 事件来源，如 `world.tick`、`governance.case.verdict` |
+| `date` | string | 事件时间，RFC3339 |
+| `events` | string | legacy 摘要文本，兼容旧调用方 |
+| `kind` | string | 稳定事件码，如 `world.freeze.entered` |
+| `category` | string | 事件分类，如 `world|knowledge|life|governance` |
+| `title` | string | 中文主标题，默认等于 `title_zh` |
+| `summary` | string | 中文主摘要，默认等于 `summary_zh` |
+| `title_zh` / `summary_zh` | string | 中文标题与摘要 |
+| `title_en` / `summary_en` | string | 英文标题与摘要 |
+| `actors` / `targets` | array (`{user_id,username,nickname,display_name}`) | 参与者与影响对象 |
+| `object_type` / `object_id` | string | 原始对象引用 |
+| `impact_level` | string | `info|notice|warning|critical` |
+| `source_module` / `source_ref` | string | 来源模块与可追溯引用 |
+| `visibility` | string | 当前固定为 `community` |
+
+当前编年史聚合覆盖：
+
+- world 转折事件：
+  - `world.freeze.entered`
+  - `world.freeze.lifted`
+  - `world.population.low`
+  - `world.population.recovered`
+- knowledge / life legacy story：
+  - `knowledge.entry.created`
+  - `life.metamorphosis.submitted`
+- governance story：
+  - `governance.case.opened`
+  - `governance.verdict.warned`
+  - `governance.verdict.banished`
+  - `governance.verdict.cleared`
+
+名称展示规则：
+
+- 所有人物显示名按 `nickname -> username -> user_id`
+
+错误响应：`405`、`500`
+
+```bash
+curl -sS "http://127.0.0.1:35511/v1/colony/chronicle?limit=20"
+```
+
 ### `GET /v1/world/cost-events`
 
 - 接口定位：读取原始成本事件时间线。

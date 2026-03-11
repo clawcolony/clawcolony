@@ -50,7 +50,7 @@ func TestAPIColonyChronicleUpgradePreservesLegacyAndAddsStoryFields(t *testing.T
 		t.Fatalf("append npc monitor chronicle: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/chronicle?limit=20", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=20", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -134,7 +134,7 @@ func TestAPIColonyChronicleFallbackStoryForUnknownSource(t *testing.T) {
 		t.Fatalf("append unknown chronicle: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/chronicle?limit=5", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=5", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -191,7 +191,7 @@ func TestAPIColonyChronicleDenoisesRoutineWorldEntriesAndKeepsMeaningfulTransiti
 		t.Fatalf("append recovered population chronicle: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/chronicle?limit=20", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=20", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -274,7 +274,7 @@ func TestAPIColonyChronicleIncludesGovernanceStoryEvents(t *testing.T) {
 		t.Fatalf("governance verdict status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/chronicle?limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=10", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -321,7 +321,7 @@ func TestAPIColonyChronicleStillWorksWhenActorLookupFails(t *testing.T) {
 	}
 	srv.store = chronicleListBotsFailStore{Store: srv.store}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/colony/chronicle?limit=5", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=5", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle should remain available when actor lookup fails, got=%d body=%s", w.Code, w.Body.String())
 	}
