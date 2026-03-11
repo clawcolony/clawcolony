@@ -95,6 +95,7 @@ type Server struct {
 	alertLastAmt         map[string]int64
 	lowTokenNotifyMu     sync.RWMutex
 	lowTokenLastSent     map[string]time.Time
+	treasuryInitMu       sync.Mutex
 	evolutionAlertMu     sync.Mutex
 	evolutionAlertLastAt time.Time
 	evolutionAlertDigest string
@@ -555,7 +556,7 @@ func (s *Server) evaluateExtinctionGuard(ctx context.Context) (extinctionGuardSt
 	atRisk := 0
 	for _, it := range accounts {
 		userID := strings.TrimSpace(it.BotID)
-		if userID == "" || userID == clawWorldSystemID {
+		if isExcludedTokenUserID(userID) {
 			continue
 		}
 		total++
@@ -914,42 +915,6 @@ func (s *Server) initTianDao(ctx context.Context) error {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	s.mux.HandleFunc("/api/mail/send", s.handleAPIMailSend)
-	s.mux.HandleFunc("/api/mail/send-list", s.handleMailSendList)
-	s.mux.HandleFunc("/api/mail/inbox", s.handleAPIMailInbox)
-	s.mux.HandleFunc("/api/mail/list/create", s.handleMailListCreate)
-	s.mux.HandleFunc("/api/mail/list/join", s.handleMailListJoin)
-	s.mux.HandleFunc("/api/token/balance", s.handleAPITokenBalance)
-	s.mux.HandleFunc("/api/token/transfer", s.handleAPITokenTransfer)
-	s.mux.HandleFunc("/api/gov/propose", s.handleAPIGovPropose)
-	s.mux.HandleFunc("/api/gov/vote", s.handleAPIGovVote)
-	s.mux.HandleFunc("/api/gov/cosign", s.handleAPIGovCosign)
-	s.mux.HandleFunc("/api/gov/report", s.handleAPIGovReport)
-	s.mux.HandleFunc("/api/gov/laws", s.handleAPIGovLaws)
-	s.mux.HandleFunc("/api/tools/invoke", s.handleAPIToolsInvoke)
-	s.mux.HandleFunc("/api/tools/register", s.handleAPIToolsRegister)
-	s.mux.HandleFunc("/api/tools/search", s.handleAPIToolsSearch)
-	s.mux.HandleFunc("/api/library/publish", s.handleAPILibraryPublish)
-	s.mux.HandleFunc("/api/library/search", s.handleAPILibrarySearch)
-	s.mux.HandleFunc("/api/life/set-will", s.handleAPILifeSetWill)
-	s.mux.HandleFunc("/api/life/metamorphose", s.handleAPILifeMetamorphose)
-	s.mux.HandleFunc("/api/life/hibernate", s.handleAPILifeHibernate)
-	s.mux.HandleFunc("/api/life/wake", s.handleAPILifeWake)
-	s.mux.HandleFunc("/api/ganglia/forge", s.handleAPIGangliaForge)
-	s.mux.HandleFunc("/api/ganglia/browse", s.handleAPIGangliaBrowse)
-	s.mux.HandleFunc("/api/ganglia/integrate", s.handleAPIGangliaIntegrate)
-	s.mux.HandleFunc("/api/ganglia/rate", s.handleAPIGangliaRate)
-	s.mux.HandleFunc("/api/bounty/post", s.handleAPIBountyPost)
-	s.mux.HandleFunc("/api/bounty/list", s.handleAPIBountyList)
-	s.mux.HandleFunc("/api/bounty/verify", s.handleAPIBountyVerify)
-	s.mux.HandleFunc("/api/metabolism/score", s.handleMetabolismScore)
-	s.mux.HandleFunc("/api/metabolism/supersede", s.handleMetabolismSupersede)
-	s.mux.HandleFunc("/api/metabolism/dispute", s.handleMetabolismDispute)
-	s.mux.HandleFunc("/api/metabolism/report", s.handleMetabolismReport)
-	s.mux.HandleFunc("/api/colony/status", s.handleAPIColonyStatus)
-	s.mux.HandleFunc("/api/colony/directory", s.handleAPIColonyDirectory)
-	s.mux.HandleFunc("/api/colony/chronicle", s.handleAPIColonyChronicle)
-	s.mux.HandleFunc("/api/colony/banished", s.handleAPIColonyBanished)
 	s.mux.HandleFunc("/v1/meta", s.handleMeta)
 	s.mux.HandleFunc("/v1/internal/users/sync", s.handleInternalUserSync)
 	s.mux.HandleFunc("/v1/tian-dao/law", s.handleTianDaoLaw)
@@ -991,8 +956,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/policy/mission/bot", s.handleMissionBot)
 	s.mux.HandleFunc("/v1/token/accounts", s.handleTokenAccounts)
 	s.mux.HandleFunc("/v1/token/balance", s.handleTokenBalance)
+	s.mux.HandleFunc("/v1/token/leaderboard", s.handleTokenLeaderboard)
 	s.mux.HandleFunc("/v1/token/consume", s.handleTokenConsume)
 	s.mux.HandleFunc("/v1/token/history", s.handleTokenHistory)
+	s.mux.HandleFunc("/v1/token/task-market", s.handleTokenTaskMarket)
+	s.mux.HandleFunc("/v1/token/reward/upgrade-closure", s.handleTokenUpgradeClosureReward)
 	s.mux.HandleFunc("/v1/mail/send", s.handleMailSend)
 	s.mux.HandleFunc("/v1/mail/send-list", s.handleMailSendList)
 	s.mux.HandleFunc("/v1/mail/inbox", s.handleMailInbox)
@@ -1017,12 +985,15 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/life/wake", s.handleLifeWake)
 	s.mux.HandleFunc("/v1/life/set-will", s.handleLifeSetWill)
 	s.mux.HandleFunc("/v1/life/will", s.handleLifeWill)
+	s.mux.HandleFunc("/v1/life/metamorphose", s.handleAPILifeMetamorphose)
 	s.mux.HandleFunc("/v1/genesis/state", s.handleGenesisState)
 	s.mux.HandleFunc("/v1/genesis/bootstrap/start", s.handleGenesisBootstrapStart)
 	s.mux.HandleFunc("/v1/genesis/bootstrap/seal", s.handleGenesisBootstrapSeal)
 	s.mux.HandleFunc("/v1/clawcolony/state", s.handleGenesisState)
 	s.mux.HandleFunc("/v1/clawcolony/bootstrap/start", s.handleGenesisBootstrapStart)
 	s.mux.HandleFunc("/v1/clawcolony/bootstrap/seal", s.handleGenesisBootstrapSeal)
+	s.mux.HandleFunc("/v1/library/publish", s.handleAPILibraryPublish)
+	s.mux.HandleFunc("/v1/library/search", s.handleAPILibrarySearch)
 	s.mux.HandleFunc("/v1/tools/register", s.handleToolRegister)
 	s.mux.HandleFunc("/v1/tools/review", s.handleToolReview)
 	s.mux.HandleFunc("/v1/tools/search", s.handleToolSearch)
@@ -1036,6 +1007,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/metabolism/report", s.handleMetabolismReport)
 	s.mux.HandleFunc("/v1/bounty/post", s.handleBountyPost)
 	s.mux.HandleFunc("/v1/bounty/list", s.handleBountyList)
+	s.mux.HandleFunc("/v1/bounty/get", s.handleBountyGet)
 	s.mux.HandleFunc("/v1/bounty/claim", s.handleBountyClaim)
 	s.mux.HandleFunc("/v1/bounty/verify", s.handleBountyVerify)
 	s.mux.HandleFunc("/v1/collab/propose", s.handleCollabPropose)
@@ -1072,10 +1044,18 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/ganglia/integrations", s.handleGangliaIntegrations)
 	s.mux.HandleFunc("/v1/ganglia/ratings", s.handleGangliaRatings)
 	s.mux.HandleFunc("/v1/ganglia/protocol", s.handleGangliaProtocol)
+	s.mux.HandleFunc("/v1/colony/status", s.handleAPIColonyStatus)
+	s.mux.HandleFunc("/v1/colony/directory", s.handleAPIColonyDirectory)
+	s.mux.HandleFunc("/v1/colony/chronicle", s.handleAPIColonyChronicle)
+	s.mux.HandleFunc("/v1/colony/banished", s.handleAPIColonyBanished)
 	s.mux.HandleFunc("/v1/governance/docs", s.handleGovernanceDocs)
 	s.mux.HandleFunc("/v1/governance/proposals", s.handleGovernanceProposals)
+	s.mux.HandleFunc("/v1/governance/proposals/create", s.handleAPIGovPropose)
+	s.mux.HandleFunc("/v1/governance/proposals/cosign", s.handleAPIGovCosign)
+	s.mux.HandleFunc("/v1/governance/proposals/vote", s.handleAPIGovVote)
 	s.mux.HandleFunc("/v1/governance/overview", s.handleGovernanceOverview)
 	s.mux.HandleFunc("/v1/governance/protocol", s.handleGovernanceProtocol)
+	s.mux.HandleFunc("/v1/governance/laws", s.handleAPIGovLaws)
 	s.mux.HandleFunc("/v1/governance/report", s.handleGovernanceReportCreate)
 	s.mux.HandleFunc("/v1/governance/reports", s.handleGovernanceReports)
 	s.mux.HandleFunc("/v1/governance/cases/open", s.handleGovernanceCaseOpen)
@@ -1346,8 +1326,8 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for _, uid := range selectedUserIDs {
-		if uid == clawWorldSystemID {
-			writeError(w, http.StatusBadRequest, "claw-world-system cannot be rescued")
+		if isSystemTokenUserID(uid) {
+			writeError(w, http.StatusBadRequest, "system accounts cannot be rescued")
 			return
 		}
 	}
@@ -1362,7 +1342,7 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 	atRiskBefore := 0
 	for _, it := range accounts {
 		uid := strings.TrimSpace(it.BotID)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		balanceByUser[uid] = it.Balance
@@ -1406,8 +1386,8 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for _, uid := range targetUsers {
-		if uid == clawWorldSystemID {
-			writeError(w, http.StatusBadRequest, "claw-world-system cannot be rescued")
+		if isSystemTokenUserID(uid) {
+			writeError(w, http.StatusBadRequest, "system accounts cannot be rescued")
 			return
 		}
 	}
@@ -1423,6 +1403,8 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 	items := make([]worldFreezeRescueResultItem, 0, len(targetUsers))
 	appliedUsers := 0
 	evalErr := ""
+	itemIndex := make(map[string]int, len(targetUsers))
+	payouts := make(map[string]int64, len(targetUsers))
 	for _, uid := range targetUsers {
 		before := simulatedBalances[uid]
 		item := worldFreezeRescueResultItem{
@@ -1449,18 +1431,38 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 			items = append(items, item)
 			continue
 		}
-		ledger, err := s.store.Recharge(r.Context(), uid, req.Amount)
-		if err != nil {
-			item.Error = err.Error()
+		after, ok := safeInt64Add(before, req.Amount)
+		if !ok {
+			item.Error = "token balance overflow"
 			items = append(items, item)
 			continue
 		}
-		item.BalanceAfter = ledger.BalanceAfter
-		item.RechargeAmount = ledger.Amount
-		item.Applied = true
-		appliedUsers++
-		simulatedBalances[uid] = ledger.BalanceAfter
+		itemIndex[uid] = len(items)
+		item.BalanceAfter = after
 		items = append(items, item)
+		payouts[uid] = req.Amount
+	}
+	if !req.DryRun && len(payouts) > 0 {
+		_, credits, err := s.distributeFromTreasury(r.Context(), payouts)
+		if err != nil {
+			if errors.Is(err, store.ErrInsufficientBalance) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for uid, ledger := range credits {
+			idx, ok := itemIndex[uid]
+			if !ok {
+				continue
+			}
+			items[idx].BalanceAfter = ledger.BalanceAfter
+			items[idx].RechargeAmount = ledger.Amount
+			items[idx].Applied = true
+			appliedUsers++
+			simulatedBalances[uid] = ledger.BalanceAfter
+		}
 	}
 
 	atRiskAfter := 0
@@ -1488,7 +1490,7 @@ func (s *Server) handleWorldFreezeRescue(w http.ResponseWriter, r *http.Request)
 			totalUsersAfter = 0
 			for _, it := range afterAccounts {
 				uid := strings.TrimSpace(it.BotID)
-				if uid == "" || uid == clawWorldSystemID {
+				if isExcludedTokenUserID(uid) {
 					continue
 				}
 				totalUsersAfter++
@@ -4070,6 +4072,10 @@ func (s *Server) handleTokenAccounts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "请提供你的USERID")
 		return
 	}
+	if isSystemTokenUserID(botID) {
+		writeError(w, http.StatusNotFound, "user token account not found")
+		return
+	}
 	items, err := s.store.ListTokenAccounts(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -4092,6 +4098,10 @@ func (s *Server) handleTokenBalance(w http.ResponseWriter, r *http.Request) {
 	userID := queryUserID(r)
 	if userID == "" {
 		writeError(w, http.StatusBadRequest, "请提供你的USERID")
+		return
+	}
+	if isSystemTokenUserID(userID) {
+		writeError(w, http.StatusNotFound, "user token account not found")
 		return
 	}
 	accounts, err := s.store.ListTokenAccounts(r.Context())
@@ -4140,6 +4150,121 @@ func (s *Server) handleTokenBalance(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "user token account not found")
 }
 
+type tokenLeaderboardEntry struct {
+	Rank        int       `json:"rank"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Nickname    string    `json:"nickname,omitempty"`
+	BotFound    bool      `json:"bot_found"`
+	Status      string    `json:"status,omitempty"`
+	Initialized bool      `json:"initialized"`
+	Balance     int64     `json:"balance"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func sortTokenLeaderboardEntries(items []tokenLeaderboardEntry) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Balance == items[j].Balance {
+			if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+				return items[i].UserID < items[j].UserID
+			}
+			return items[i].UpdatedAt.After(items[j].UpdatedAt)
+		}
+		return items[i].Balance > items[j].Balance
+	})
+}
+
+func preferTokenLeaderboardAccount(current, candidate store.TokenAccount) bool {
+	if candidate.Balance != current.Balance {
+		return candidate.Balance > current.Balance
+	}
+	if !candidate.UpdatedAt.Equal(current.UpdatedAt) {
+		return candidate.UpdatedAt.After(current.UpdatedAt)
+	}
+	return false
+}
+
+func (s *Server) handleTokenLeaderboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit := parseLimit(r.URL.Query().Get("limit"), 100)
+	accounts, err := s.store.ListTokenAccounts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	bots, err := s.store.ListBots(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	botByID := make(map[string]store.Bot, len(bots))
+	for _, b := range bots {
+		uid := strings.TrimSpace(b.BotID)
+		if uid == "" {
+			continue
+		}
+		botByID[uid] = b
+	}
+	accountByUserID := make(map[string]store.TokenAccount, len(accounts))
+	for _, account := range accounts {
+		uid := strings.TrimSpace(account.BotID)
+		if isExcludedTokenUserID(uid) {
+			continue
+		}
+		current, ok := accountByUserID[uid]
+		if ok && !preferTokenLeaderboardAccount(current, account) {
+			continue
+		}
+		accountByUserID[uid] = account
+	}
+	items := make([]tokenLeaderboardEntry, 0, len(accountByUserID))
+	for uid, account := range accountByUserID {
+		meta, ok := botByID[uid]
+		name := uid
+		nickname := ""
+		status := "missing"
+		initialized := false
+		if ok {
+			name = strings.TrimSpace(meta.Name)
+			nickname = strings.TrimSpace(meta.Nickname)
+			status = strings.TrimSpace(meta.Status)
+			if status == "" {
+				status = "unknown"
+			}
+			initialized = meta.Initialized
+		}
+		if name == "" {
+			name = uid
+		}
+		items = append(items, tokenLeaderboardEntry{
+			UserID:      uid,
+			Name:        name,
+			Nickname:    nickname,
+			BotFound:    ok,
+			Status:      status,
+			Initialized: initialized,
+			Balance:     account.Balance,
+			UpdatedAt:   account.UpdatedAt,
+		})
+	}
+	sortTokenLeaderboardEntries(items)
+	total := len(items)
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	for i := range items {
+		items[i].Rank = i + 1
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"currency": "token",
+		"total":    total,
+		"items":    items,
+	})
+}
+
 type tokenOperationRequest struct {
 	UserID string `json:"user_id"`
 	Amount int64  `json:"amount"`
@@ -4156,7 +4281,7 @@ func (s *Server) handleTokenRecharge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" || req.Amount <= 0 {
+	if isExcludedTokenUserID(req.UserID) || req.Amount <= 0 {
 		writeError(w, http.StatusBadRequest, "user_id and positive amount are required")
 		return
 	}
@@ -4184,7 +4309,7 @@ func (s *Server) handleTokenConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" || req.Amount <= 0 {
+	if isExcludedTokenUserID(req.UserID) || req.Amount <= 0 {
 		writeError(w, http.StatusBadRequest, "user_id and positive amount are required")
 		return
 	}
@@ -4212,6 +4337,10 @@ func (s *Server) handleTokenHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	botID := queryUserID(r)
+	if isSystemTokenUserID(botID) {
+		writeJSON(w, http.StatusOK, map[string]any{"items": []store.TokenLedger{}})
+		return
+	}
 	limit := parseLimit(r.URL.Query().Get("limit"), 100)
 
 	items, err := s.store.ListTokenLedger(r.Context(), botID, limit)
@@ -5219,6 +5348,13 @@ func normalizeCollabPhase(v string) string {
 	}
 }
 
+func collabActionOwnerUserID(session store.CollabSession) string {
+	if uid := strings.TrimSpace(session.OrchestratorUserID); uid != "" {
+		return uid
+	}
+	return strings.TrimSpace(session.ProposerUserID)
+}
+
 func canTransitCollabPhase(from, to string) bool {
 	if from == to {
 		return true
@@ -5686,12 +5822,17 @@ func (s *Server) handleCollabClose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	ownerUserID := collabActionOwnerUserID(session)
+	if ownerUserID != "" && req.OrchestratorUserID != ownerUserID {
+		writeError(w, http.StatusForbidden, "only current orchestrator can close collab")
+		return
+	}
 	if !canTransitCollabPhase(session.Phase, target) {
 		writeError(w, http.StatusConflict, "phase transition not allowed")
 		return
 	}
 	now := time.Now().UTC()
-	item, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, target, req.OrchestratorUserID, req.StatusOrSummaryNote, &now)
+	item, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, target, ownerUserID, req.StatusOrSummaryNote, &now)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -5700,7 +5841,17 @@ func (s *Server) handleCollabClose(w http.ResponseWriter, r *http.Request) {
 		"result": req.Result,
 		"note":   req.StatusOrSummaryNote,
 	})
-	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
+	resp := map[string]any{"item": item}
+	if target == "closed" {
+		rewards, rewardErr := s.rewardCollabClosed(r.Context(), item)
+		if len(rewards) > 0 {
+			resp["community_rewards"] = rewards
+		}
+		if rewardErr != nil {
+			resp["community_reward_error"] = rewardErr.Error()
+		}
+	}
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 func (s *Server) handleCollabParticipants(w http.ResponseWriter, r *http.Request) {
@@ -6310,6 +6461,7 @@ func (s *Server) handleKBProposalEnroll(w http.ResponseWriter, r *http.Request) 
 		MessageType: "system",
 		Content:     "user enrolled",
 	})
+	s.kbAdvanceGenesisBootstrapDiscussing(r.Context(), proposal, time.Now().UTC())
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
 }
 
@@ -6729,10 +6881,18 @@ func (s *Server) handleKBProposalApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{
+	rewards, rewardErr := s.rewardKBProposalApplied(r.Context(), updated)
+	resp := map[string]any{
 		"entry":    entry,
 		"proposal": updated,
-	})
+	}
+	if len(rewards) > 0 {
+		resp["community_rewards"] = rewards
+	}
+	if rewardErr != nil {
+		resp["community_reward_error"] = rewardErr.Error()
+	}
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 func (s *Server) applyKBProposalAndBroadcast(ctx context.Context, proposalID int64, appliedBy string) (store.KBEntry, store.KBProposal, error) {
@@ -7219,7 +7379,7 @@ func (s *Server) closeKBProposalByStats(
 		Content:     fmt.Sprintf("%s; enrolled=%d yes=%d no=%d abstain=%d participation=%d", reason, enrolledCount, voteYes, voteNo, voteAbstain, participationCount),
 	})
 	if strings.EqualFold(strings.TrimSpace(closed.Status), "approved") {
-		_, _, applyErr := s.applyKBProposalAndBroadcast(ctx, proposal.ID, clawWorldSystemID)
+		_, applied, applyErr := s.applyKBProposalAndBroadcast(ctx, proposal.ID, clawWorldSystemID)
 		if applyErr != nil {
 			_, _, _ = s.saveGenesisBootstrapStateForProposal(ctx, proposal.ID, func(cur *genesisState) bool {
 				cur.BootstrapPhase = "approved"
@@ -7231,6 +7391,9 @@ func (s *Server) closeKBProposalByStats(
 			body := fmt.Sprintf("proposal 已 approved，但系统自动 apply 失败。\nproposal_id=%d\n请尽快调用 /v1/kb/proposals/apply 手动应用。", proposal.ID)
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{proposal.ProposerUserID}, subject, body)
 			return closed, nil
+		}
+		if _, rewardErr := s.rewardKBProposalApplied(ctx, applied); rewardErr != nil {
+			log.Printf("kb_apply_reward_failed proposal_id=%d err=%v", proposal.ID, rewardErr)
 		}
 		return closed, nil
 	}
@@ -7252,7 +7415,7 @@ func (s *Server) activeUserIDs(ctx context.Context) []string {
 	out := make([]string, 0, len(bots))
 	for _, b := range bots {
 		uid := strings.TrimSpace(b.BotID)
-		if uid == "" {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		out = append(out, uid)
@@ -9524,42 +9687,6 @@ func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiCatalog() []string {
 	full := []string{
-		"POST /api/mail/send",
-		"POST /api/mail/send-list",
-		"GET /api/mail/inbox?user_id=<id>",
-		"POST /api/mail/list/create",
-		"POST /api/mail/list/join",
-		"GET /api/token/balance?user_id=<id>",
-		"POST /api/token/transfer",
-		"POST /api/gov/propose",
-		"POST /api/gov/vote",
-		"POST /api/gov/cosign",
-		"POST /api/gov/report",
-		"GET /api/gov/laws",
-		"POST /api/tools/invoke",
-		"POST /api/tools/register",
-		"GET /api/tools/search?query=<kw>",
-		"POST /api/library/publish",
-		"GET /api/library/search?query=<kw>",
-		"POST /api/life/set-will",
-		"POST /api/life/metamorphose",
-		"POST /api/life/hibernate",
-		"POST /api/life/wake",
-		"POST /api/ganglia/forge",
-		"GET /api/ganglia/browse?type=<type>&sort_by=<score|integrations|updated>",
-		"POST /api/ganglia/integrate",
-		"POST /api/ganglia/rate",
-		"POST /api/bounty/post",
-		"GET /api/bounty/list",
-		"POST /api/bounty/verify",
-		"GET /api/metabolism/score?content_id=<id>",
-		"POST /api/metabolism/supersede",
-		"POST /api/metabolism/dispute",
-		"GET /api/metabolism/report",
-		"GET /api/colony/status",
-		"GET /api/colony/directory",
-		"GET /api/colony/chronicle",
-		"GET /api/colony/banished",
 		"GET /v1/bots",
 		"POST /v1/bots/nickname/upsert",
 		"GET /v1/bots/logs?user_id=<id>&tail=<n>",
@@ -9597,6 +9724,7 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/prompts/templates/apply",
 		"GET /v1/token/accounts?user_id=<id>",
 		"GET /v1/token/balance?user_id=<id>",
+		"GET /v1/token/leaderboard?limit=<n>",
 		"POST /v1/token/transfer",
 		"POST /v1/token/tip",
 		"GET /v1/token/wishes?status=<status>&user_id=<id>&limit=<n>",
@@ -9604,6 +9732,8 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/token/wish/fulfill",
 		"POST /v1/token/consume",
 		"GET /v1/token/history?user_id=<id>",
+		"GET /v1/token/task-market?user_id=<id>&source=manual|system|all&module=bounty|kb|collab&status=<status>&limit=<n>",
+		"POST /v1/token/reward/upgrade-closure (internal only)",
 		"POST /v1/mail/send",
 		"POST /v1/mail/send-list",
 		"GET /v1/mail/inbox?user_id=<id>&scope=all|read|unread&keyword=<kw>&limit=<n>",
@@ -9623,6 +9753,9 @@ func (s *Server) apiCatalog() []string {
 		"POST /v1/life/wake",
 		"POST /v1/life/set-will",
 		"GET /v1/life/will?user_id=<id>",
+		"POST /v1/life/metamorphose",
+		"POST /v1/library/publish",
+		"GET /v1/library/search?query=<kw>",
 		"GET /v1/clawcolony/state",
 		"POST /v1/clawcolony/bootstrap/start",
 		"POST /v1/clawcolony/bootstrap/seal",
@@ -9639,12 +9772,21 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/metabolism/report?limit=<n>",
 		"POST /v1/bounty/post",
 		"GET /v1/bounty/list?status=<status>&poster_user_id=<id>&claimed_by=<id>&limit=<n>",
+		"GET /v1/bounty/get?bounty_id=<id>",
 		"POST /v1/bounty/claim",
 		"POST /v1/bounty/verify",
+		"GET /v1/colony/status",
+		"GET /v1/colony/directory",
+		"GET /v1/colony/chronicle",
+		"GET /v1/colony/banished",
 		"GET /v1/governance/docs?keyword=<kw>&limit=<n>",
 		"GET /v1/governance/proposals?status=<status>&limit=<n>",
+		"POST /v1/governance/proposals/create",
+		"POST /v1/governance/proposals/cosign",
+		"POST /v1/governance/proposals/vote",
 		"GET /v1/governance/overview?limit=<n>",
 		"GET /v1/governance/protocol",
+		"GET /v1/governance/laws",
 		"POST /v1/governance/report",
 		"GET /v1/governance/reports?status=<status>&target_user_id=<id>&reporter_user_id=<id>&limit=<n>",
 		"POST /v1/governance/cases/open",
@@ -9813,7 +9955,7 @@ func (s *Server) runLifeStateTransitions(ctx context.Context, tickID int64) erro
 
 	for _, b := range bots {
 		userID := strings.TrimSpace(b.BotID)
-		if userID == "" || userID == clawWorldSystemID {
+		if isExcludedTokenUserID(userID) {
 			continue
 		}
 		if !b.Initialized || strings.EqualFold(strings.TrimSpace(b.Status), "deleted") {
@@ -10187,6 +10329,7 @@ func isSharedWritePath(method, path string) bool {
 	}
 	path = strings.TrimSpace(path)
 	switch path {
+	// Knowledgebase governance core
 	case "/v1/kb/proposals",
 		"/v1/kb/proposals/enroll",
 		"/v1/kb/proposals/revise",
@@ -10195,42 +10338,47 @@ func isSharedWritePath(method, path string) bool {
 		"/v1/kb/proposals/ack",
 		"/v1/kb/proposals/vote",
 		"/v1/kb/proposals/apply",
-		"/v1/collab/propose",
+		"/v1/governance/proposals/create",
+		"/v1/governance/proposals/cosign",
+		"/v1/governance/proposals/vote",
+		"/v1/governance/report":
+		return true
+
+	// Collaboration
+	case "/v1/collab/propose",
 		"/v1/collab/apply",
 		"/v1/collab/assign",
 		"/v1/collab/start",
 		"/v1/collab/submit",
 		"/v1/collab/review",
-		"/v1/collab/close",
+		"/v1/collab/close":
+		return true
+
+	// Content/protocol production
+	case "/v1/library/publish",
+		"/v1/life/metamorphose",
 		"/v1/ganglia/forge",
 		"/v1/ganglia/integrate",
 		"/v1/ganglia/rate",
-		"/v1/tools/register",
-		"/v1/tools/invoke",
 		"/v1/metabolism/supersede",
-		"/v1/metabolism/dispute",
+		"/v1/metabolism/dispute":
+		return true
+
+	// Tools and bounties
+	case "/v1/tools/register",
+		"/v1/tools/invoke",
 		"/v1/bounty/post",
 		"/v1/bounty/claim",
-		"/v1/bounty/verify",
-		"/v1/token/transfer",
+		"/v1/bounty/verify":
+		return true
+
+	// Token writes
+	case "/v1/token/transfer",
 		"/v1/token/tip",
 		"/v1/token/wish/create",
-		"/v1/token/wish/fulfill",
-		"/api/gov/propose",
-		"/api/gov/vote",
-		"/api/gov/cosign",
-		"/api/gov/report",
-		"/api/library/publish",
-		"/api/ganglia/forge",
-		"/api/ganglia/integrate",
-		"/api/ganglia/rate",
-		"/api/tools/register",
-		"/api/tools/invoke",
-		"/api/bounty/post",
-		"/api/bounty/verify",
-		"/api/metabolism/supersede",
-		"/api/metabolism/dispute":
+		"/v1/token/wish/fulfill":
 		return true
+
 	default:
 		return false
 	}
@@ -10537,7 +10685,7 @@ func (s *Server) runTokenDrainTick(ctx context.Context, tickID int64) error {
 func (s *Server) appendCommCostEvent(ctx context.Context, userID, costType string, units int64, meta map[string]any) {
 	userID = strings.TrimSpace(userID)
 	costType = strings.TrimSpace(costType)
-	if userID == "" || userID == clawWorldSystemID || costType == "" || units <= 0 {
+	if isExcludedTokenUserID(userID) || costType == "" || units <= 0 {
 		return
 	}
 	rateMilli := s.cfg.CommCostRateMilli
@@ -10583,7 +10731,7 @@ func (s *Server) appendCommCostEvent(ctx context.Context, userID, costType strin
 
 func (s *Server) appendThinkCostEvent(ctx context.Context, userID string, inputUnits, outputUnits int64, meta map[string]any) {
 	userID = strings.TrimSpace(userID)
-	if userID == "" || userID == clawWorldSystemID {
+	if isExcludedTokenUserID(userID) {
 		return
 	}
 	units := inputUnits + outputUnits
@@ -10636,7 +10784,7 @@ func (s *Server) appendThinkCostEvent(ctx context.Context, userID string, inputU
 func (s *Server) appendToolCostEvent(ctx context.Context, userID, costType string, units int64, meta map[string]any) {
 	userID = strings.TrimSpace(userID)
 	costType = strings.TrimSpace(costType)
-	if userID == "" || userID == clawWorldSystemID || costType == "" || units <= 0 {
+	if isExcludedTokenUserID(userID) || costType == "" || units <= 0 {
 		return
 	}
 	rateMilli := s.cfg.ToolCostRateMilli
@@ -11128,7 +11276,7 @@ func (s *Server) handlePiTaskClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
+	if isExcludedTokenUserID(req.UserID) {
 		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
@@ -11194,7 +11342,7 @@ func (s *Server) handlePiTaskSubmit(w http.ResponseWriter, r *http.Request) {
 	req.UserID = strings.TrimSpace(req.UserID)
 	req.TaskID = strings.TrimSpace(req.TaskID)
 	req.Answer = normalizeDigitAnswer(req.Answer)
-	if req.UserID == "" || req.TaskID == "" || req.Answer == "" {
+	if isExcludedTokenUserID(req.UserID) || req.TaskID == "" || req.Answer == "" {
 		writeError(w, http.StatusBadRequest, "user_id, task_id, answer are required")
 		return
 	}
@@ -11239,11 +11387,27 @@ func (s *Server) handlePiTaskSubmit(w http.ResponseWriter, r *http.Request) {
 		err      error
 	)
 	if correct {
-		ledger, err = s.store.Recharge(r.Context(), req.UserID, task.RewardToken)
+		_, ledger, err = s.transferFromTreasury(r.Context(), req.UserID, task.RewardToken)
 	} else {
 		ledger, deducted, err = s.consumeWithFloor(r.Context(), req.UserID, task.RewardToken)
 	}
 	if err != nil {
+		if correct {
+			s.taskMu.Lock()
+			restored := s.piTasks[req.TaskID]
+			if restored.TaskID != "" && restored.BotID == req.UserID && restored.Status == "success" {
+				restored.Status = "claimed"
+				restored.Submitted = ""
+				restored.SubmittedAt = nil
+				s.piTasks[req.TaskID] = restored
+				s.activeTasks[req.UserID] = req.TaskID
+			}
+			s.taskMu.Unlock()
+		}
+		if correct && errors.Is(err, store.ErrInsufficientBalance) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -11335,7 +11499,7 @@ func normalizeDigitAnswer(s string) string {
 
 func (s *Server) isUserDead(ctx context.Context, userID string) (bool, error) {
 	userID = strings.TrimSpace(userID)
-	if userID == "" || userID == clawWorldSystemID {
+	if isExcludedTokenUserID(userID) {
 		return false, nil
 	}
 	life, err := s.store.GetUserLifeState(ctx, userID)
@@ -11347,7 +11511,7 @@ func (s *Server) isUserDead(ctx context.Context, userID string) (bool, error) {
 
 func (s *Server) ensureUserAlive(ctx context.Context, userID string) error {
 	userID = strings.TrimSpace(userID)
-	if userID == "" || userID == clawWorldSystemID {
+	if isExcludedTokenUserID(userID) {
 		return nil
 	}
 	life, err := s.store.GetUserLifeState(ctx, userID)

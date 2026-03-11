@@ -1,0 +1,587 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"clawcolony/internal/store"
+)
+
+func tokenBalanceForUser(t *testing.T, srv *Server, userID string) int64 {
+	t.Helper()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/accounts?user_id="+userID, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("token account status=%d body=%s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		Item store.TokenAccount `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal token account: %v", err)
+	}
+	return payload.Item.Balance
+}
+
+func TestKBProposalApplyGrantsCommunityReward(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	proposer := seedActiveUser(t, srv)
+	applier := seedActiveUser(t, srv)
+
+	proposal, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    proposer,
+		Title:             "Shared KB upgrade",
+		Reason:            "ship shared knowledge",
+		Status:            "discussing",
+		VoteThresholdPct:  80,
+		VoteWindowSeconds: 300,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "knowledge/runtime",
+		Title:      "rewarded entry",
+		NewContent: "shared result",
+		DiffText:   "+ shared result",
+	})
+	if err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+	if _, err := srv.store.CloseKBProposal(ctx, proposal.ID, "approved", "ok", 1, 1, 0, 0, 1, time.Now().UTC()); err != nil {
+		t.Fatalf("close proposal: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
+		"proposal_id": proposal.ID,
+		"user_id":     applier,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("apply status=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, proposer) != 1000+communityRewardAmountKBApply {
+		t.Fatalf("proposer should receive kb reward, body=%s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
+		"proposal_id": proposal.ID,
+		"user_id":     applier,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("reapply status=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, proposer) != 1000+communityRewardAmountKBApply {
+		t.Fatalf("kb reward should be idempotent, body=%s", w.Body.String())
+	}
+}
+
+func TestCollabCloseGrantsCommunityRewardToAcceptedAuthors(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	orchestrator := seedActiveUser(t, srv)
+	authorA := seedActiveUser(t, srv)
+	authorB := seedActiveUser(t, srv)
+
+	session, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
+		CollabID:           "collab-reward",
+		Title:              "Shared collab",
+		Goal:               "produce shared artifact",
+		Complexity:         "m",
+		Phase:              "reviewing",
+		ProposerUserID:     orchestrator,
+		OrchestratorUserID: orchestrator,
+		MinMembers:         1,
+		MaxMembers:         3,
+	})
+	if err != nil {
+		t.Fatalf("create collab: %v", err)
+	}
+	a1, err := srv.store.CreateCollabArtifact(ctx, store.CollabArtifact{
+		CollabID: session.CollabID,
+		UserID:   authorA,
+		Role:     "builder",
+		Kind:     "spec",
+		Summary:  "accepted-a",
+		Content:  "evidence/result/next",
+		Status:   "submitted",
+	})
+	if err != nil {
+		t.Fatalf("artifact a: %v", err)
+	}
+	a2, err := srv.store.CreateCollabArtifact(ctx, store.CollabArtifact{
+		CollabID: session.CollabID,
+		UserID:   authorB,
+		Role:     "reviewer",
+		Kind:     "report",
+		Summary:  "accepted-b",
+		Content:  "evidence/result/next",
+		Status:   "submitted",
+	})
+	if err != nil {
+		t.Fatalf("artifact b: %v", err)
+	}
+	if _, err := srv.store.UpdateCollabArtifactReview(ctx, a1.ID, "accepted", "ok"); err != nil {
+		t.Fatalf("accept artifact a: %v", err)
+	}
+	if _, err := srv.store.UpdateCollabArtifactReview(ctx, a2.ID, "accepted", "ok"); err != nil {
+		t.Fatalf("accept artifact b: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
+		"collab_id":              session.CollabID,
+		"orchestrator_user_id":   orchestrator,
+		"result":                 "closed",
+		"status_or_summary_note": "done",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("close collab status=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, authorA) != 1000+communityRewardAmountCollabClose/2 {
+		t.Fatalf("authorA missing collab reward body=%s", w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, authorB) != 1000+communityRewardAmountCollabClose/2 {
+		t.Fatalf("authorB missing collab reward body=%s", w.Body.String())
+	}
+}
+
+func TestBountyVerifyApprovedGrantsCommunityReward(t *testing.T) {
+	srv := newTestServer()
+	poster := seedActiveUser(t, srv)
+	claimer := seedActiveUser(t, srv)
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/post", map[string]any{
+		"poster_user_id": poster,
+		"description":    "ship shared fix",
+		"reward":         50,
+		"criteria":       "merged and shared",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("post bounty status=%d body=%s", w.Code, w.Body.String())
+	}
+	var post struct {
+		Item struct {
+			BountyID int64 `json:"bounty_id"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &post); err != nil {
+		t.Fatalf("unmarshal bounty: %v", err)
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/claim", map[string]any{
+		"bounty_id": post.Item.BountyID,
+		"user_id":   claimer,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("claim bounty status=%d body=%s", w.Code, w.Body.String())
+	}
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/verify", map[string]any{
+		"bounty_id":        post.Item.BountyID,
+		"approved":         true,
+		"approver_user_id": poster,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("verify bounty status=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, claimer) != 1000+50+communityRewardAmountBountyPaid {
+		t.Fatalf("claimer should receive escrow + community reward body=%s", w.Body.String())
+	}
+}
+
+func TestGangliaIntegrateGrantsCommunityRewardToAuthor(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	author := seedActiveUser(t, srv)
+	integrator := seedActiveUser(t, srv)
+
+	ganglion, err := srv.store.CreateGanglion(ctx, store.Ganglion{
+		Name:           "shared-protocol",
+		GanglionType:   "workflow",
+		Description:    "shared",
+		Implementation: "steps",
+		Validation:     "tests",
+		AuthorUserID:   author,
+		Temporality:    "durable",
+		LifeState:      "alive",
+	})
+	if err != nil {
+		t.Fatalf("create ganglion: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/ganglia/integrate", map[string]any{
+		"user_id":     integrator,
+		"ganglion_id": ganglion.ID,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("integrate ganglion status=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, author) != 1000+communityRewardAmountGanglia {
+		t.Fatalf("author should receive ganglia reward body=%s", w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, integrator) != 1000 {
+		t.Fatalf("integrator balance should not change body=%s", w.Body.String())
+	}
+}
+
+func TestGangliaIntegrateSkipsSelfIntegrationReward(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	author := seedActiveUser(t, srv)
+
+	ganglion, err := srv.store.CreateGanglion(ctx, store.Ganglion{
+		Name:           "self-integrated-protocol",
+		GanglionType:   "workflow",
+		Description:    "shared",
+		Implementation: "steps",
+		Validation:     "tests",
+		AuthorUserID:   author,
+		Temporality:    "durable",
+		LifeState:      "alive",
+	})
+	if err != nil {
+		t.Fatalf("create ganglion: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/ganglia/integrate", map[string]any{
+		"user_id":     author,
+		"ganglion_id": ganglion.ID,
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("self integrate ganglion status=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, author) != 1000 {
+		t.Fatalf("self integration should not mint reward body=%s", w.Body.String())
+	}
+}
+
+func TestTokenUpgradeClosureRewardIsHighestAndIdempotent(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "sync-token"
+	userID := seedActiveUser(t, srv)
+
+	payload := map[string]any{
+		"user_id":          userID,
+		"reward_type":      communityRewardRuleUpgradeClawcolony,
+		"closure_id":       "closure-001",
+		"deploy_succeeded": true,
+		"repo_url":         "https://example.com/repo.git",
+		"branch":           "main",
+		"image":            "clawcolony:test",
+	}
+	headers := map[string]string{"X-Clawcolony-Internal-Token": "sync-token"}
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/reward/upgrade-closure", payload, headers)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("upgrade closure reward status=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, userID) != 1000+communityRewardAmountUpgradeClosure {
+		t.Fatalf("upgrade closure reward missing body=%s", w.Body.String())
+	}
+
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/reward/upgrade-closure", payload, headers)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("duplicate upgrade closure reward status=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, userID) != 1000+communityRewardAmountUpgradeClosure {
+		t.Fatalf("upgrade closure reward should be idempotent body=%s", w.Body.String())
+	}
+}
+
+func TestTokenUpgradeClosureRewardRequiresInternalAuth(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "sync-token"
+	userID := seedActiveUser(t, srv)
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/reward/upgrade-closure", map[string]any{
+		"user_id":          userID,
+		"reward_type":      communityRewardRuleSelfCoreUpgrade,
+		"closure_id":       "closure-authz",
+		"deploy_succeeded": true,
+	})
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("missing internal auth should be unauthorized, got=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, userID) != 1000 {
+		t.Fatalf("unauthorized upgrade reward must not change balance body=%s", w.Body.String())
+	}
+}
+
+func TestTokenUpgradeClosureRewardRejectsDeployFailure(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "sync-token"
+	userID := seedActiveUser(t, srv)
+
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/reward/upgrade-closure", map[string]any{
+		"user_id":          userID,
+		"reward_type":      communityRewardRuleSelfCoreUpgrade,
+		"closure_id":       "closure-failed-deploy",
+		"deploy_succeeded": false,
+	}, map[string]string{"X-Clawcolony-Internal-Token": "sync-token"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("deploy failure should be rejected, got=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, userID) != 1000 {
+		t.Fatalf("rejected deploy must not change balance body=%s", w.Body.String())
+	}
+}
+
+func TestTokenTaskMarketListsManualAndSystemItems(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	poster := seedActiveUser(t, srv)
+	proposer := seedActiveUser(t, srv)
+	orchestrator := seedActiveUser(t, srv)
+	author := seedActiveUser(t, srv)
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/post", map[string]any{
+		"poster_user_id": poster,
+		"description":    "manual market task",
+		"reward":         40,
+		"criteria":       "done",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("post bounty status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	proposal, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    proposer,
+		Title:             "Approved KB task",
+		Reason:            "waiting apply",
+		Status:            "discussing",
+		VoteThresholdPct:  80,
+		VoteWindowSeconds: 300,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "knowledge/runtime",
+		Title:      "market",
+		NewContent: "market",
+		DiffText:   "+ market",
+	})
+	if err != nil {
+		t.Fatalf("create kb proposal: %v", err)
+	}
+	if _, err := srv.store.CloseKBProposal(ctx, proposal.ID, "approved", "ok", 1, 1, 0, 0, 1, time.Now().UTC()); err != nil {
+		t.Fatalf("approve kb proposal: %v", err)
+	}
+
+	session, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
+		CollabID:           "collab-market",
+		Title:              "Review-ready collab",
+		Goal:               "close loop",
+		Complexity:         "m",
+		Phase:              "reviewing",
+		ProposerUserID:     orchestrator,
+		OrchestratorUserID: orchestrator,
+		MinMembers:         1,
+		MaxMembers:         3,
+	})
+	if err != nil {
+		t.Fatalf("create collab: %v", err)
+	}
+	artifact, err := srv.store.CreateCollabArtifact(ctx, store.CollabArtifact{
+		CollabID: session.CollabID,
+		UserID:   author,
+		Role:     "builder",
+		Kind:     "spec",
+		Summary:  "accepted artifact",
+		Content:  "evidence/result/next",
+		Status:   "submitted",
+	})
+	if err != nil {
+		t.Fatalf("create collab artifact: %v", err)
+	}
+	if _, err := srv.store.UpdateCollabArtifactReview(ctx, artifact.ID, "accepted", "ok"); err != nil {
+		t.Fatalf("accept collab artifact: %v", err)
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/task-market?limit=20", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("task market status=%d body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		`"source":"manual"`,
+		`"source":"system"`,
+		`"linked_resource_type":"bounty"`,
+		`"linked_resource_type":"kb.proposal"`,
+		`"linked_resource_type":"collab.session"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("task market missing %s in %s", want, body)
+		}
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/task-market?source=system&status=claimed&limit=20", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("task market claimed filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"source":"system"`) {
+		t.Fatalf("system task market should respect status filter body=%s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/task-market?source=system&module=collab&user_id="+author+"&limit=20", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("task market non-owner filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"linked_resource_type":"collab.session"`) {
+		t.Fatalf("non-orchestrator should not see collab close task body=%s", w.Body.String())
+	}
+
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/task-market?source=system&module=collab&user_id="+orchestrator+"&limit=20", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("task market owner filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"linked_resource_type":"collab.session"`) {
+		t.Fatalf("orchestrator should see collab close task body=%s", w.Body.String())
+	}
+}
+
+func TestCollabCloseFailedDoesNotGrantCommunityReward(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	orchestrator := seedActiveUser(t, srv)
+	author := seedActiveUser(t, srv)
+
+	session, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
+		CollabID:           "collab-failed-no-reward",
+		Title:              "Shared collab failed",
+		Goal:               "do work",
+		Complexity:         "m",
+		Phase:              "reviewing",
+		ProposerUserID:     orchestrator,
+		OrchestratorUserID: orchestrator,
+		MinMembers:         1,
+		MaxMembers:         3,
+	})
+	if err != nil {
+		t.Fatalf("create collab: %v", err)
+	}
+	artifact, err := srv.store.CreateCollabArtifact(ctx, store.CollabArtifact{
+		CollabID: session.CollabID,
+		UserID:   author,
+		Role:     "builder",
+		Kind:     "spec",
+		Summary:  "accepted artifact",
+		Content:  "evidence/result/next",
+		Status:   "submitted",
+	})
+	if err != nil {
+		t.Fatalf("create collab artifact: %v", err)
+	}
+	if _, err := srv.store.UpdateCollabArtifactReview(ctx, artifact.ID, "accepted", "ok"); err != nil {
+		t.Fatalf("accept collab artifact: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
+		"collab_id":              session.CollabID,
+		"orchestrator_user_id":   orchestrator,
+		"result":                 "failed",
+		"status_or_summary_note": "did not close successfully",
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("failed close status=%d body=%s", w.Code, w.Body.String())
+	}
+	if tokenBalanceForUser(t, srv, author) != 1000 {
+		t.Fatalf("failed collab close should not reward author body=%s", w.Body.String())
+	}
+}
+
+func TestCollabCloseRequiresCurrentOrchestrator(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	orchestrator := seedActiveUser(t, srv)
+	otherUser := seedActiveUser(t, srv)
+	author := seedActiveUser(t, srv)
+
+	session, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
+		CollabID:           "collab-owner-guard",
+		Title:              "Protected collab",
+		Goal:               "close only by orchestrator",
+		Complexity:         "m",
+		Phase:              "reviewing",
+		ProposerUserID:     orchestrator,
+		OrchestratorUserID: orchestrator,
+		MinMembers:         1,
+		MaxMembers:         3,
+	})
+	if err != nil {
+		t.Fatalf("create collab: %v", err)
+	}
+	artifact, err := srv.store.CreateCollabArtifact(ctx, store.CollabArtifact{
+		CollabID: session.CollabID,
+		UserID:   author,
+		Role:     "builder",
+		Kind:     "spec",
+		Summary:  "accepted artifact",
+		Content:  "evidence/result/next",
+		Status:   "submitted",
+	})
+	if err != nil {
+		t.Fatalf("create collab artifact: %v", err)
+	}
+	if _, err := srv.store.UpdateCollabArtifactReview(ctx, artifact.ID, "accepted", "ok"); err != nil {
+		t.Fatalf("accept collab artifact: %v", err)
+	}
+
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
+		"collab_id":              session.CollabID,
+		"orchestrator_user_id":   otherUser,
+		"result":                 "closed",
+		"status_or_summary_note": "unauthorized close",
+	})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("non-orchestrator close should be forbidden, got=%d body=%s", w.Code, w.Body.String())
+	}
+
+	after, err := srv.store.GetCollabSession(ctx, session.CollabID)
+	if err != nil {
+		t.Fatalf("reload collab: %v", err)
+	}
+	if after.Phase != "reviewing" {
+		t.Fatalf("phase should remain reviewing, got=%s", after.Phase)
+	}
+	if after.OrchestratorUserID != orchestrator {
+		t.Fatalf("orchestrator should remain unchanged, got=%s", after.OrchestratorUserID)
+	}
+	if tokenBalanceForUser(t, srv, author) != 1000 {
+		t.Fatalf("unauthorized close should not mint reward body=%s", w.Body.String())
+	}
+}
+
+func TestCloseKBProposalByStatsAutoApplyGrantsCommunityReward(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	proposer := seedActiveUser(t, srv)
+
+	proposal, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
+		ProposerUserID:    proposer,
+		Title:             "Auto-applied KB reward",
+		Reason:            "shared knowledge",
+		Status:            "voting",
+		VoteThresholdPct:  50,
+		VoteWindowSeconds: 300,
+	}, store.KBProposalChange{
+		OpType:     "add",
+		Section:    "knowledge/runtime",
+		Title:      "auto reward entry",
+		NewContent: "auto reward content",
+		DiffText:   "+ auto reward content",
+	})
+	if err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+
+	closed, err := srv.closeKBProposalByStats(ctx, proposal,
+		[]store.KBProposalEnrollment{{ProposalID: proposal.ID, UserID: proposer}},
+		[]store.KBVote{{ProposalID: proposal.ID, UserID: proposer, Vote: "yes"}},
+		time.Now().UTC(),
+	)
+	if err != nil {
+		t.Fatalf("auto close proposal: %v", err)
+	}
+	if closed.Status != "approved" {
+		t.Fatalf("proposal should be approved, got=%s", closed.Status)
+	}
+	if tokenBalanceForUser(t, srv, proposer) != 1000+communityRewardAmountKBApply {
+		t.Fatalf("auto apply should reward proposer")
+	}
+}

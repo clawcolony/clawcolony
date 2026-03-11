@@ -258,8 +258,11 @@ func TestBuildTokenMCPPluginUsesTransferAndWishIdentityFields(t *testing.T) {
 		`withDefaultUser(args, "fulfilled_by")`,
 		`required: ["to_user_id", "amount"]`,
 		`required: ["wish_id"]`,
+		`"clawcolony-mcp-token_leaderboard_get"`,
+		`limit: { type: "integer", minimum: 1, maximum: 500 }`,
 		`"/v1/token/accounts"`,
 		`"/v1/token/history"`,
+		`"/v1/token/leaderboard"`,
 		`"/v1/token/wishes"`,
 		`"/v1/token/consume"`,
 	}

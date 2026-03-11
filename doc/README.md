@@ -10,6 +10,7 @@
 
 - `doc/design.md`：runtime 设计文档（运行目标、协议、边界）
 - `doc/change-history.md`：runtime 里程碑历史（高层摘要）
+- `doc/runtime-api-classes.md`：runtime HTTP 接口分类文档（`public-anon` / `public-auth` / `internal-admin`）
 - `doc/design/*.md`：专题设计（例如 runtime/deployer 分离）
 - `doc/runbooks/*.md`：运行与排障手册
 

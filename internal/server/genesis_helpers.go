@@ -398,7 +398,7 @@ func (s *Server) listActiveUserIDs(ctx context.Context) ([]string, error) {
 	out := make([]string, 0, len(bots))
 	for _, b := range bots {
 		id := strings.TrimSpace(b.BotID)
-		if id == "" || id == clawWorldSystemID {
+		if isExcludedTokenUserID(id) {
 			continue
 		}
 		if !b.Initialized || strings.EqualFold(strings.TrimSpace(b.Status), "deleted") {
