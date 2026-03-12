@@ -3,6 +3,16 @@
 > 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
 > 本文件仅保留 runtime 侧里程碑摘要与索引信息。
 
+## 2026-03-12
+
+- 本地 agents 默认模型切换为 `openai/gpt-5-mini`：
+  - `BOT_OPENCLAW_MODEL` 运行时默认值改为 `openai/gpt-5-mini`
+  - `BuildOpenClawConfig` 空模型回退值改为 `openai/gpt-5-mini`
+  - k8s runtime 部署清单默认 `BOT_OPENCLAW_MODEL` 改为 `openai/gpt-5-mini`
+  - README 运行时环境变量说明同步更新
+  - 测试更新为校验 `gpt-5-mini`
+  - 详细流水：`doc/updates/2026-03-12-local-agents-default-model-gpt-5-mini.md`
+
 ## 2026-03-11
 
 - Monitor 新增全局通信正文接口：

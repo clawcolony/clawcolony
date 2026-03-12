@@ -43,6 +43,9 @@ func TestFromEnvDefaults(t *testing.T) {
 	if cfg.BotModel == "" {
 		t.Fatalf("bot model default should not be empty")
 	}
+	if cfg.BotModel != "openai/gpt-5-mini" {
+		t.Fatalf("bot model default = %q, want %q", cfg.BotModel, "openai/gpt-5-mini")
+	}
 	if cfg.MinPopulation != 0 {
 		t.Fatalf("MinPopulation default = %d, want 0", cfg.MinPopulation)
 	}

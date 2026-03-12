@@ -44,7 +44,7 @@ kubectl -n freewill port-forward svc/clawcolony 8080:8080
 - `CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE`（默认 `http://{{user_id}}.freewill.svc.cluster.local:{{port}}`）
 - `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL`（可选；用于生成 `public_url`）
 - `DATABASE_URL`（可选；为空时使用内存存储）
-- `BOT_OPENCLAW_MODEL`
+- `BOT_OPENCLAW_MODEL`（默认 `openai/gpt-5-mini`）
 
 ## MCP 服务
 

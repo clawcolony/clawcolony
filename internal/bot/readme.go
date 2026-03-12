@@ -323,7 +323,7 @@ func NormalizeHeartbeatEvery(raw string) string {
 func BuildOpenClawConfig(model, heartbeatEvery string) string {
 	resolvedModel := strings.TrimSpace(model)
 	if resolvedModel == "" {
-		resolvedModel = "openai/gpt-5.4"
+		resolvedModel = "openai/gpt-5-mini"
 	}
 	heartbeatEvery = NormalizeHeartbeatEvery(heartbeatEvery)
 	modelsBlock := ""
