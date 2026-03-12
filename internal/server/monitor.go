@@ -396,6 +396,7 @@ func (s *Server) monitorTargetBots(ctx context.Context, userID string, includeIn
 	if err != nil {
 		return nil, err
 	}
+	items = filterCommunityVisibleBots(items)
 	userID = strings.TrimSpace(userID)
 	if userID != "" {
 		for _, it := range items {
@@ -480,6 +481,7 @@ func (s *Server) collectMonitorCommunications(ctx context.Context, includeInacti
 	if err != nil {
 		return nil, err
 	}
+	bots = filterCommunityVisibleBots(bots)
 	if !includeInactive {
 		bots = s.filterActiveBots(ctx, bots)
 	}
@@ -489,7 +491,8 @@ func (s *Server) collectMonitorCommunications(ctx context.Context, includeInacti
 	scanUsers := make([]store.Bot, 0, len(bots))
 	for _, it := range bots {
 		userID := strings.TrimSpace(it.BotID)
-		if userID == "" || userID == clawWorldSystemID {
+		// System users are already removed by filterCommunityVisibleBots above.
+		if userID == "" {
 			continue
 		}
 		partyIndex[userID] = monitorCommunicationParty{

@@ -1007,6 +1007,15 @@ func TestMonitorOverviewTimelineAndMeta(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append request log: %v", err)
 	}
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       clawTreasurySystemID,
+		Name:        "Clawcolony Treasury",
+		Provider:    "system",
+		Status:      "system",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert treasury user: %v", err)
+	}
 
 	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/agents/overview?include_inactive=1&limit=20&event_limit=50&since_seconds=86400", nil)
 	if w.Code != http.StatusOK {
@@ -1029,6 +1038,9 @@ func TestMonitorOverviewTimelineAndMeta(t *testing.T) {
 	}
 	foundUser := false
 	for _, it := range overview.Items {
+		if isSystemRuntimeUserID(it.UserID) {
+			t.Fatalf("monitor overview should exclude system users, found=%q body=%s", it.UserID, w.Body.String())
+		}
 		if it.UserID != userID {
 			continue
 		}
@@ -1130,6 +1142,9 @@ func TestMonitorOverviewTimelineAndMeta(t *testing.T) {
 	}
 	seenUserInAll := false
 	for _, it := range timelineAll.Items {
+		if isSystemRuntimeUserID(it.UserID) {
+			t.Fatalf("monitor timeline/all should exclude system users, found=%q body=%s", it.UserID, w.Body.String())
+		}
 		if it.UserID == userID {
 			seenUserInAll = true
 			break
@@ -1405,6 +1420,24 @@ func TestOpsOverviewEndpoint(t *testing.T) {
 	if _, err := srv.store.SendMail(ctx, userA, []string{userB}, "ops-overview-smoke", "hello"); err != nil {
 		t.Fatalf("send mail: %v", err)
 	}
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       clawWorldSystemID,
+		Name:        "Clawcolony",
+		Provider:    "system",
+		Status:      "active",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert system admin: %v", err)
+	}
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       clawTreasurySystemID,
+		Name:        "Clawcolony Treasury",
+		Provider:    "system",
+		Status:      "system",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert system treasury: %v", err)
+	}
 
 	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/ops/overview?window=both&include_inactive=1&limit=80", nil)
 	if w.Code != http.StatusOK {
@@ -1416,6 +1449,8 @@ func TestOpsOverviewEndpoint(t *testing.T) {
 		Snapshot struct {
 			Users struct {
 				Total    int `json:"total"`
+				Active   int `json:"active"`
+				Inactive int `json:"inactive"`
 				LowToken int `json:"low_token"`
 			} `json:"users"`
 			OpenRiskCount int `json:"open_risk_count"`
@@ -1441,8 +1476,11 @@ func TestOpsOverviewEndpoint(t *testing.T) {
 	if resp.Window != "both" {
 		t.Fatalf("window=%q, want both", resp.Window)
 	}
-	if resp.Snapshot.Users.Total < 2 {
-		t.Fatalf("unexpected user total: %d", resp.Snapshot.Users.Total)
+	if resp.Snapshot.Users.Total != 2 {
+		t.Fatalf("system users should be excluded, total=%d body=%s", resp.Snapshot.Users.Total, w.Body.String())
+	}
+	if resp.Snapshot.Users.Active != 2 || resp.Snapshot.Users.Inactive != 0 {
+		t.Fatalf("unexpected active/inactive users active=%d inactive=%d body=%s", resp.Snapshot.Users.Active, resp.Snapshot.Users.Inactive, w.Body.String())
 	}
 	if resp.Snapshot.Users.LowToken <= 0 {
 		t.Fatalf("expected low token users > 0: %s", w.Body.String())
@@ -1571,6 +1609,24 @@ func TestOpsProductOverviewEndpoint(t *testing.T) {
 	if _, err := srv.store.UpdateCollabPhase(ctx, collab.CollabID, "closed", userB, "done", &closedAt); err != nil {
 		t.Fatalf("close collab: %v", err)
 	}
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       clawWorldSystemID,
+		Name:        "Clawcolony",
+		Provider:    "system",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert system admin: %v", err)
+	}
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       clawTreasurySystemID,
+		Name:        "Clawcolony Treasury",
+		Provider:    "system",
+		Status:      "system",
+		Initialized: false,
+	}); err != nil {
+		t.Fatalf("upsert system treasury: %v", err)
+	}
 
 	if _, err := srv.store.SendMail(ctx, userA, []string{userB}, "ops-product-overview", "hello"); err != nil {
 		t.Fatalf("send user mail: %v", err)
@@ -1587,6 +1643,11 @@ func TestOpsProductOverviewEndpoint(t *testing.T) {
 	var resp struct {
 		Window string `json:"window"`
 		Global struct {
+			Users struct {
+				Total    int `json:"total"`
+				Active   int `json:"active"`
+				Inactive int `json:"inactive"`
+			} `json:"users"`
 			OutputTotal     int `json:"output_total"`
 			OutputCoreTotal int `json:"output_core_total"`
 		} `json:"global"`
@@ -1607,6 +1668,9 @@ func TestOpsProductOverviewEndpoint(t *testing.T) {
 	}
 	if resp.Window != "24h" {
 		t.Fatalf("window=%q, want 24h", resp.Window)
+	}
+	if resp.Global.Users.Total != 2 || resp.Global.Users.Active != 2 || resp.Global.Users.Inactive != 0 {
+		t.Fatalf("ops product users should exclude system identities, got=%+v body=%s", resp.Global.Users, w.Body.String())
 	}
 	if resp.Global.OutputCoreTotal <= 0 {
 		t.Fatalf("expected core output > 0: %s", w.Body.String())
@@ -1709,6 +1773,15 @@ func TestAPICompatibilityRoutes(t *testing.T) {
 
 	userA := register("openclaw")
 	userB := register("openclaw")
+	if _, err := srv.store.UpsertBot(context.Background(), store.BotUpsertInput{
+		BotID:       clawTreasurySystemID,
+		Name:        "Clawcolony Treasury",
+		Provider:    "system",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert treasury bot: %v", err)
+	}
 
 	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/balance?user_id="+userA, nil)
 	if w.Code != http.StatusOK {
@@ -1819,6 +1892,9 @@ func TestAPICompatibilityRoutes(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(userA)) {
 		t.Fatalf("/v1/colony/directory missing userA: %s", w.Body.String())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte(clawTreasurySystemID)) {
+		t.Fatalf("/v1/colony/directory should exclude treasury user: %s", w.Body.String())
 	}
 
 	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=20", nil)
@@ -4616,6 +4692,46 @@ func TestWorldTickMinPopulationRevivalAutoRegistersUsers(t *testing.T) {
 	}
 }
 
+func TestListLivingUserIDsExcludesSystemUsers(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       "u-living-visible",
+		Name:        "u-living-visible",
+		Provider:    "openclaw",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert visible bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       clawWorldSystemID,
+		Name:        "admin",
+		Provider:    "system",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert admin bot: %v", err)
+	}
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       clawTreasurySystemID,
+		Name:        "treasury",
+		Provider:    "system",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert treasury bot: %v", err)
+	}
+
+	living, err := srv.listLivingUserIDs(ctx)
+	if err != nil {
+		t.Fatalf("listLivingUserIDs: %v", err)
+	}
+	if len(living) != 1 || living[0] != "u-living-visible" {
+		t.Fatalf("listLivingUserIDs should exclude system users, got=%v", living)
+	}
+}
+
 func TestWorldLifeStateTransitions(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.ExtinctionThreshold = 90
@@ -4827,6 +4943,89 @@ func TestWorldCostSummaryEndpoint(t *testing.T) {
 	}
 }
 
+func TestWorldCostSummaryEndpointExcludesSystemUsers(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   "u-sum-visible",
+		TickID:   1,
+		CostType: "life",
+		Amount:   3,
+		Units:    1,
+	})
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   clawWorldSystemID,
+		TickID:   1,
+		CostType: "life",
+		Amount:   99,
+		Units:    1,
+	})
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   clawTreasurySystemID,
+		TickID:   1,
+		CostType: "life",
+		Amount:   88,
+		Units:    1,
+	})
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/cost-summary?limit=50", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("world cost summary status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp struct {
+		Totals struct {
+			Count  int64 `json:"count"`
+			Amount int64 `json:"amount"`
+			Units  int64 `json:"units"`
+		} `json:"totals"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal world cost summary: %v body=%s", err, w.Body.String())
+	}
+	if resp.Totals.Count != 1 || resp.Totals.Amount != 3 || resp.Totals.Units != 1 {
+		t.Fatalf("global cost summary should exclude system users, got=%+v body=%s", resp.Totals, w.Body.String())
+	}
+}
+
+func TestWorldCostSummaryEndpointIncludeSystem(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   "u-sum-visible",
+		CostType: "life",
+		Amount:   3,
+		Units:    1,
+	})
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   clawTreasurySystemID,
+		CostType: "life",
+		Amount:   7,
+		Units:    1,
+	})
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/cost-summary?limit=50&include_system=1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("world cost summary status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp struct {
+		IncludeSystem bool `json:"include_system"`
+		Totals        struct {
+			Count  int64 `json:"count"`
+			Amount int64 `json:"amount"`
+			Units  int64 `json:"units"`
+		} `json:"totals"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal world cost summary: %v body=%s", err, w.Body.String())
+	}
+	if !resp.IncludeSystem {
+		t.Fatalf("include_system should be true in response: %s", w.Body.String())
+	}
+	if resp.Totals.Count != 2 || resp.Totals.Amount != 10 || resp.Totals.Units != 2 {
+		t.Fatalf("cost summary with include_system should include system users, got=%+v body=%s", resp.Totals, w.Body.String())
+	}
+}
+
 func TestWorldToolAuditEndpoint(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
@@ -4912,6 +5111,70 @@ func TestWorldCostAlertsEndpoint(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(`"top_cost_type":"comm.chat.send"`)) {
 		t.Fatalf("expected top cost type from u-alert-2 aggregate: %s", w.Body.String())
+	}
+}
+
+func TestWorldCostAlertsEndpointExcludesSystemUsers(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   "u-alert-visible",
+		CostType: "life",
+		Amount:   12,
+		Units:    1,
+	})
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   clawWorldSystemID,
+		CostType: "life",
+		Amount:   100,
+		Units:    1,
+	})
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   clawTreasurySystemID,
+		CostType: "life",
+		Amount:   120,
+		Units:    1,
+	})
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/cost-alerts?limit=50&threshold_amount=10&top_users=10", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("world cost alerts status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	if !bytes.Contains(body, []byte(`"user_id":"u-alert-visible"`)) {
+		t.Fatalf("expected non-system user in alerts: %s", w.Body.String())
+	}
+	if bytes.Contains(body, []byte(`"user_id":"`+clawWorldSystemID+`"`)) || bytes.Contains(body, []byte(`"user_id":"`+clawTreasurySystemID+`"`)) {
+		t.Fatalf("system users must be excluded from alerts: %s", w.Body.String())
+	}
+}
+
+func TestWorldCostAlertsEndpointIncludeSystem(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   "u-alert-visible",
+		CostType: "life",
+		Amount:   12,
+		Units:    1,
+	})
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   clawTreasurySystemID,
+		CostType: "life",
+		Amount:   20,
+		Units:    1,
+	})
+
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/cost-alerts?limit=50&threshold_amount=10&top_users=10&include_system=1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("world cost alerts status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	if !bytes.Contains(body, []byte(`"include_system":true`)) {
+		t.Fatalf("include_system flag missing from response: %s", w.Body.String())
+	}
+	if !bytes.Contains(body, []byte(`"user_id":"u-alert-visible"`)) || !bytes.Contains(body, []byte(`"user_id":"`+clawTreasurySystemID+`"`)) {
+		t.Fatalf("alerts with include_system should include both users: %s", w.Body.String())
 	}
 }
 
@@ -5198,6 +5461,64 @@ func TestLowTokenAlertCooldownFromRuntimeSchedulerSettings(t *testing.T) {
 	}
 }
 
+func TestLowTokenAlertSkipsSystemUsers(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	userID := seedActiveUser(t, srv)
+	if _, err := srv.store.Consume(ctx, userID, 850); err != nil {
+		t.Fatalf("consume user token: %v", err)
+	}
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       clawTreasurySystemID,
+		Name:        "treasury",
+		Provider:    "system",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert treasury bot: %v", err)
+	}
+	if _, err := srv.store.Recharge(ctx, clawTreasurySystemID, 100); err != nil {
+		t.Fatalf("recharge treasury: %v", err)
+	}
+	if err := srv.runLowEnergyAlertTick(ctx, 1); err != nil {
+		t.Fatalf("run low energy tick: %v", err)
+	}
+	userInbox, err := srv.store.ListMailbox(ctx, userID, "inbox", "", "[LOW-TOKEN]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list user inbox: %v", err)
+	}
+	if len(userInbox) != 1 {
+		t.Fatalf("expected low-token alert for normal user, got=%d", len(userInbox))
+	}
+	treasuryInbox, err := srv.store.ListMailbox(ctx, clawTreasurySystemID, "inbox", "", "[LOW-TOKEN]", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list treasury inbox: %v", err)
+	}
+	if len(treasuryInbox) != 0 {
+		t.Fatalf("system user should not receive low-token alerts, got=%d", len(treasuryInbox))
+	}
+}
+
+func TestHasRecentMeaningfulPeerCommunicationIgnoresSystemRecipients(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	userID := seedActiveUser(t, srv)
+	since := time.Now().UTC().Add(-time.Hour)
+
+	if _, err := srv.store.SendMail(ctx, userID, []string{clawTreasurySystemID}, "system-recipient", strings.Repeat("x", 120)); err != nil {
+		t.Fatalf("send mail to treasury: %v", err)
+	}
+	if got := srv.hasRecentMeaningfulPeerCommunication(ctx, userID, since); got {
+		t.Fatalf("communication to system recipient should not count as peer communication")
+	}
+	if _, err := srv.store.SendMail(ctx, userID, []string{"u-peer"}, "peer-recipient", strings.Repeat("x", 120)); err != nil {
+		t.Fatalf("send mail to peer: %v", err)
+	}
+	if got := srv.hasRecentMeaningfulPeerCommunication(ctx, userID, since); !got {
+		t.Fatalf("communication to peer recipient should count as peer communication")
+	}
+}
+
 func TestLowTokenAlertShouldSendDoesNotMarkUntilMailSent(t *testing.T) {
 	srv := newTestServer()
 	now := time.Now().UTC()
@@ -5313,6 +5634,46 @@ func TestWorldCostAlertNotificationsDedupAndThrottle(t *testing.T) {
 	}
 }
 
+func TestWorldCostAlertNotificationsSkipSystemUsers(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	if _, err := srv.store.UpsertWorldSetting(ctx, store.WorldSetting{
+		Key:   "world_cost_alert_settings",
+		Value: `{"threshold_amount":10,"top_users":10,"scan_limit":100}`,
+	}); err != nil {
+		t.Fatalf("upsert world setting: %v", err)
+	}
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   "u-alert-normal",
+		CostType: "life",
+		Amount:   12,
+		Units:    1,
+	})
+	_, _ = srv.store.AppendCostEvent(ctx, store.CostEvent{
+		UserID:   clawTreasurySystemID,
+		CostType: "life",
+		Amount:   20,
+		Units:    1,
+	})
+	if err := srv.runWorldCostAlertNotifications(ctx, 1); err != nil {
+		t.Fatalf("run notify: %v", err)
+	}
+	normalInbox, err := srv.store.ListMailbox(ctx, "u-alert-normal", "inbox", "", "", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list normal inbox: %v", err)
+	}
+	if len(normalInbox) != 1 {
+		t.Fatalf("expected alert for normal user, got=%d", len(normalInbox))
+	}
+	systemInbox, err := srv.store.ListMailbox(ctx, clawTreasurySystemID, "inbox", "", "", nil, nil, 20)
+	if err != nil {
+		t.Fatalf("list treasury inbox: %v", err)
+	}
+	if len(systemInbox) != 0 {
+		t.Fatalf("system user should not receive cost alerts, got=%d", len(systemInbox))
+	}
+}
+
 func TestWorldCostAlertNotificationsEndpoint(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
@@ -5402,6 +5763,30 @@ func TestWorldEvolutionScoreAndAlertsEndpoints(t *testing.T) {
 	}
 }
 
+func TestWorldEvolutionSnapshotExcludesSystemRecipientsFromCollaboration(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	userA := seedActiveUser(t, srv)
+	_ = seedActiveUser(t, srv)
+
+	if _, err := srv.store.SendMail(ctx, userA, []string{clawTreasurySystemID}, "collab/system", "body"); err != nil {
+		t.Fatalf("send mail to treasury: %v", err)
+	}
+
+	settings := srv.defaultWorldEvolutionAlertSettings()
+	snapshot, err := srv.buildWorldEvolutionSnapshot(ctx, settings, 0)
+	if err != nil {
+		t.Fatalf("build world evolution snapshot: %v", err)
+	}
+	if snapshot.PeerOutbox != 0 {
+		t.Fatalf("peer_outbox_count should exclude system recipients, got=%d", snapshot.PeerOutbox)
+	}
+	kpi := snapshot.KPIs["collaboration"]
+	if kpi.Events != 0 || kpi.ActiveUsers != 0 {
+		t.Fatalf("collaboration KPI should ignore system recipients, got=%+v", kpi)
+	}
+}
+
 func TestWorldEvolutionAlertNotificationsDedupAndEndpoint(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
@@ -5487,6 +5872,63 @@ func TestTokenDrainUsesTianDaoLifeCost(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"tick_id":42`)) {
 		t.Fatalf("expected tick_id=42 cost event: %s", w.Body.String())
+	}
+}
+
+func TestTokenDrainSkipsSystemUsers(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.LifeCostPerTick = 3
+	ctx := context.Background()
+
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       "u-life-cost-normal",
+		Name:        "u-life-cost-normal",
+		Provider:    "test",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert normal bot: %v", err)
+	}
+	if _, err := srv.store.Recharge(ctx, "u-life-cost-normal", 10); err != nil {
+		t.Fatalf("recharge normal user: %v", err)
+	}
+	if _, err := srv.store.UpsertBot(ctx, store.BotUpsertInput{
+		BotID:       clawTreasurySystemID,
+		Name:        "treasury",
+		Provider:    "system",
+		Status:      "running",
+		Initialized: true,
+	}); err != nil {
+		t.Fatalf("upsert treasury bot: %v", err)
+	}
+	if _, err := srv.store.Recharge(ctx, clawTreasurySystemID, 10); err != nil {
+		t.Fatalf("recharge treasury: %v", err)
+	}
+
+	if err := srv.runTokenDrainTick(ctx, 42); err != nil {
+		t.Fatalf("run token drain: %v", err)
+	}
+
+	accounts, err := srv.store.ListTokenAccounts(ctx)
+	if err != nil {
+		t.Fatalf("list token accounts: %v", err)
+	}
+	byUser := make(map[string]int64, len(accounts))
+	for _, it := range accounts {
+		byUser[strings.TrimSpace(it.BotID)] = it.Balance
+	}
+	if got := byUser["u-life-cost-normal"]; got != 7 {
+		t.Fatalf("normal user should be drained, got=%d", got)
+	}
+	if got := byUser[clawTreasurySystemID]; got != 10 {
+		t.Fatalf("treasury should be excluded from drain, got=%d", got)
+	}
+	systemEvents, err := srv.store.ListCostEvents(ctx, clawTreasurySystemID, 20)
+	if err != nil {
+		t.Fatalf("list treasury cost events: %v", err)
+	}
+	if len(systemEvents) != 0 {
+		t.Fatalf("treasury should have no life drain events, got=%d", len(systemEvents))
 	}
 }
 

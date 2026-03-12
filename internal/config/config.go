@@ -98,7 +98,7 @@ func FromEnv() Config {
 		BotDefaultImage:                    getEnv("BOT_DEFAULT_IMAGE", "openclaw:onepod-dev"),
 		BotEnvSecretName:                   getEnv("BOT_ENV_SECRET_NAME", "aibot-llm-secret"),
 		BotSourceRepoBranch:                getEnv("BOT_SOURCE_REPO_BRANCH", "main"),
-		BotModel:                           getEnv("BOT_OPENCLAW_MODEL", "openai/gpt-5.4"),
+		BotModel:                           getEnv("BOT_OPENCLAW_MODEL", "openai/gpt-5-mini"),
 		BotStatePVCSize:                    getEnv("BOT_STATE_PVC_SIZE", "5Gi"),
 		ColonyRepoURL:                      getEnv("COLONY_REPO_URL", ""),
 		ColonyRepoBranch:                   getEnv("COLONY_REPO_BRANCH", "main"),

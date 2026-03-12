@@ -146,6 +146,7 @@ func (s *Server) buildOpsOverview(ctx context.Context, now time.Time, window str
 	if err != nil {
 		return opsOverviewResponse{}, err
 	}
+	bots = filterCommunityVisibleBots(bots)
 	if !includeInactive {
 		bots = s.filterActiveBots(ctx, bots)
 	}

@@ -1921,6 +1921,7 @@ func (s *Server) handleWorldCostSummary(w http.ResponseWriter, r *http.Request) 
 	}
 	userID := queryUserID(r)
 	limit := parseLimit(r.URL.Query().Get("limit"), 500)
+	includeSystem := parseBoolFlag(r.URL.Query().Get("include_system"))
 	items, err := s.store.ListCostEvents(r.Context(), userID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1934,6 +1935,9 @@ func (s *Server) handleWorldCostSummary(w http.ResponseWriter, r *http.Request) 
 	byType := map[string]agg{}
 	var totalCount, totalAmount, totalUnits int64
 	for _, it := range items {
+		if !includeSystem && isExcludedTokenUserID(it.UserID) {
+			continue
+		}
 		key := strings.TrimSpace(it.CostType)
 		if key == "" {
 			key = "unknown"
@@ -1948,8 +1952,9 @@ func (s *Server) handleWorldCostSummary(w http.ResponseWriter, r *http.Request) 
 		totalUnits += it.Units
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user_id": userID,
-		"limit":   limit,
+		"user_id":        userID,
+		"limit":          limit,
+		"include_system": includeSystem,
 		"totals": map[string]any{
 			"count":  totalCount,
 			"amount": totalAmount,
@@ -2113,7 +2118,8 @@ func (s *Server) handleWorldCostAlerts(w http.ResponseWriter, r *http.Request) {
 		thresholdAmount = settings.ThresholdAmount
 	}
 	topUsers := parseLimit(r.URL.Query().Get("top_users"), settings.TopUsers)
-	items, err := s.queryWorldCostAlerts(r.Context(), userID, limit, thresholdAmount, topUsers)
+	includeSystem := parseBoolFlag(r.URL.Query().Get("include_system"))
+	items, err := s.queryWorldCostAlerts(r.Context(), userID, limit, thresholdAmount, topUsers, includeSystem)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2123,12 +2129,13 @@ func (s *Server) handleWorldCostAlerts(w http.ResponseWriter, r *http.Request) {
 		"limit":            limit,
 		"threshold_amount": thresholdAmount,
 		"top_users":        topUsers,
+		"include_system":   includeSystem,
 		"settings":         settings,
 		"items":            items,
 	})
 }
 
-func (s *Server) queryWorldCostAlerts(ctx context.Context, userID string, limit int, thresholdAmount int64, topUsers int) ([]worldCostAlertItem, error) {
+func (s *Server) queryWorldCostAlerts(ctx context.Context, userID string, limit int, thresholdAmount int64, topUsers int, includeSystem bool) ([]worldCostAlertItem, error) {
 	items, err := s.store.ListCostEvents(ctx, userID, limit)
 	if err != nil {
 		return nil, err
@@ -2146,6 +2153,9 @@ func (s *Server) queryWorldCostAlerts(ctx context.Context, userID string, limit 
 	for _, it := range items {
 		uid := strings.TrimSpace(it.UserID)
 		if uid == "" {
+			continue
+		}
+		if !includeSystem && isExcludedTokenUserID(uid) {
 			continue
 		}
 		a := byUser[uid]
@@ -2615,14 +2625,17 @@ func (s *Server) shouldSendWorldCostAlert(userID string, amount int64, cooldown 
 
 func (s *Server) runWorldCostAlertNotifications(ctx context.Context, tickID int64) error {
 	settings, _, _ := s.getWorldCostAlertSettings(ctx)
-	items, err := s.queryWorldCostAlerts(ctx, "", settings.ScanLimit, settings.ThresholdAmount, settings.TopUsers)
+	items, err := s.queryWorldCostAlerts(ctx, "", settings.ScanLimit, settings.ThresholdAmount, settings.TopUsers, false)
 	if err != nil {
 		return err
 	}
 	cooldown := time.Duration(settings.NotifyCooldownS) * time.Second
 	now := time.Now().UTC()
 	for _, it := range items {
-		if strings.TrimSpace(it.UserID) == "" || it.UserID == clawWorldSystemID {
+		uid := strings.TrimSpace(it.UserID)
+		// queryWorldCostAlerts currently guarantees non-empty user IDs; keep
+		// this defensive guard in case that invariant changes later.
+		if uid == "" {
 			continue
 		}
 		if !s.shouldSendWorldCostAlert(it.UserID, it.Amount, cooldown, now) {
@@ -2932,6 +2945,9 @@ func (s *Server) buildWorldEvolutionSnapshot(ctx context.Context, settings world
 					autonomyUsers[uid] = struct{}{}
 					meaningfulOutboxCount++
 				}
+				continue
+			}
+			if isSystemRuntimeUserID(toID) {
 				continue
 			}
 			if toID == uid {
@@ -4783,7 +4799,7 @@ func (s *Server) pushUnreadMailHint(ctx context.Context, fromUserID string, toUs
 	}
 	for _, uid := range toUserIDs {
 		uid = strings.TrimSpace(uid)
-		if uid == "" || uid == clawWorldSystemID {
+		if uid == "" || isSystemRuntimeUserID(uid) {
 			continue
 		}
 		if _, ok := seen[uid]; ok {
@@ -4890,7 +4906,7 @@ func buildUnreadMailHintMessage(fromUserID, subject string) string {
 
 func (s *Server) autoResolvePinnedRemindersOnProgressMail(ctx context.Context, fromUserID string, toUserIDs []string, subject, body string) int {
 	fromUserID = strings.TrimSpace(fromUserID)
-	if fromUserID == "" || fromUserID == clawWorldSystemID {
+	if fromUserID == "" || isSystemRuntimeUserID(fromUserID) {
 		return 0
 	}
 	sentToAdmin := false
@@ -5639,7 +5655,7 @@ func (s *Server) notifyCollabProposalPinned(ctx context.Context, item store.Coll
 	receivers := make([]string, 0, len(targets))
 	for _, uid := range targets {
 		uid = strings.TrimSpace(uid)
-		if uid == "" || uid == clawWorldSystemID || uid == strings.TrimSpace(item.ProposerUserID) {
+		if uid == "" || isSystemRuntimeUserID(uid) || uid == strings.TrimSpace(item.ProposerUserID) {
 			continue
 		}
 		life, err := s.store.GetUserLifeState(ctx, uid)
@@ -10442,7 +10458,7 @@ func (s *Server) runLowEnergyAlertTick(ctx context.Context, tickID int64) error 
 	active := make(map[string]struct{}, len(bots))
 	for _, b := range bots {
 		uid := strings.TrimSpace(b.BotID)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		if !b.Initialized || strings.EqualFold(strings.TrimSpace(b.Status), "deleted") {
@@ -10822,7 +10838,8 @@ func (s *Server) hasRecentMeaningfulPeerCommunication(ctx context.Context, userI
 		return false
 	}
 	for _, it := range items {
-		if strings.EqualFold(strings.TrimSpace(it.ToAddress), clawWorldSystemID) {
+		toAddress := strings.TrimSpace(it.ToAddress)
+		if toAddress == "" || isSystemRuntimeUserID(toAddress) {
 			continue
 		}
 		if isMeaningfulOutputMail(it.Subject, it.Body) || utf8.RuneCountInString(strings.TrimSpace(it.Body)) >= 80 {
@@ -10852,7 +10869,7 @@ func (s *Server) runAutonomyReminderTick(ctx context.Context, tickID int64) erro
 	subjectPrefix := "[AUTONOMY-LOOP][PRIORITY:P3][ACTION:REPORT+EXECUTE]"
 	for _, uid := range targets {
 		uid = strings.TrimSpace(uid)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		life, err := s.store.GetUserLifeState(ctx, uid)
@@ -10915,7 +10932,7 @@ func (s *Server) runCommunityCommReminderTick(ctx context.Context, tickID int64)
 	subjectPrefix := "[COMMUNITY-COLLAB][PRIORITY:P2][ACTION:MEANINGFUL-COMM]"
 	for _, uid := range targets {
 		uid = strings.TrimSpace(uid)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		life, err := s.store.GetUserLifeState(ctx, uid)
@@ -11003,16 +11020,17 @@ func (s *Server) runTokenDrainTick(ctx context.Context, tickID int64) error {
 		return err
 	}
 	for _, b := range bots {
-		if strings.TrimSpace(b.BotID) == "" || !b.Initialized || b.Status != "running" {
+		uid := strings.TrimSpace(b.BotID)
+		if isExcludedTokenUserID(uid) || !b.Initialized || b.Status != "running" {
 			continue
 		}
-		if life, err := s.store.GetUserLifeState(ctx, b.BotID); err == nil {
+		if life, err := s.store.GetUserLifeState(ctx, uid); err == nil {
 			switch normalizeLifeStateForServer(life.State) {
 			case "dead", "hibernated":
 				continue
 			}
 		}
-		ledger, deducted, consumeErr := s.consumeWithFloor(ctx, b.BotID, lifeCost)
+		ledger, deducted, consumeErr := s.consumeWithFloor(ctx, uid, lifeCost)
 		if consumeErr != nil {
 			continue
 		}
@@ -11024,7 +11042,7 @@ func (s *Server) runTokenDrainTick(ctx context.Context, tickID int64) error {
 			"balance_after": ledger.BalanceAfter,
 		})
 		if _, err := s.store.AppendCostEvent(ctx, store.CostEvent{
-			UserID:   b.BotID,
+			UserID:   uid,
 			TickID:   tickID,
 			CostType: "life",
 			Amount:   deducted,

@@ -178,6 +178,7 @@
       function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}
       async function j(url){const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json();}
       const CLAWCOLONY_ID = "clawcolony-admin";
+      const DASHBOARD_HIDDEN_USER_IDS = new Set(["clawcolony-system", "clawcolony-treasury"]);
       let bots = [];
       function distinctNonEmpty(parts){
         const out = [];
@@ -200,12 +201,25 @@
         const bot = bots.find(b => b.user_id === id);
         return bot ? botDisplayLabel(bot) : id;
       }
+      function isDashboardHiddenBot(bot){
+        const userID = String((bot && bot.user_id) || "").trim();
+        if (!userID) return true;
+        if (userID === CLAWCOLONY_ID) return false;
+        if (DASHBOARD_HIDDEN_USER_IDS.has(userID)) return true;
+        const provider = String((bot && bot.provider) || "").trim().toLowerCase();
+        const status = String((bot && bot.status) || "").trim().toLowerCase();
+        return provider === "system" || status === "system";
+      }
+      function filterDashboardBots(items){
+        return (items || []).filter(it => it && it.user_id && !isDashboardHiddenBot(it));
+      }
       async function loadUsers(){
         const data = await j("/v1/bots?include_inactive=0");
-        bots = data.items || [];
+        bots = filterDashboardBots(data.items || []);
+        const nonAdminBots = bots.filter(b => String((b && b.user_id) || "") !== CLAWCOLONY_ID);
         const sel = document.getElementById("user_id");
         const prev = sel.value;
-        sel.innerHTML = `<option value="">all</option><option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
+        sel.innerHTML = `<option value="">all</option><option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + nonAdminBots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         sel.value = prev;
       }
       async function refreshAll(){

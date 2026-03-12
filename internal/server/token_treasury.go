@@ -14,7 +14,8 @@ const clawTreasurySystemID = "clawcolony-treasury"
 const defaultTreasuryInitialToken int64 = 1000000
 
 func isSystemTokenUserID(userID string) bool {
-	switch strings.TrimSpace(userID) {
+	// Normalize case to avoid mixed-case ID bypasses.
+	switch strings.ToLower(strings.TrimSpace(userID)) {
 	case clawWorldSystemID, clawTreasurySystemID:
 		return true
 	default:
@@ -23,7 +24,8 @@ func isSystemTokenUserID(userID string) bool {
 }
 
 func isExcludedTokenUserID(userID string) bool {
-	return strings.TrimSpace(userID) == "" || isSystemTokenUserID(userID)
+	uid := strings.TrimSpace(userID)
+	return uid == "" || isSystemTokenUserID(uid)
 }
 
 func (s *Server) effectiveTreasuryInitialToken() int64 {

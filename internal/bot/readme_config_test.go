@@ -168,7 +168,7 @@ func TestBuildOpenClawConfigHeartbeatFallsBackWhenInvalid(t *testing.T) {
 	}
 }
 
-func TestBuildOpenClawConfigDefaultsToGPT54WhenModelEmpty(t *testing.T) {
+func TestBuildOpenClawConfigDefaultsToGPT5MiniWhenModelEmpty(t *testing.T) {
 	raw := BuildOpenClawConfig("", "10m")
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
@@ -177,16 +177,16 @@ func TestBuildOpenClawConfigDefaultsToGPT54WhenModelEmpty(t *testing.T) {
 	agents := cfg["agents"].(map[string]any)
 	defaults := agents["defaults"].(map[string]any)
 	model := defaults["model"].(map[string]any)
-	if got := model["primary"]; got != "openai/gpt-5.4" {
-		t.Fatalf("primary model = %v, want openai/gpt-5.4", got)
+	if got := model["primary"]; got != "openai/gpt-5-mini" {
+		t.Fatalf("primary model = %v, want openai/gpt-5-mini", got)
 	}
 	models := cfg["models"].(map[string]any)
 	providers := models["providers"].(map[string]any)
 	openai := providers["openai"].(map[string]any)
 	entries := openai["models"].([]any)
 	first := entries[0].(map[string]any)
-	if got := first["id"]; got != "gpt-5.4" {
-		t.Fatalf("model id = %v, want gpt-5.4", got)
+	if got := first["id"]; got != "gpt-5-mini" {
+		t.Fatalf("model id = %v, want gpt-5-mini", got)
 	}
 }
 
