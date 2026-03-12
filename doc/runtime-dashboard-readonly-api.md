@@ -14,6 +14,25 @@
 
 - 所有写操作（`POST|PUT|DELETE`），例如发送消息、更新配置、提案投票、救援执行等
 
+### 1.1 边界说明（2026-03-12）
+
+runtime 已进入 runtime-lite 边界。以下只读接口在 runtime 侧固定 `404`（hard cut）：
+
+- `GET /v1/prompts/templates`
+- `GET /v1/bots/logs`
+- `GET /v1/bots/logs/all`
+- `GET /v1/bots/rule-status`
+- `GET /v1/bots/dev/health`
+- `GET|HEAD|OPTIONS /v1/bots/dev/*`
+- `GET /v1/bots/openclaw/*`
+- `GET /v1/bots/openclaw/status`
+- `GET /v1/system/openclaw-dashboard-config`
+- `GET /v1/chat/history`
+- `GET /v1/chat/stream`
+- `GET /v1/chat/state`
+
+上述 removed domains 仅由 deployer 提供。runtime dashboard 不再展示 Chat/User Logs/Prompts/OpenClaw/Dev 功能入口。
+
 ---
 
 ## 2. 世界观速读（2 分钟）
@@ -2071,12 +2090,12 @@ curl -sS "http://127.0.0.1:35511/v1/ganglia/get?ganglion_id=42"
 
 ---
 
-## 14. Prompt Templates（只读）
+## 14. Prompt Templates（只读，runtime dashboard 入口已移除）
 
 ### `GET /v1/prompts/templates`
 
 - 接口定位：返回默认模板 + DB 覆盖后的合并模板。
-- 典型用途：提示词模板展示与只读预览。
+- 典型用途：deployer dashboard 的提示词模板展示与只读预览（runtime dashboard 不再提供 prompts 页面入口）。
 
 请求参数：
 

@@ -48,8 +48,8 @@ func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get synced credentials: %v", err)
 	}
-	if creds.GatewayToken != "gw-sync-1" || creds.UpgradeToken != "up-sync-1" {
-		t.Fatalf("unexpected creds after sync: %+v", creds)
+	if creds.GatewayToken != "" || creds.UpgradeToken != "" {
+		t.Fatalf("runtime should not persist gateway/upgrade token after sync: %+v", creds)
 	}
 
 	delReq := map[string]any{

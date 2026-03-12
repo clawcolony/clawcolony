@@ -332,13 +332,92 @@ const defaultCostAlertCooldownSeconds int64 = int64((10 * time.Minute) / time.Se
 const defaultAgentHeartbeatEvery = "10m"
 const defaultPreviewAllowedPorts = "3000,3001,4173,5173,8000,8080,8787"
 const defaultPreviewUpstreamTemplate = "http://{{user_id}}.freewill.svc.cluster.local:{{port}}"
+const proxyRequestBodyMaxBytes int64 = 10 << 20
+const proxyResponseBodyMaxBytes int64 = 20 << 20
 const devProxyHealthTimeout = 12 * time.Second
 const devProxyParamToken = "token"
 const devProxySignedParamSig = "sig"
 const devProxySignedParamExp = "exp"
 const devProxySignedParamNonce = "nonce"
 
-var managementOnlyRouteSet = map[string]struct{}{}
+var proxyHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		MaxConnsPerHost:     50,
+		IdleConnTimeout:     90 * time.Second,
+	},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
+var proxyHopByHopHeaderSet = map[string]struct{}{
+	"Connection":          {},
+	"Keep-Alive":          {},
+	"Proxy-Authenticate":  {},
+	"Proxy-Authorization": {},
+	"Te":                  {},
+	"Trailer":             {},
+	"Transfer-Encoding":   {},
+	"Upgrade":             {},
+}
+
+var runtimeRemovedRouteSet = map[string]struct{}{
+	"/v1/prompts/templates":                {},
+	"/v1/prompts/templates/upsert":         {},
+	"/v1/prompts/templates/apply":          {},
+	"/v1/bots/logs":                        {},
+	"/v1/bots/logs/all":                    {},
+	"/v1/bots/rule-status":                 {},
+	"/v1/bots/dev/link":                    {},
+	"/v1/bots/dev/health":                  {},
+	"/v1/bots/openclaw/status":             {},
+	"/v1/system/openclaw-dashboard-config": {},
+	"/v1/chat/send":                        {},
+	"/v1/chat/history":                     {},
+	"/v1/chat/stream":                      {},
+	"/v1/chat/state":                       {},
+}
+
+var runtimeRemovedRoutePrefixes = []string{
+	"/v1/bots/dev",
+	"/v1/bots/openclaw",
+}
+
+var managementOnlyRouteSet = map[string]struct{}{
+	"/v1/bots/register":                    {},
+	"/v1/prompts/templates/apply":          {},
+	"/v1/bots/rule-status":                 {},
+	"/v1/bots/dev/link":                    {},
+	"/v1/bots/dev/health":                  {},
+	"/v1/bots/openclaw/status":             {},
+	"/v1/system/openclaw-dashboard-config": {},
+	"/v1/bots/upgrade":                     {},
+	"/v1/bots/upgrade/task":                {},
+	"/v1/bots/upgrade/history":             {},
+	"/v1/bots/upgrade/steps":               {},
+	"/v1/clawcolony/upgrade":               {},
+	"/v1/clawcolony/upgrade/task":          {},
+	"/v1/clawcolony/upgrade/history":       {},
+	"/v1/clawcolony/upgrade/steps":         {},
+	"/v1/openclaw/admin/overview":          {},
+	"/v1/openclaw/admin/action":            {},
+	"/v1/openclaw/admin/register/task":     {},
+	"/v1/openclaw/admin/register/history":  {},
+	"/v1/openclaw/admin/github/health":     {},
+	"/v1/github/app-token":                 {},
+}
+
+var managementOnlyRoutePrefixes = []string{
+	"/v1/dashboard-admin",
+	"/v1/bots/dev",
+	"/v1/bots/openclaw",
+}
+
+var errProxyRequestBodyTooLarge = errors.New("proxy request body exceeds limit")
+var errProxyResponseBodyTooLarge = errors.New("proxy response body exceeds limit")
 
 const (
 	chatTaskQueuedStatus    = "queued"
@@ -429,16 +508,9 @@ func New(cfg config.Config, st store.Store, bots *bot.Manager) *Server {
 		Timeout:   devProxyHealthTimeout,
 	}
 	s.toolSandboxExec = s.execToolInSandbox
-	if rc, kc, err := newKubeClient(); err == nil {
-		s.kubeRESTCfg = rc
-		s.kubeClient = kc
-	}
 	if err := s.initTianDao(context.Background()); err != nil {
 		s.tianDaoInitErr = err
 		log.Printf("tian dao init failed: %v", err)
-	}
-	if err := s.ensureGenesisPromptTemplateCoverage(context.Background()); err != nil {
-		log.Printf("prompt template clawcolony coverage ensure failed: %v", err)
 	}
 	if s.bots != nil {
 		item, source, _ := s.getRuntimeSchedulerSettings(context.Background())
@@ -457,8 +529,6 @@ func (s *Server) Start() error {
 	}
 	if s.cfg.RuntimeEnabled() {
 		go s.startWorldTickLoop()
-		go s.startChatPersistLoop()
-		s.startChatWorkerPool()
 	}
 	handler := s.roleAccessMiddleware(s.mux)
 	return http.ListenAndServe(s.cfg.ListenAddr, s.httpAccessLogMiddleware(handler))
@@ -466,11 +536,13 @@ func (s *Server) Start() error {
 
 func (s *Server) roleAccessMiddleware(next http.Handler) http.Handler {
 	role := s.cfg.EffectiveServiceRole()
-	if role == config.ServiceRoleAll {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.pathAllowedForRole(role, r.URL.Path) {
+		path := normalizeRequestPath(r.URL.Path)
+		if s.isRuntimeRemovedPath(path) {
+			writeError(w, http.StatusNotFound, "endpoint is removed from runtime")
+			return
+		}
+		if role == config.ServiceRoleAll || s.pathAllowedForRole(role, path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -478,11 +550,32 @@ func (s *Server) roleAccessMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) pathAllowedForRole(role, requestPath string) bool {
-	path := strings.TrimSpace(requestPath)
-	if path == "" {
-		path = "/"
+func normalizeRequestPath(requestPath string) string {
+	p := strings.TrimSpace(requestPath)
+	if p == "" {
+		return "/"
 	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	cleaned := path.Clean(p)
+	if cleaned == "." || cleaned == "" {
+		return "/"
+	}
+	return cleaned
+}
+
+func pathHasPrefix(pathValue, prefix string) bool {
+	pathValue = normalizeRequestPath(pathValue)
+	prefix = normalizeRequestPath(prefix)
+	if prefix == "/" {
+		return true
+	}
+	return pathValue == prefix || strings.HasPrefix(pathValue, prefix+"/")
+}
+
+func (s *Server) pathAllowedForRole(role, requestPath string) bool {
+	path := normalizeRequestPath(requestPath)
 	if path == "/healthz" || path == "/v1/meta" {
 		return true
 	}
@@ -497,8 +590,33 @@ func (s *Server) pathAllowedForRole(role, requestPath string) bool {
 }
 
 func (s *Server) isDeployerOnlyPath(requestPath string) bool {
-	_, ok := managementOnlyRouteSet[strings.TrimSpace(requestPath)]
-	return ok
+	path := normalizeRequestPath(requestPath)
+	if _, ok := managementOnlyRouteSet[path]; ok {
+		return true
+	}
+	for _, prefix := range managementOnlyRoutePrefixes {
+		if pathHasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) isRuntimeRemovedPath(requestPath string) bool {
+	path := normalizeRequestPath(requestPath)
+	if _, ok := runtimeRemovedRouteSet[path]; ok {
+		return true
+	}
+	for _, prefix := range runtimeRemovedRoutePrefixes {
+		if pathHasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeRuntimeRemovedEndpoint(w http.ResponseWriter) {
+	writeError(w, http.StatusNotFound, "endpoint is removed from runtime")
 }
 
 func (s *Server) worldTickInterval() time.Duration {
@@ -945,13 +1063,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/bots", s.handleBots)
 	s.mux.HandleFunc("/v1/bots/nickname/upsert", s.handleBotNicknameUpsert)
 	s.mux.HandleFunc("/v1/bots/profile/readme", s.handleBotProfileReadme)
-	s.mux.HandleFunc("/v1/prompts/templates", s.handlePromptTemplates)
-	s.mux.HandleFunc("/v1/prompts/templates/upsert", s.handlePromptTemplateUpsert)
-	s.mux.HandleFunc("/v1/prompts/templates/apply", s.handlePromptTemplateApply)
 	s.mux.HandleFunc("/v1/bots/thoughts", s.handleBotThoughts)
-	s.mux.HandleFunc("/v1/bots/logs", s.handleBotLogs)
-	s.mux.HandleFunc("/v1/bots/logs/all", s.handleAllBotLogs)
-	s.mux.HandleFunc("/v1/bots/rule-status", s.handleBotRuleStatus)
 	s.mux.HandleFunc("/v1/policy/mission", s.handleMissionPolicy)
 	s.mux.HandleFunc("/v1/policy/mission/default", s.handleMissionDefault)
 	s.mux.HandleFunc("/v1/policy/mission/room", s.handleMissionRoom)
@@ -1066,10 +1178,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/reputation/score", s.handleReputationScore)
 	s.mux.HandleFunc("/v1/reputation/leaderboard", s.handleReputationLeaderboard)
 	s.mux.HandleFunc("/v1/reputation/events", s.handleReputationEvents)
-	s.mux.HandleFunc("/v1/chat/send", s.handleChatSend)
-	s.mux.HandleFunc("/v1/chat/history", s.handleChatHistory)
-	s.mux.HandleFunc("/v1/chat/stream", s.handleChatStream)
-	s.mux.HandleFunc("/v1/chat/state", s.handleChatState)
 	s.mux.HandleFunc("/v1/ops/overview", s.handleOpsOverview)
 	s.mux.HandleFunc("/v1/ops/product-overview", s.handleOpsProductOverview)
 	s.mux.HandleFunc("/v1/monitor/agents/overview", s.handleMonitorAgentsOverview)
@@ -1077,13 +1185,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/monitor/agents/timeline/all", s.handleMonitorAgentsTimelineAll)
 	s.mux.HandleFunc("/v1/monitor/communications", s.handleMonitorCommunications)
 	s.mux.HandleFunc("/v1/monitor/meta", s.handleMonitorMeta)
-	s.mux.HandleFunc("/v1/bots/dev/link", s.handleBotDevLinkProxy)
-	s.mux.HandleFunc("/v1/bots/dev/health", s.handleBotDevHealth)
-	s.mux.HandleFunc("/v1/bots/dev/", s.handleBotDevProxyForward)
-	s.mux.HandleFunc("/v1/bots/openclaw/", s.handleOpenClawProxy)
-	s.mux.HandleFunc("/v1/bots/openclaw/status", s.handleOpenClawStatus)
 	s.mux.HandleFunc("/v1/system/request-logs", s.handleRequestLogs)
-	s.mux.HandleFunc("/v1/system/openclaw-dashboard-config", s.handleOpenClawDashboardConfig)
 	s.mux.HandleFunc("/v1/tasks/pi", s.handlePiTaskMeta)
 	s.mux.HandleFunc("/v1/tasks/pi/claim", s.handlePiTaskClaim)
 	s.mux.HandleFunc("/v1/tasks/pi/submit", s.handlePiTaskSubmit)
@@ -1118,20 +1220,23 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		lawVersion = s.tianDaoLaw.Version
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"service":              "clawcolony",
-		"service_role":         s.cfg.EffectiveServiceRole(),
-		"runtime_enabled":      s.cfg.RuntimeEnabled(),
-		"clawcolony_namespace": s.cfg.ClawWorldNamespace,
-		"bot_namespace":        s.cfg.BotNamespace,
-		"database_enabled":     s.cfg.DatabaseURL != "",
-		"action_cost_consume":  s.cfg.ActionCostConsume,
-		"tool_cost_rate_milli": s.cfg.ToolCostRateMilli,
-		"tool_runtime_exec":    s.cfg.ToolRuntimeExec,
-		"tool_sandbox_image":   strings.TrimSpace(s.cfg.ToolSandboxImage),
-		"tool_t3_allow_hosts":  strings.TrimSpace(s.cfg.ToolT3AllowHosts),
-		"tian_dao_law_key":     lawKey,
-		"tian_dao_law_version": lawVersion,
-		"world_tick_seconds":   int64(s.worldTickInterval() / time.Second),
+		"service":                  "clawcolony",
+		"service_role":             s.cfg.EffectiveServiceRole(),
+		"runtime_ops_proxy_mode":   s.cfg.EffectiveRuntimeOpsProxyMode(),
+		"runtime_enabled":          s.cfg.RuntimeEnabled(),
+		"clawcolony_namespace":     s.cfg.ClawWorldNamespace,
+		"bot_namespace":            s.cfg.BotNamespace,
+		"database_enabled":         s.cfg.DatabaseURL != "",
+		"deployer_api_configured":  strings.TrimSpace(s.cfg.DeployerAPIBaseURL) != "",
+		"deployer_public_base_url": strings.TrimSpace(s.cfg.DeployerPublicBaseURL),
+		"action_cost_consume":      s.cfg.ActionCostConsume,
+		"tool_cost_rate_milli":     s.cfg.ToolCostRateMilli,
+		"tool_runtime_exec":        s.cfg.ToolRuntimeExec,
+		"tool_sandbox_image":       strings.TrimSpace(s.cfg.ToolSandboxImage),
+		"tool_t3_allow_hosts":      strings.TrimSpace(s.cfg.ToolT3AllowHosts),
+		"tian_dao_law_key":         lawKey,
+		"tian_dao_law_version":     lawVersion,
+		"world_tick_seconds":       int64(s.worldTickInterval() / time.Second),
 	})
 }
 
@@ -1816,6 +1921,7 @@ func (s *Server) handleWorldCostSummary(w http.ResponseWriter, r *http.Request) 
 	}
 	userID := queryUserID(r)
 	limit := parseLimit(r.URL.Query().Get("limit"), 500)
+	includeSystem := parseBoolFlag(r.URL.Query().Get("include_system"))
 	items, err := s.store.ListCostEvents(r.Context(), userID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1829,6 +1935,9 @@ func (s *Server) handleWorldCostSummary(w http.ResponseWriter, r *http.Request) 
 	byType := map[string]agg{}
 	var totalCount, totalAmount, totalUnits int64
 	for _, it := range items {
+		if !includeSystem && isExcludedTokenUserID(it.UserID) {
+			continue
+		}
 		key := strings.TrimSpace(it.CostType)
 		if key == "" {
 			key = "unknown"
@@ -1843,8 +1952,9 @@ func (s *Server) handleWorldCostSummary(w http.ResponseWriter, r *http.Request) 
 		totalUnits += it.Units
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user_id": userID,
-		"limit":   limit,
+		"user_id":        userID,
+		"limit":          limit,
+		"include_system": includeSystem,
 		"totals": map[string]any{
 			"count":  totalCount,
 			"amount": totalAmount,
@@ -2008,7 +2118,8 @@ func (s *Server) handleWorldCostAlerts(w http.ResponseWriter, r *http.Request) {
 		thresholdAmount = settings.ThresholdAmount
 	}
 	topUsers := parseLimit(r.URL.Query().Get("top_users"), settings.TopUsers)
-	items, err := s.queryWorldCostAlerts(r.Context(), userID, limit, thresholdAmount, topUsers)
+	includeSystem := parseBoolFlag(r.URL.Query().Get("include_system"))
+	items, err := s.queryWorldCostAlerts(r.Context(), userID, limit, thresholdAmount, topUsers, includeSystem)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2018,12 +2129,13 @@ func (s *Server) handleWorldCostAlerts(w http.ResponseWriter, r *http.Request) {
 		"limit":            limit,
 		"threshold_amount": thresholdAmount,
 		"top_users":        topUsers,
+		"include_system":   includeSystem,
 		"settings":         settings,
 		"items":            items,
 	})
 }
 
-func (s *Server) queryWorldCostAlerts(ctx context.Context, userID string, limit int, thresholdAmount int64, topUsers int) ([]worldCostAlertItem, error) {
+func (s *Server) queryWorldCostAlerts(ctx context.Context, userID string, limit int, thresholdAmount int64, topUsers int, includeSystem bool) ([]worldCostAlertItem, error) {
 	items, err := s.store.ListCostEvents(ctx, userID, limit)
 	if err != nil {
 		return nil, err
@@ -2041,6 +2153,9 @@ func (s *Server) queryWorldCostAlerts(ctx context.Context, userID string, limit 
 	for _, it := range items {
 		uid := strings.TrimSpace(it.UserID)
 		if uid == "" {
+			continue
+		}
+		if !includeSystem && isExcludedTokenUserID(uid) {
 			continue
 		}
 		a := byUser[uid]
@@ -2510,14 +2625,17 @@ func (s *Server) shouldSendWorldCostAlert(userID string, amount int64, cooldown 
 
 func (s *Server) runWorldCostAlertNotifications(ctx context.Context, tickID int64) error {
 	settings, _, _ := s.getWorldCostAlertSettings(ctx)
-	items, err := s.queryWorldCostAlerts(ctx, "", settings.ScanLimit, settings.ThresholdAmount, settings.TopUsers)
+	items, err := s.queryWorldCostAlerts(ctx, "", settings.ScanLimit, settings.ThresholdAmount, settings.TopUsers, false)
 	if err != nil {
 		return err
 	}
 	cooldown := time.Duration(settings.NotifyCooldownS) * time.Second
 	now := time.Now().UTC()
 	for _, it := range items {
-		if strings.TrimSpace(it.UserID) == "" || it.UserID == clawWorldSystemID {
+		uid := strings.TrimSpace(it.UserID)
+		// queryWorldCostAlerts currently guarantees non-empty user IDs; keep
+		// this defensive guard in case that invariant changes later.
+		if uid == "" {
 			continue
 		}
 		if !s.shouldSendWorldCostAlert(it.UserID, it.Amount, cooldown, now) {
@@ -2827,6 +2945,9 @@ func (s *Server) buildWorldEvolutionSnapshot(ctx context.Context, settings world
 					autonomyUsers[uid] = struct{}{}
 					meaningfulOutboxCount++
 				}
+				continue
+			}
+			if isSystemRuntimeUserID(toID) {
 				continue
 			}
 			if toID == uid {
@@ -3208,12 +3329,14 @@ func (s *Server) handleBots(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	active, activeOK := s.activeBotIDsInNamespace(r.Context())
 	if !includeInactive {
-		items = s.filterActiveBotsBySet(items, active, activeOK)
-	}
-	if activeOK && len(active) > 0 {
-		items = mergeMissingActiveBots(items, active)
+		filtered := make([]store.Bot, 0, len(items))
+		for _, it := range items {
+			if isRuntimeBotStatusActive(it.Status) {
+				filtered = append(filtered, it)
+			}
+		}
+		items = filtered
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
@@ -3262,13 +3385,6 @@ func (s *Server) handleBotNicknameUpsert(w http.ResponseWriter, r *http.Request)
 	item, err := s.store.UpdateBotNickname(r.Context(), req.UserID, nickname)
 	if err != nil {
 		if errors.Is(err, store.ErrBotNotFound) {
-			active, activeOK := s.activeBotIDsInNamespace(r.Context())
-			if activeOK {
-				if _, ok := active[req.UserID]; ok {
-					writeError(w, http.StatusConflict, "user_id exists in cluster but is not synced to runtime yet")
-					return
-				}
-			}
 			writeError(w, http.StatusNotFound, "user_id not found")
 			return
 		}
@@ -3341,6 +3457,10 @@ func (s *Server) handleBotThoughts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBotLogs(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -3369,6 +3489,10 @@ func (s *Server) handleBotLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAllBotLogs(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -3476,6 +3600,10 @@ func (s *Server) readPodLogs(ctx context.Context, podName string, tail int64, pr
 }
 
 func (s *Server) handleBotRuleStatus(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -3501,14 +3629,14 @@ func (s *Server) handleBotRuleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) filterActiveBots(ctx context.Context, items []store.Bot) []store.Bot {
-	// In cluster mode, always trust live k8s deployments as the source of truth.
-	// If there are zero active deployments, UI should show zero active users
-	// instead of falling back to historical DB rows.
-	if s.kubeClient == nil {
-		return items
+	_ = ctx
+	out := make([]store.Bot, 0, len(items))
+	for _, it := range items {
+		if isRuntimeBotStatusActive(it.Status) {
+			out = append(out, it)
+		}
 	}
-	active, activeOK := s.activeBotIDsInNamespace(ctx)
-	return s.filterActiveBotsBySet(items, active, activeOK)
+	return out
 }
 
 func (s *Server) filterActiveBotsBySet(items []store.Bot, active map[string]struct{}, activeOK bool) []store.Bot {
@@ -3573,6 +3701,10 @@ type promptTemplateApplyRequest struct {
 }
 
 func (s *Server) handlePromptTemplates(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -3649,6 +3781,10 @@ func (s *Server) handlePromptTemplates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePromptTemplateUpsert(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodPost && r.Method != http.MethodPut {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -3703,6 +3839,10 @@ func canonicalizePromptTemplateContent(raw string, ctxUser store.Bot, apiBase, m
 }
 
 func (s *Server) handlePromptTemplateApply(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -4659,7 +4799,7 @@ func (s *Server) pushUnreadMailHint(ctx context.Context, fromUserID string, toUs
 	}
 	for _, uid := range toUserIDs {
 		uid = strings.TrimSpace(uid)
-		if uid == "" || uid == clawWorldSystemID {
+		if uid == "" || isSystemRuntimeUserID(uid) {
 			continue
 		}
 		if _, ok := seen[uid]; ok {
@@ -4766,7 +4906,7 @@ func buildUnreadMailHintMessage(fromUserID, subject string) string {
 
 func (s *Server) autoResolvePinnedRemindersOnProgressMail(ctx context.Context, fromUserID string, toUserIDs []string, subject, body string) int {
 	fromUserID = strings.TrimSpace(fromUserID)
-	if fromUserID == "" || fromUserID == clawWorldSystemID {
+	if fromUserID == "" || isSystemRuntimeUserID(fromUserID) {
 		return 0
 	}
 	sentToAdmin := false
@@ -5515,7 +5655,7 @@ func (s *Server) notifyCollabProposalPinned(ctx context.Context, item store.Coll
 	receivers := make([]string, 0, len(targets))
 	for _, uid := range targets {
 		uid = strings.TrimSpace(uid)
-		if uid == "" || uid == clawWorldSystemID || uid == strings.TrimSpace(item.ProposerUserID) {
+		if uid == "" || isSystemRuntimeUserID(uid) || uid == strings.TrimSpace(item.ProposerUserID) {
 			continue
 		}
 		life, err := s.store.GetUserLifeState(ctx, uid)
@@ -7523,6 +7663,10 @@ type openClawAgentResponse struct {
 }
 
 func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -7562,6 +7706,10 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -7598,6 +7746,10 @@ func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -7659,6 +7811,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleChatState(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -8541,6 +8697,159 @@ func (s *Server) handleRequestLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
+func readProxyRequestBody(r *http.Request) (io.Reader, error) {
+	if r.Body == nil {
+		return nil, nil
+	}
+	limited := io.LimitReader(r.Body, proxyRequestBodyMaxBytes+1)
+	payload, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > proxyRequestBodyMaxBytes {
+		return nil, errProxyRequestBodyTooLarge
+	}
+	return bytes.NewReader(payload), nil
+}
+
+func copyProxyRequestHeaders(dst, src http.Header) {
+	skip := make(map[string]struct{}, len(proxyHopByHopHeaderSet)+4)
+	for k := range proxyHopByHopHeaderSet {
+		skip[k] = struct{}{}
+	}
+	for _, connValue := range src.Values("Connection") {
+		parts := strings.Split(connValue, ",")
+		for _, p := range parts {
+			token := strings.TrimSpace(p)
+			if token == "" {
+				continue
+			}
+			skip[http.CanonicalHeaderKey(token)] = struct{}{}
+		}
+	}
+	for k, values := range src {
+		if http.CanonicalHeaderKey(k) == "Cookie" {
+			continue
+		}
+		if _, banned := skip[http.CanonicalHeaderKey(k)]; banned {
+			continue
+		}
+		for _, v := range values {
+			dst.Add(k, v)
+		}
+	}
+}
+
+func copyProxyResponseHeaders(dst, src http.Header) {
+	skip := make(map[string]struct{}, len(proxyHopByHopHeaderSet)+4)
+	for k := range proxyHopByHopHeaderSet {
+		skip[k] = struct{}{}
+	}
+	for _, connValue := range src.Values("Connection") {
+		parts := strings.Split(connValue, ",")
+		for _, p := range parts {
+			token := strings.TrimSpace(p)
+			if token == "" {
+				continue
+			}
+			skip[http.CanonicalHeaderKey(token)] = struct{}{}
+		}
+	}
+	for k, values := range src {
+		if http.CanonicalHeaderKey(k) == "Set-Cookie" {
+			continue
+		}
+		if _, banned := skip[http.CanonicalHeaderKey(k)]; banned {
+			continue
+		}
+		for _, v := range values {
+			dst.Add(k, v)
+		}
+	}
+}
+
+func readProxyResponseBody(resp *http.Response) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, nil
+	}
+	limited := io.LimitReader(resp.Body, proxyResponseBodyMaxBytes+1)
+	payload, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > proxyResponseBodyMaxBytes {
+		return nil, errProxyResponseBodyTooLarge
+	}
+	return payload, nil
+}
+
+func (s *Server) forwardMigratedOpsRequestToDeployer(w http.ResponseWriter, r *http.Request, requestPath string) {
+	base := strings.TrimSpace(s.cfg.DeployerAPIBaseURL)
+	if base == "" {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusServiceUnavailable, "deployer api base is not configured")
+		return
+	}
+	backend, err := neturl.Parse(base)
+	if err != nil || strings.TrimSpace(backend.Scheme) == "" || strings.TrimSpace(backend.Host) == "" {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusServiceUnavailable, "invalid deployer api base")
+		return
+	}
+	if !strings.EqualFold(backend.Scheme, "http") && !strings.EqualFold(backend.Scheme, "https") {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusServiceUnavailable, "unsupported deployer api scheme")
+		return
+	}
+	target := *backend
+	target.Path = joinURLPath(backend.Path, requestPath)
+	target.RawQuery = r.URL.RawQuery
+
+	bodyReader, err := readProxyRequestBody(r)
+	if err != nil {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		if errors.Is(err, errProxyRequestBodyTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bodyReader)
+	if err != nil {
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusBadGateway, "failed to build proxy request")
+		return
+	}
+	copyProxyRequestHeaders(req.Header, r.Header)
+	req.Host = backend.Host
+	req.Header.Set("X-Clawcolony-Runtime-Proxy", "migrated-ops")
+
+	resp, err := proxyHTTPClient.Do(req)
+	if err != nil {
+		log.Printf("runtime_migrated_ops_proxy_error method=%s path=%s target=%s err=%v", r.Method, requestPath, target.String(), err)
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		writeError(w, http.StatusBadGateway, "migrated endpoint proxy error")
+		return
+	}
+	defer resp.Body.Close()
+	respBody, err := readProxyResponseBody(resp)
+	if err != nil {
+		log.Printf("runtime_migrated_ops_proxy_read_error method=%s path=%s target=%s err=%v", r.Method, requestPath, target.String(), err)
+		w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+		if errors.Is(err, errProxyResponseBodyTooLarge) {
+			writeError(w, http.StatusBadGateway, "migrated endpoint response is too large")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "migrated endpoint proxy response error")
+		return
+	}
+	copyProxyResponseHeaders(w.Header(), resp.Header)
+	w.Header().Set("X-Clawcolony-Deprecated", "migrated-to-deployer")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(respBody)
+}
+
 func joinURLPath(basePath, nextPath string) string {
 	basePath = strings.TrimRight(strings.TrimSpace(basePath), "/")
 	nextPath = "/" + strings.TrimLeft(strings.TrimSpace(nextPath), "/")
@@ -8867,6 +9176,10 @@ func (s *Server) hasValidRuntimeDevProxySignedLink(r *http.Request, userID strin
 }
 
 func (s *Server) handleBotDevLinkProxy(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -8957,6 +9270,10 @@ func (s *Server) handleBotDevLinkProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBotDevHealth(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -9096,6 +9413,10 @@ func parseDevProxyForwardRoute(pathRaw string) (string, int, string, error) {
 }
 
 func (s *Server) handleBotDevProxyForward(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:
@@ -9157,6 +9478,10 @@ func (s *Server) handleBotDevProxyForward(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleOpenClawProxy(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -9234,6 +9559,10 @@ func (s *Server) handleOpenClawProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOpenClawStatus(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -9385,54 +9714,8 @@ func (s *Server) defaultPromptTemplateMap(_ context.Context, user store.Bot) map
 }
 
 func (s *Server) ensureGenesisPromptTemplateCoverage(ctx context.Context) error {
-	ctxUser := s.resolveTemplateContextUser(ctx, "")
-	apiBase := s.defaultAPIBaseURL()
-	model := s.cfg.BotModel
-	defaults := s.defaultPromptTemplateMap(ctx, ctxUser)
-	dbItems, err := s.store.ListPromptTemplates(ctx)
-	if err != nil {
-		return err
-	}
-	dbByKey := make(map[string]store.PromptTemplate, len(dbItems))
-	for _, it := range dbItems {
-		dbByKey[it.Key] = it
-	}
-
-	keys := []string{
-		bot.TemplateProtocolReadme,
-		bot.TemplateAgentsDoc,
-		bot.TemplateSoulDoc,
-	}
-	for _, key := range keys {
-		base := strings.TrimSpace(defaults[key])
-		if base == "" {
-			continue
-		}
-		cur := strings.TrimSpace(dbByKey[key].Content)
-		candidate := cur
-		if candidate == "" {
-			candidate = base
-		}
-		if key == bot.TemplateProtocolReadme {
-			// 旧版 protocol 卡片有 runtime_interface 等鸡肋文案，直接替换为当前精简基线。
-			if strings.Contains(candidate, "runtime_interface:") ||
-				strings.Contains(candidate, "不要在这里硬编码 API") ||
-				strings.Contains(candidate, "host/base_url/HTTP 路径") {
-				candidate = base
-			}
-		}
-		candidate = bot.EnsureGenesisTemplateCoverage(key, candidate, ctxUser)
-		candidate = canonicalizePromptTemplateContent(candidate, ctxUser, apiBase, model)
-		if strings.TrimSpace(cur) == strings.TrimSpace(candidate) {
-			continue
-		}
-		if _, err := s.store.UpsertPromptTemplate(ctx, store.PromptTemplate{
-			Key:     key,
-			Content: candidate,
-		}); err != nil {
-			return err
-		}
-	}
+	_ = ctx
+	// Prompt templates moved to deployer and are removed from runtime ownership.
 	return nil
 }
 
@@ -9587,6 +9870,10 @@ func isWebSocketUpgradeRequest(r *http.Request) bool {
 }
 
 func (s *Server) handleOpenClawDashboardConfig(w http.ResponseWriter, r *http.Request) {
+	if s.isRuntimeRemovedPath(r.URL.Path) {
+		writeRuntimeRemovedEndpoint(w)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -9743,13 +10030,6 @@ func (s *Server) apiCatalog() []string {
 	full := []string{
 		"GET /v1/bots",
 		"POST /v1/bots/nickname/upsert",
-		"GET /v1/bots/logs?user_id=<id>&tail=<n>",
-		"GET /v1/bots/logs/all?tail=<n>&limit=<n>",
-		"POST /v1/bots/dev/link",
-		"GET /v1/bots/dev/health?user_id=<id>&port=<port>&path=/",
-		"GET /v1/bots/dev/<user_id>/p/<port>/",
-		"GET /v1/bots/openclaw/<user_id>/",
-		"GET /v1/bots/openclaw/status?user_id=<id>",
 		"GET /v1/tian-dao/law",
 		"GET /v1/world/tick/status",
 		"GET /v1/world/freeze/status",
@@ -9774,9 +10054,6 @@ func (s *Server) apiCatalog() []string {
 		"GET /v1/world/evolution-alert-settings",
 		"POST /v1/world/evolution-alert-settings/upsert",
 		"GET /v1/world/evolution-alert-notifications?level=<warning|critical>&limit=<n>",
-		"GET /v1/prompts/templates?user_id=<id>",
-		"PUT /v1/prompts/templates/upsert",
-		"POST /v1/prompts/templates/apply",
 		"GET /v1/token/accounts?user_id=<id>",
 		"GET /v1/token/balance?user_id=<id>",
 		"GET /v1/token/leaderboard?limit=<n>",
@@ -10181,7 +10458,7 @@ func (s *Server) runLowEnergyAlertTick(ctx context.Context, tickID int64) error 
 	active := make(map[string]struct{}, len(bots))
 	for _, b := range bots {
 		uid := strings.TrimSpace(b.BotID)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		if !b.Initialized || strings.EqualFold(strings.TrimSpace(b.Status), "deleted") {
@@ -10561,7 +10838,8 @@ func (s *Server) hasRecentMeaningfulPeerCommunication(ctx context.Context, userI
 		return false
 	}
 	for _, it := range items {
-		if strings.EqualFold(strings.TrimSpace(it.ToAddress), clawWorldSystemID) {
+		toAddress := strings.TrimSpace(it.ToAddress)
+		if toAddress == "" || isSystemRuntimeUserID(toAddress) {
 			continue
 		}
 		if isMeaningfulOutputMail(it.Subject, it.Body) || utf8.RuneCountInString(strings.TrimSpace(it.Body)) >= 80 {
@@ -10591,7 +10869,7 @@ func (s *Server) runAutonomyReminderTick(ctx context.Context, tickID int64) erro
 	subjectPrefix := "[AUTONOMY-LOOP][PRIORITY:P3][ACTION:REPORT+EXECUTE]"
 	for _, uid := range targets {
 		uid = strings.TrimSpace(uid)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		life, err := s.store.GetUserLifeState(ctx, uid)
@@ -10654,7 +10932,7 @@ func (s *Server) runCommunityCommReminderTick(ctx context.Context, tickID int64)
 	subjectPrefix := "[COMMUNITY-COLLAB][PRIORITY:P2][ACTION:MEANINGFUL-COMM]"
 	for _, uid := range targets {
 		uid = strings.TrimSpace(uid)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		life, err := s.store.GetUserLifeState(ctx, uid)
@@ -10741,23 +11019,18 @@ func (s *Server) runTokenDrainTick(ctx context.Context, tickID int64) error {
 	if err != nil {
 		return err
 	}
-	active, activeOK := s.activeBotIDsInNamespace(ctx)
 	for _, b := range bots {
-		if strings.TrimSpace(b.BotID) == "" || !b.Initialized || b.Status != "running" {
+		uid := strings.TrimSpace(b.BotID)
+		if isExcludedTokenUserID(uid) || !b.Initialized || b.Status != "running" {
 			continue
 		}
-		if life, err := s.store.GetUserLifeState(ctx, b.BotID); err == nil {
+		if life, err := s.store.GetUserLifeState(ctx, uid); err == nil {
 			switch normalizeLifeStateForServer(life.State) {
 			case "dead", "hibernated":
 				continue
 			}
 		}
-		if activeOK && len(active) > 0 {
-			if _, ok := active[b.BotID]; !ok {
-				continue
-			}
-		}
-		ledger, deducted, consumeErr := s.consumeWithFloor(ctx, b.BotID, lifeCost)
+		ledger, deducted, consumeErr := s.consumeWithFloor(ctx, uid, lifeCost)
 		if consumeErr != nil {
 			continue
 		}
@@ -10769,7 +11042,7 @@ func (s *Server) runTokenDrainTick(ctx context.Context, tickID int64) error {
 			"balance_after": ledger.BalanceAfter,
 		})
 		if _, err := s.store.AppendCostEvent(ctx, store.CostEvent{
-			UserID:   b.BotID,
+			UserID:   uid,
 			TickID:   tickID,
 			CostType: "life",
 			Amount:   deducted,

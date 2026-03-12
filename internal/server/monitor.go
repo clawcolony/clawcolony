@@ -23,7 +23,6 @@ const (
 	monitorMaxTimelineLimit     = 2000
 	monitorMaxSourceScan        = 2000
 	monitorOverviewTimeout      = 30 * time.Second
-	monitorInspectTimeout       = 1200 * time.Millisecond
 	monitorMergeCapLimit        = 50000
 )
 
@@ -368,8 +367,6 @@ func (s *Server) handleMonitorMeta(w http.ResponseWriter, r *http.Request) {
 	report("bots", botsErr)
 	_, costErr := s.store.ListCostEvents(ctx, "", 1)
 	report("cost_events", costErr)
-	_, chatErr := s.store.ListChatMessages(ctx, "", 1)
-	report("chat_messages", chatErr)
 	_, reqErr := s.store.ListRequestLogs(ctx, store.RequestLogFilter{Limit: 1})
 	report("request_logs", reqErr)
 
@@ -381,15 +378,6 @@ func (s *Server) handleMonitorMeta(w http.ResponseWriter, r *http.Request) {
 		return err
 	}()
 	report("mailbox", mailErr)
-
-	kubeItem := monitorSourceStatus{Name: "openclaw_status"}
-	if s.kubeClient == nil {
-		kubeItem.Status = "unavailable"
-		kubeItem.Error = "kubernetes client is not available"
-	} else {
-		kubeItem.Status = "ok"
-	}
-	sourceStatus[kubeItem.Name] = kubeItem
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"as_of": time.Now().UTC(),
@@ -408,7 +396,7 @@ func (s *Server) monitorTargetBots(ctx context.Context, userID string, includeIn
 	if err != nil {
 		return nil, err
 	}
-	active, activeOK := s.activeBotIDsInNamespace(ctx)
+	items = filterCommunityVisibleBots(items)
 	userID = strings.TrimSpace(userID)
 	if userID != "" {
 		for _, it := range items {
@@ -416,18 +404,16 @@ func (s *Server) monitorTargetBots(ctx context.Context, userID string, includeIn
 				return []store.Bot{it}, nil
 			}
 		}
-		if activeOK {
-			if _, ok := active[userID]; ok {
-				return []store.Bot{syntheticActiveBot(userID)}, nil
-			}
-		}
 		return nil, fmt.Errorf("%w: %s", errMonitorUserNotFound, userID)
 	}
 	if !includeInactive {
-		items = s.filterActiveBotsBySet(items, active, activeOK)
-	}
-	if activeOK && len(active) > 0 {
-		items = mergeMissingActiveBots(items, active)
+		filtered := make([]store.Bot, 0, len(items))
+		for _, it := range items {
+			if isRuntimeBotStatusActive(it.Status) {
+				filtered = append(filtered, it)
+			}
+		}
+		items = filtered
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].BotID < items[j].BotID })
 	if len(items) > limit {
@@ -451,30 +437,6 @@ func (s *Server) buildMonitorOverviewItem(ctx context.Context, b store.Bot, even
 		lifeState = normalizeLifeStateForServer(life.State)
 	}
 	item.LifeState = lifeState
-
-	if s.kubeClient != nil {
-		item.ConnectedKnown = true
-		func() {
-			inspectCtx, cancel := context.WithTimeout(ctx, monitorInspectTimeout)
-			defer cancel()
-			pod, err := s.latestBotPod(inspectCtx, userID)
-			if err != nil {
-				item.Connected = false
-				item.ConnectionDetail = monitorShort(err.Error(), 180)
-			} else {
-				st, stErr := s.inspectOpenClawConnectionStatus(inspectCtx, userID, pod.Name)
-				if stErr != nil {
-					item.PodName = pod.Name
-					item.ConnectionDetail = monitorShort(stErr.Error(), 180)
-				} else {
-					item.Connected = st.Connected
-					item.ActiveWebchatConnections = st.ActiveWebchatConns
-					item.PodName = st.PodName
-					item.ConnectionDetail = monitorShort(strings.TrimSpace(st.Detail), 180)
-				}
-			}
-		}()
-	}
 
 	chatSnap := s.chatStateSnapshot(userID)
 	item.ChatPipeline = monitorPipelineFromChatState(chatSnap)
@@ -519,6 +481,7 @@ func (s *Server) collectMonitorCommunications(ctx context.Context, includeInacti
 	if err != nil {
 		return nil, err
 	}
+	bots = filterCommunityVisibleBots(bots)
 	if !includeInactive {
 		bots = s.filterActiveBots(ctx, bots)
 	}
@@ -528,7 +491,8 @@ func (s *Server) collectMonitorCommunications(ctx context.Context, includeInacti
 	scanUsers := make([]store.Bot, 0, len(bots))
 	for _, it := range bots {
 		userID := strings.TrimSpace(it.BotID)
-		if userID == "" || userID == clawWorldSystemID {
+		// System users are already removed by filterCommunityVisibleBots above.
+		if userID == "" {
 			continue
 		}
 		partyIndex[userID] = monitorCommunicationParty{
@@ -678,41 +642,6 @@ func (s *Server) collectMonitorEvents(ctx context.Context, userID string, limit 
 			if ev, ok := monitorCostEventToTimeline(it); ok {
 				addEvent(ev)
 			}
-		}
-	}
-
-	// chat messages
-	sourceCount++
-	msgs, err := s.store.ListChatMessages(ctx, userID, scanLimit)
-	if err != nil {
-		sourceErrs++
-		if firstErr == nil {
-			firstErr = err
-		}
-	} else {
-		for _, it := range msgs {
-			from := strings.TrimSpace(it.From)
-			to := strings.TrimSpace(it.To)
-			action := "chat.receive"
-			if from == userID {
-				action = "chat.reply"
-			} else if to != userID {
-				continue
-			}
-			addEvent(monitorTimelineEvent{
-				TS:       it.SentAt,
-				UserID:   userID,
-				Category: "chat",
-				Action:   action,
-				Status:   "ok",
-				Summary:  monitorShort(it.Body, 180),
-				Source:   "chat_history",
-				Meta: map[string]any{
-					"message_id": it.ID,
-					"from":       from,
-					"to":         to,
-				},
-			})
 		}
 	}
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -105,14 +106,10 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			provider TEXT NOT NULL DEFAULT 'generic',
 			status TEXT NOT NULL DEFAULT 'unknown',
 			initialized BOOLEAN NOT NULL DEFAULT false,
-			gateway_token TEXT NOT NULL DEFAULT '',
-			upgrade_token TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS gateway_token TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS upgrade_token TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS token_accounts (
 			user_id TEXT PRIMARY KEY,
 			balance BIGINT NOT NULL DEFAULT 0,
@@ -178,78 +175,6 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		`UPDATE mail_contacts
 		 SET contact_address = 'clawcolony-admin'
 		 WHERE contact_address IN ('clawcolony-system', 'clawcolony')`,
-		`DO $$
-		BEGIN
-			IF to_regclass('public.chat_messages') IS NOT NULL THEN
-				UPDATE chat_messages
-				SET from_user = 'clawcolony-admin'
-				WHERE from_user IN ('clawcolony-system', 'clawcolony');
-				UPDATE chat_messages
-				SET to_user = 'clawcolony-admin'
-				WHERE to_user IN ('clawcolony-system', 'clawcolony');
-			END IF;
-		END $$`,
-		`CREATE TABLE IF NOT EXISTS upgrade_audits (
-			id BIGSERIAL PRIMARY KEY,
-			user_id TEXT NOT NULL,
-			repo_url TEXT NOT NULL,
-			branch TEXT NOT NULL,
-			requested_by TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL,
-			image TEXT NOT NULL DEFAULT '',
-			error_text TEXT NOT NULL DEFAULT '',
-			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			finished_at TIMESTAMPTZ NULL,
-			duration_ms BIGINT NOT NULL DEFAULT 0
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_upgrade_audits_user_started ON upgrade_audits(user_id, started_at DESC)`,
-		`CREATE TABLE IF NOT EXISTS upgrade_steps (
-			id BIGSERIAL PRIMARY KEY,
-			audit_id BIGINT NOT NULL REFERENCES upgrade_audits(id) ON DELETE CASCADE,
-			step_name TEXT NOT NULL,
-			status TEXT NOT NULL,
-			command_text TEXT NOT NULL DEFAULT '',
-			output_text TEXT NOT NULL DEFAULT '',
-			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_upgrade_steps_audit_created ON upgrade_steps(audit_id, created_at ASC, id ASC)`,
-		`CREATE TABLE IF NOT EXISTS register_tasks (
-			id BIGSERIAL PRIMARY KEY,
-			provider TEXT NOT NULL DEFAULT 'openclaw',
-			user_id TEXT NOT NULL DEFAULT '',
-			user_name TEXT NOT NULL DEFAULT '',
-			repo_full_name TEXT NOT NULL DEFAULT '',
-			image TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL,
-			error_text TEXT NOT NULL DEFAULT '',
-			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			finished_at TIMESTAMPTZ NULL,
-			duration_ms BIGINT NOT NULL DEFAULT 0
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_register_tasks_started ON register_tasks(started_at DESC, id DESC)`,
-		`CREATE TABLE IF NOT EXISTS register_task_steps (
-			id BIGSERIAL PRIMARY KEY,
-			task_id BIGINT NOT NULL REFERENCES register_tasks(id) ON DELETE CASCADE,
-			step_name TEXT NOT NULL,
-			status TEXT NOT NULL,
-			message_text TEXT NOT NULL DEFAULT '',
-			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_register_task_steps_created ON register_task_steps(task_id, created_at ASC, id ASC)`,
-		`CREATE TABLE IF NOT EXISTS chat_messages (
-			id BIGSERIAL PRIMARY KEY,
-			user_id TEXT NOT NULL,
-			from_user TEXT NOT NULL,
-			to_user TEXT NOT NULL,
-			body TEXT NOT NULL,
-			sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_chat_messages_user_sent ON chat_messages(user_id, sent_at ASC, id ASC)`,
-		`CREATE TABLE IF NOT EXISTS prompt_templates (
-			key TEXT PRIMARY KEY,
-			content TEXT NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`,
 		`CREATE TABLE IF NOT EXISTS collab_sessions (
 			collab_id TEXT PRIMARY KEY,
 			title TEXT NOT NULL,
@@ -611,8 +536,25 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			BEFORE UPDATE OR DELETE ON tian_dao_laws
 			FOR EACH ROW
 			EXECUTE FUNCTION deny_tian_dao_law_mutation()`,
-		`DELETE FROM prompt_templates
-		  WHERE key IN ('agents_append', 'soul_append', 'bootstrap_append', 'tools_append')`,
+		`DO $$
+		BEGIN
+			IF to_regclass('public.prompt_templates') IS NOT NULL THEN
+				DELETE FROM prompt_templates
+				  WHERE key IN ('agents_append', 'soul_append', 'bootstrap_append', 'tools_append');
+			END IF;
+		END $$`,
+	}
+	if runtimeSchemaShrinkEnabled() {
+		stmts = append(stmts,
+			`ALTER TABLE user_accounts DROP COLUMN IF EXISTS gateway_token`,
+			`ALTER TABLE user_accounts DROP COLUMN IF EXISTS upgrade_token`,
+			`DROP TABLE IF EXISTS register_task_steps`,
+			`DROP TABLE IF EXISTS register_tasks`,
+			`DROP TABLE IF EXISTS upgrade_steps`,
+			`DROP TABLE IF EXISTS upgrade_audits`,
+			`DROP TABLE IF EXISTS chat_messages`,
+			`DROP TABLE IF EXISTS prompt_templates`,
+		)
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -620,6 +562,16 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func runtimeSchemaShrinkEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("CLAWCOLONY_RUNTIME_SCHEMA_SHRINK")))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *PostgresStore) ensureBotTx(ctx context.Context, tx *sql.Tx, botID string) error {
@@ -733,13 +685,15 @@ func (s *PostgresStore) GetBotCredentials(ctx context.Context, userID string) (B
 		return BotCredentials{}, fmt.Errorf("user_id is required")
 	}
 	err := s.db.QueryRowContext(ctx, `
-		SELECT user_id, gateway_token, upgrade_token
+		SELECT user_id
 		FROM user_accounts
 		WHERE user_id = $1
-	`, creds.UserID).Scan(&creds.UserID, &creds.GatewayToken, &creds.UpgradeToken)
+	`, creds.UserID).Scan(&creds.UserID)
 	if err != nil {
 		return BotCredentials{}, err
 	}
+	creds.GatewayToken = ""
+	creds.UpgradeToken = ""
 	return creds, nil
 }
 
@@ -748,31 +702,20 @@ func (s *PostgresStore) UpsertBotCredentials(ctx context.Context, creds BotCrede
 	if uid == "" {
 		return BotCredentials{}, fmt.Errorf("user_id is required")
 	}
-	var out BotCredentials
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO user_accounts(user_id, user_name, provider, status, initialized, gateway_token, upgrade_token, updated_at)
-		VALUES($1, $1, 'system', 'active', true, $2, $3, NOW())
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO user_accounts(user_id, user_name, provider, status, initialized, updated_at)
+		VALUES($1, $1, 'system', 'active', true, NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
-			gateway_token = CASE
-				WHEN EXCLUDED.gateway_token <> '' THEN EXCLUDED.gateway_token
-				ELSE user_accounts.gateway_token
-			END,
-			upgrade_token = CASE
-				WHEN EXCLUDED.upgrade_token <> '' THEN EXCLUDED.upgrade_token
-				ELSE user_accounts.upgrade_token
-			END,
 			updated_at = NOW()
-		RETURNING user_id, gateway_token, upgrade_token
-	`, uid, strings.TrimSpace(creds.GatewayToken), strings.TrimSpace(creds.UpgradeToken)).Scan(
-		&out.UserID, &out.GatewayToken, &out.UpgradeToken,
-	)
-	if err != nil {
+	`, uid); err != nil {
 		return BotCredentials{}, err
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO token_accounts(user_id, balance) VALUES($1, 0) ON CONFLICT (user_id) DO NOTHING`, out.UserID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO token_accounts(user_id, balance) VALUES($1, 0) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
 		return BotCredentials{}, err
 	}
-	return out, nil
+	return BotCredentials{
+		UserID: uid,
+	}, nil
 }
 
 func (s *PostgresStore) EnsureTianDaoLaw(ctx context.Context, item TianDaoLaw) (TianDaoLaw, error) {
@@ -1649,372 +1592,88 @@ func (s *PostgresStore) ListTokenLedger(ctx context.Context, botID string, limit
 	return items, rows.Err()
 }
 
+func runtimeRemovedDomainError(domain string) error {
+	return fmt.Errorf("%s domain moved to deployer", strings.TrimSpace(domain))
+}
+
 func (s *PostgresStore) CreateUpgradeAudit(ctx context.Context, item UpgradeAudit) (UpgradeAudit, error) {
-	var started any
-	if !item.StartedAt.IsZero() {
-		started = item.StartedAt
-	}
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO upgrade_audits(user_id, repo_url, branch, requested_by, status, image, error_text, started_at)
-		VALUES($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
-		RETURNING id, started_at
-	`, item.UserID, item.RepoURL, item.Branch, item.RequestedBy, item.Status, item.Image, item.Error, started).Scan(&item.ID, &item.StartedAt)
-	if err != nil {
-		return UpgradeAudit{}, err
-	}
-	return item, nil
+	_, _ = ctx, item
+	return UpgradeAudit{}, runtimeRemovedDomainError("upgrade_audits")
 }
 
 func (s *PostgresStore) AppendUpgradeStep(ctx context.Context, step UpgradeStep) (UpgradeStep, error) {
-	var created any
-	if !step.CreatedAt.IsZero() {
-		created = step.CreatedAt
-	}
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO upgrade_steps(audit_id, step_name, status, command_text, output_text, created_at)
-		VALUES($1, $2, $3, $4, $5, COALESCE($6, NOW()))
-		RETURNING id, created_at
-	`, step.AuditID, step.Step, step.Status, step.Command, step.Output, created).Scan(&step.ID, &step.CreatedAt)
-	if err != nil {
-		return UpgradeStep{}, err
-	}
-	return step, nil
+	_, _ = ctx, step
+	return UpgradeStep{}, runtimeRemovedDomainError("upgrade_steps")
 }
 
 func (s *PostgresStore) FinishUpgradeAudit(ctx context.Context, id int64, status, image, errorText string, finishedAt time.Time) (UpgradeAudit, error) {
-	var item UpgradeAudit
-	var finished sql.NullTime
-	err := s.db.QueryRowContext(ctx, `
-		UPDATE upgrade_audits
-		SET status = $2,
-		    image = $3,
-		    error_text = $4,
-		    finished_at = $5,
-		    duration_ms = GREATEST(0, EXTRACT(EPOCH FROM ($5 - started_at)) * 1000)::BIGINT
-		WHERE id = $1
-		RETURNING id, user_id, repo_url, branch, requested_by, status, image, error_text, started_at, finished_at, duration_ms
-	`, id, status, image, errorText, finishedAt).Scan(
-		&item.ID, &item.UserID, &item.RepoURL, &item.Branch, &item.RequestedBy, &item.Status, &item.Image, &item.Error, &item.StartedAt, &finished, &item.DurationMS,
-	)
-	if err != nil {
-		return UpgradeAudit{}, err
-	}
-	if finished.Valid {
-		item.FinishedAt = &finished.Time
-	}
-	return item, nil
+	_, _, _, _, _, _ = ctx, id, status, image, errorText, finishedAt
+	return UpgradeAudit{}, runtimeRemovedDomainError("upgrade_audits")
 }
 
 func (s *PostgresStore) GetUpgradeAudit(ctx context.Context, id int64) (UpgradeAudit, error) {
-	var item UpgradeAudit
-	var finished sql.NullTime
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, repo_url, branch, requested_by, status, image, error_text, started_at, finished_at, duration_ms
-		FROM upgrade_audits
-		WHERE id = $1
-	`, id).Scan(
-		&item.ID, &item.UserID, &item.RepoURL, &item.Branch, &item.RequestedBy, &item.Status, &item.Image, &item.Error, &item.StartedAt, &finished, &item.DurationMS,
-	)
-	if err != nil {
-		return UpgradeAudit{}, err
-	}
-	if finished.Valid {
-		item.FinishedAt = &finished.Time
-	}
-	return item, nil
+	_, _ = ctx, id
+	return UpgradeAudit{}, runtimeRemovedDomainError("upgrade_audits")
 }
 
 func (s *PostgresStore) ListUpgradeAudits(ctx context.Context, userID string, limit int) ([]UpgradeAudit, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 500 {
-		limit = 500
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, repo_url, branch, requested_by, status, image, error_text, started_at, finished_at, duration_ms
-		FROM upgrade_audits
-		WHERE ($1 = '' OR user_id = $1)
-		ORDER BY started_at DESC, id DESC
-		LIMIT $2
-	`, userID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := make([]UpgradeAudit, 0)
-	for rows.Next() {
-		var it UpgradeAudit
-		var finished sql.NullTime
-		if err := rows.Scan(&it.ID, &it.UserID, &it.RepoURL, &it.Branch, &it.RequestedBy, &it.Status, &it.Image, &it.Error, &it.StartedAt, &finished, &it.DurationMS); err != nil {
-			return nil, err
-		}
-		if finished.Valid {
-			it.FinishedAt = &finished.Time
-		}
-		items = append(items, it)
-	}
-	return items, rows.Err()
+	_, _, _ = ctx, userID, limit
+	return []UpgradeAudit{}, runtimeRemovedDomainError("upgrade_audits")
 }
 
 func (s *PostgresStore) ListUpgradeSteps(ctx context.Context, auditID int64, limit int) ([]UpgradeStep, error) {
-	if limit <= 0 {
-		limit = 200
-	}
-	if limit > 2000 {
-		limit = 2000
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, audit_id, step_name, status, command_text, output_text, created_at
-		FROM upgrade_steps
-		WHERE audit_id = $1
-		ORDER BY created_at ASC, id ASC
-		LIMIT $2
-	`, auditID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := make([]UpgradeStep, 0)
-	for rows.Next() {
-		var it UpgradeStep
-		if err := rows.Scan(&it.ID, &it.AuditID, &it.Step, &it.Status, &it.Command, &it.Output, &it.CreatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, it)
-	}
-	return items, rows.Err()
+	_, _, _ = ctx, auditID, limit
+	return []UpgradeStep{}, runtimeRemovedDomainError("upgrade_steps")
 }
 
 func (s *PostgresStore) CreateRegisterTask(ctx context.Context, item RegisterTask) (RegisterTask, error) {
-	var started any
-	if !item.StartedAt.IsZero() {
-		started = item.StartedAt
-	}
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO register_tasks(provider, user_id, user_name, repo_full_name, image, status, error_text, started_at)
-		VALUES($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
-		RETURNING id, started_at
-	`, item.Provider, item.UserID, item.UserName, item.RepoFullName, item.Image, item.Status, item.Error, started).Scan(&item.ID, &item.StartedAt)
-	if err != nil {
-		return RegisterTask{}, err
-	}
-	return item, nil
+	_, _ = ctx, item
+	return RegisterTask{}, runtimeRemovedDomainError("register_tasks")
 }
 
 func (s *PostgresStore) AppendRegisterTaskStep(ctx context.Context, step RegisterTaskStep) (RegisterTaskStep, error) {
-	var created any
-	if !step.CreatedAt.IsZero() {
-		created = step.CreatedAt
-	}
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO register_task_steps(task_id, step_name, status, message_text, created_at)
-		VALUES($1, $2, $3, $4, COALESCE($5, NOW()))
-		RETURNING id, created_at
-	`, step.TaskID, step.Step, step.Status, step.Message, created).Scan(&step.ID, &step.CreatedAt)
-	if err != nil {
-		return RegisterTaskStep{}, err
-	}
-	return step, nil
+	_, _ = ctx, step
+	return RegisterTaskStep{}, runtimeRemovedDomainError("register_task_steps")
 }
 
 func (s *PostgresStore) FinishRegisterTask(ctx context.Context, id int64, status, userID, userName, repoFullName, image, errorText string, finishedAt time.Time) (RegisterTask, error) {
-	var item RegisterTask
-	var finished sql.NullTime
-	err := s.db.QueryRowContext(ctx, `
-		UPDATE register_tasks
-		SET status = CASE WHEN $2 <> '' THEN $2 ELSE status END,
-		    user_id = CASE WHEN $3 <> '' THEN $3 ELSE user_id END,
-		    user_name = CASE WHEN $4 <> '' THEN $4 ELSE user_name END,
-		    repo_full_name = CASE WHEN $5 <> '' THEN $5 ELSE repo_full_name END,
-		    image = CASE WHEN $6 <> '' THEN $6 ELSE image END,
-		    error_text = $7,
-		    finished_at = $8,
-		    duration_ms = GREATEST(0, EXTRACT(EPOCH FROM ($8 - started_at)) * 1000)::BIGINT
-		WHERE id = $1
-		RETURNING id, provider, user_id, user_name, repo_full_name, image, status, error_text, started_at, finished_at, duration_ms
-	`, id, status, userID, userName, repoFullName, image, errorText, finishedAt).Scan(
-		&item.ID, &item.Provider, &item.UserID, &item.UserName, &item.RepoFullName, &item.Image, &item.Status, &item.Error, &item.StartedAt, &finished, &item.DurationMS,
-	)
-	if err != nil {
-		return RegisterTask{}, err
-	}
-	if finished.Valid {
-		item.FinishedAt = &finished.Time
-	}
-	return item, nil
+	_, _, _, _, _, _, _, _, _ = ctx, id, status, userID, userName, repoFullName, image, errorText, finishedAt
+	return RegisterTask{}, runtimeRemovedDomainError("register_tasks")
 }
 
 func (s *PostgresStore) GetRegisterTask(ctx context.Context, id int64) (RegisterTask, error) {
-	var item RegisterTask
-	var finished sql.NullTime
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, provider, user_id, user_name, repo_full_name, image, status, error_text, started_at, finished_at, duration_ms
-		FROM register_tasks
-		WHERE id = $1
-	`, id).Scan(
-		&item.ID, &item.Provider, &item.UserID, &item.UserName, &item.RepoFullName, &item.Image, &item.Status, &item.Error, &item.StartedAt, &finished, &item.DurationMS,
-	)
-	if err != nil {
-		return RegisterTask{}, err
-	}
-	if finished.Valid {
-		item.FinishedAt = &finished.Time
-	}
-	return item, nil
+	_, _ = ctx, id
+	return RegisterTask{}, runtimeRemovedDomainError("register_tasks")
 }
 
 func (s *PostgresStore) ListRegisterTasks(ctx context.Context, limit int) ([]RegisterTask, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 500 {
-		limit = 500
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, provider, user_id, user_name, repo_full_name, image, status, error_text, started_at, finished_at, duration_ms
-		FROM register_tasks
-		ORDER BY started_at DESC, id DESC
-		LIMIT $1
-	`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := make([]RegisterTask, 0)
-	for rows.Next() {
-		var it RegisterTask
-		var finished sql.NullTime
-		if err := rows.Scan(&it.ID, &it.Provider, &it.UserID, &it.UserName, &it.RepoFullName, &it.Image, &it.Status, &it.Error, &it.StartedAt, &finished, &it.DurationMS); err != nil {
-			return nil, err
-		}
-		if finished.Valid {
-			it.FinishedAt = &finished.Time
-		}
-		items = append(items, it)
-	}
-	return items, rows.Err()
+	_, _ = ctx, limit
+	return []RegisterTask{}, runtimeRemovedDomainError("register_tasks")
 }
 
 func (s *PostgresStore) ListRegisterTaskSteps(ctx context.Context, taskID int64, limit int) ([]RegisterTaskStep, error) {
-	if limit <= 0 {
-		limit = 200
-	}
-	if limit > 2000 {
-		limit = 2000
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, task_id, step_name, status, message_text, created_at
-		FROM register_task_steps
-		WHERE task_id = $1
-		ORDER BY created_at ASC, id ASC
-		LIMIT $2
-	`, taskID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := make([]RegisterTaskStep, 0)
-	for rows.Next() {
-		var it RegisterTaskStep
-		if err := rows.Scan(&it.ID, &it.TaskID, &it.Step, &it.Status, &it.Message, &it.CreatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, it)
-	}
-	return items, rows.Err()
+	_, _, _ = ctx, taskID, limit
+	return []RegisterTaskStep{}, runtimeRemovedDomainError("register_task_steps")
 }
 
 func (s *PostgresStore) AppendChatMessage(ctx context.Context, msg ChatMessage) (ChatMessage, error) {
-	var sent any
-	if !msg.SentAt.IsZero() {
-		sent = msg.SentAt
-	}
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO chat_messages(user_id, from_user, to_user, body, sent_at)
-		VALUES($1, $2, $3, $4, COALESCE($5, NOW()))
-		RETURNING id, sent_at
-	`, msg.UserID, msg.From, msg.To, msg.Body, sent).Scan(&msg.ID, &msg.SentAt)
-	if err != nil {
-		return ChatMessage{}, err
-	}
-	return msg, nil
+	_, _ = ctx, msg
+	return ChatMessage{}, runtimeRemovedDomainError("chat_messages")
 }
 
 func (s *PostgresStore) ListChatMessages(ctx context.Context, userID string, limit int) ([]ChatMessage, error) {
-	if limit <= 0 {
-		limit = 300
-	}
-	if limit > 2000 {
-		limit = 2000
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, from_user, to_user, body, sent_at
-		FROM chat_messages
-		WHERE user_id = $1
-		ORDER BY sent_at DESC, id DESC
-		LIMIT $2
-	`, userID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	recentDesc := make([]ChatMessage, 0, limit)
-	for rows.Next() {
-		var it ChatMessage
-		if err := rows.Scan(&it.ID, &it.UserID, &it.From, &it.To, &it.Body, &it.SentAt); err != nil {
-			return nil, err
-		}
-		recentDesc = append(recentDesc, it)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	out := make([]ChatMessage, len(recentDesc))
-	for i := range recentDesc {
-		out[len(recentDesc)-1-i] = recentDesc[i]
-	}
-	return out, nil
+	_, _, _ = ctx, userID, limit
+	return []ChatMessage{}, runtimeRemovedDomainError("chat_messages")
 }
 
 func (s *PostgresStore) ListPromptTemplates(ctx context.Context) ([]PromptTemplate, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT key, content, updated_at
-		FROM prompt_templates
-		ORDER BY key ASC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := make([]PromptTemplate, 0)
-	for rows.Next() {
-		var it PromptTemplate
-		if err := rows.Scan(&it.Key, &it.Content, &it.UpdatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, it)
-	}
-	return items, rows.Err()
+	_ = ctx
+	return []PromptTemplate{}, runtimeRemovedDomainError("prompt_templates")
 }
 
 func (s *PostgresStore) UpsertPromptTemplate(ctx context.Context, item PromptTemplate) (PromptTemplate, error) {
-	item.Key = strings.TrimSpace(item.Key)
-	if item.Key == "" {
-		return PromptTemplate{}, fmt.Errorf("template key is required")
-	}
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO prompt_templates(key, content, updated_at)
-		VALUES($1, $2, NOW())
-		ON CONFLICT (key) DO UPDATE SET
-			content = EXCLUDED.content,
-			updated_at = NOW()
-		RETURNING key, content, updated_at
-	`, item.Key, item.Content).Scan(&item.Key, &item.Content, &item.UpdatedAt)
-	if err != nil {
-		return PromptTemplate{}, err
-	}
-	return item, nil
+	_, _ = ctx, item
+	return PromptTemplate{}, runtimeRemovedDomainError("prompt_templates")
 }
 
 func (s *PostgresStore) CreateCollabSession(ctx context.Context, item CollabSession) (CollabSession, error) {

@@ -178,18 +178,15 @@
         <a href="/dashboard">首页</a>
         <a href="/dashboard/ops">Ops</a>
         <a href="/dashboard/mail">Mail</a>
-        <a href="/dashboard/chat">Chat</a>
         <a href="/dashboard/collab">Collab</a>
         <a class="active" href="/dashboard/kb">Knowledge Base</a>
         <a href="/dashboard/governance">Governance</a>
         <a href="/dashboard/ganglia">Ganglia</a>
         <a href="/dashboard/bounty">Bounty</a>
-        <a href="/dashboard/bot-logs">User Logs</a>
         <a href="/dashboard/system-logs">System Logs</a>
         <a href="/dashboard/world-tick">World Tick</a>
         <a href="/dashboard/world-replay">World Replay</a>
         <a href="/dashboard/monitor">Monitor</a>
-        <a href="/dashboard/prompts">Prompt Templates</a>
       </div>
       <div class="top-actions">
         <label class="meta"><input id="kbAutoRefresh" type="checkbox" checked /> 自动刷新</label>
@@ -320,6 +317,7 @@
       let selectedEntry = 0;
       let kbRefreshTick = 0;
       let activeBots = [];
+      const DASHBOARD_HIDDEN_USER_IDS = new Set(["clawcolony-admin", "clawcolony-system", "clawcolony-treasury"]);
       function distinctNonEmpty(parts){
         const out = [];
         for (const part of (parts || [])) {
@@ -333,6 +331,17 @@
       function botDisplayLabel(bot){
         if (!bot) return "-";
         return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
+      }
+      function isDashboardHiddenBot(bot){
+        const userID = String((bot && bot.user_id) || "").trim();
+        if (!userID) return true;
+        if (DASHBOARD_HIDDEN_USER_IDS.has(userID)) return true;
+        const provider = String((bot && bot.provider) || "").trim().toLowerCase();
+        const status = String((bot && bot.status) || "").trim().toLowerCase();
+        return provider === "system" || status === "system";
+      }
+      function filterDashboardBots(items){
+        return (items || []).filter(it => it && it.user_id && !isDashboardHiddenBot(it));
       }
       function userLabel(userID){
         const id = String(userID || "").trim();
@@ -550,7 +559,7 @@
 
       async function loadUsers(){
         const data = await j("/v1/bots?include_inactive=0");
-        activeBots = (data.items || []).filter(x => x && x.user_id);
+        activeBots = filterDashboardBots(data.items || []);
         const activeUsers = activeBots.map(x => x.user_id).filter(Boolean);
         const uidPrev = $("uid").value;
         const cUidPrev = $("c_uid").value;

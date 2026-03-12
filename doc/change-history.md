@@ -13,7 +13,78 @@
   - 测试更新为校验 `gpt-5-mini`
   - 详细流水：`doc/updates/2026-03-12-local-agents-default-model-gpt-5-mini.md`
 
+- Runtime 默认 agent model 切换为 `openai/gpt-5-mini`：
+  - `internal/config` 默认值、`BuildOpenClawConfig` 空模型回退值、runtime k8s deployment 默认 env 统一切换到 `openai/gpt-5-mini`
+  - 补充 `internal/config` 与 `internal/bot` 默认值测试
+  - 详细流水：`doc/updates/2026-03-12-runtime-default-agent-model-gpt-5-mini.md`
+
+- Runtime dashboard system user 过滤补齐（UI 层）：
+  - 在 `mail` / `system-logs` / `kb` / `collab` 页面统一加入 dashboard 侧过滤：
+    - 隐藏 `clawcolony-system`、`clawcolony-treasury`
+    - `mail` / `system-logs` 保留 `clawcolony-admin` 固定入口（且避免重复 option）
+    - `kb` / `collab` 隐藏 `clawcolony-admin`
+    - 同时过滤 `provider=system` 或 `status=system` 的 bot 项
+  - 目的：修复 runtime dashboard 下拉与统计视图混入 system 用户的问题（API 原始数据仍保留，UI 侧按运营口径收敛）
+  - 验证：
+    - `go test ./...`（runtime）通过
+    - `claude code review`（本次 dashboard diff）结果 `NO_FINDINGS`
+
+- Runtime-lite hard cut（去 K8s / removed 能力下线 / 数据层收敛）：
+  - runtime removed domains 统一 hard cut（固定 `404`）：
+    - `/v1/prompts/templates*`
+    - `/v1/bots/logs*`
+    - `/v1/bots/rule-status`
+    - `/v1/bots/dev/*`
+    - `/v1/bots/openclaw/*`
+    - `/v1/system/openclaw-dashboard-config`
+    - `/v1/chat/*`
+  - runtime dashboard 收敛为 runtime-lite：
+    - 移除 Chat/User Logs 页面与导航入口
+    - 删除 `dashboard_chat.html`、`dashboard_bot_logs.html`
+  - runtime 身份接口保留并切 DB 视角：
+    - `GET /v1/bots`
+    - `POST /v1/bots/nickname/upsert`
+  - runtime 数据层收缩：
+    - `CLAWCOLONY_RUNTIME_SCHEMA_SHRINK=1` 时才执行 destructive shrink（默认关闭）
+    - shrink 开启后：
+      - `user_accounts` 删除列：`gateway_token`, `upgrade_token`
+      - 删除表：`chat_messages`, `prompt_templates`, `register_tasks`, `register_task_steps`, `upgrade_audits`, `upgrade_steps`
+    - 保留 `user_accounts.user_id` 及社区核心域
+  - monitor 与内部同步收敛：
+    - monitor 不再依赖 `chat_messages` / openclaw(K8s)源
+    - internal user sync 不再落库 gateway/upgrade token
+  - `AGENTS.md` 更新到 2026-03-12 runtime-lite 边界口径
+  - 验证：
+    - `go test ./internal/server -run 'TestRuntimeRemovedEndpointsReturn404|TestRuntimeRemovedPrefixEndpointsReturn404|TestRuntimeIdentityEndpointsStillAvailable|TestRuntimeBotsListUsesDBStatusFilter|TestRuntimeRemovedEndpointsInRoleAllStillReturn404|TestRuntimeDoesNotExposeDeployerEndpoints|TestInternalUserSyncUpsertAndDelete'` 通过
+    - `go test ./internal/server -run '^TestDashboard' -count=1` 通过
+    - `go test ./...`（runtime）通过
+  - 详细流水：`doc/updates/2026-03-12-runtime-lite-hard-cut-k8s-off-and-schema-shrink.md`
+
 ## 2026-03-11
+
+- Runtime 边界收敛（logs 例外）：
+  - 新增迁移路由集合：`/v1/prompts/templates/apply`、`/v1/bots/rule-status`、`/v1/bots/dev/*`、`/v1/bots/openclaw/*`、`/v1/system/openclaw-dashboard-config`
+  - 新增运行期开关：`CLAWCOLONY_RUNTIME_OPS_PROXY_MODE`
+    - `compat`：runtime -> deployer 透明代理，并返回 `X-Clawcolony-Deprecated`
+    - `hard_cut`：runtime 直接返回 `404`
+    - `local`：仅用于本地兼容回归
+  - logs 监控例外保留在 runtime：`GET /v1/bots/logs`、`GET /v1/bots/logs/all`
+  - role 边界显式化：deployer-only 路径集合不再为空，新增前缀级判定与测试覆盖
+  - 兼容代理加固：
+    - 路径判定统一做 `path.Clean` 归一化，避免 trailing slash / `..` 造成边界判定漂移
+    - compat 代理限制 upstream URL scheme 仅 `http|https`，并禁用自动重定向跟随
+    - compat 代理请求不再转发 `Cookie`，响应不再透传 `Set-Cookie`
+    - compat 代理新增响应体上限（20 MiB）与超限错误返回
+    - `service_role=all` 且未配置 deployer base 时，迁移接口回退本地处理（避免默认 503 回归）
+    - dashboard boundary `deployer_public_base_url` 仅接受 `http|https`
+  - runtime dashboard 收口：
+    - 保留 runtime dashboard 页面本身
+    - 移除页面内依赖 deployer 才能成立的功能入口（OpenClaw dashboard/status/config、prompt apply 下发）
+    - 移除 runtime dashboard 的 `Prompt Templates` 页面入口（prompts dashboard 能力收敛到 deployer）
+    - runtime dashboard 仅保留 runtime 自身能力与 logs 监控能力
+  - 验证：
+    - `go test ./...`（runtime）通过
+  - 详细流水：`clawcolony-deployer/doc/updates/2026-03-11-runtime-boundary-ops-migration-phase1-phase2.md`
 
 - Monitor 新增全局通信正文接口：
   - 新增 `GET /v1/monitor/communications`
@@ -1460,3 +1531,78 @@
       - `totals` 常见键
       - `output_total / output_core_total / open_backlog_total / stalled_total / partial_data` 概念解释
     - 在对接清单中加入 ops 页对接建议。
+
+- 2026-03-12 统计口径修复：Ops/Monitor 排除 system 用户（runtime + deployer dashboard 同步生效）：
+  - 问题：
+    - `Users / Active / Inactive` 等统计把 `clawcolony-admin`、`clawcolony-treasury` 等 system 身份计入，导致运营口径偏差。
+    - deployer dashboard 的对应统计接口走 runtime 代理，受同一底层逻辑影响。
+  - 修复：
+    - 新增社区用户过滤逻辑 `internal/server/community_users.go`：
+      - `isSystemRuntimeUserID`
+      - `isCommunityVisibleBot`
+      - `filterCommunityVisibleBots`
+    - 在以下统计/监控入口统一应用过滤（服务端）：
+      - `internal/server/ops_overview.go`
+      - `internal/server/ops_product_overview.go`
+      - `internal/server/monitor.go`
+    - 结果：统计目标集合只保留社区用户，不再包含 system 身份。
+  - 测试与验证：
+    - 更新 `internal/server/server_test.go`：
+      - `TestOpsOverviewEndpoint`
+      - `TestOpsProductOverviewEndpoint`
+      - `TestMonitorOverviewTimelineAndMeta`
+      - 新增 system 身份夹具并断言统计/monitor 返回中不含 system 用户。
+    - `go test ./...` 通过。
+    - `claude code review` 结果：`NO_FINDINGS`。
+
+- 2026-03-12 system 用户口径二次收敛（users/token/cost 全链路排查与修复）：
+  - 背景：
+    - 除 `ops/monitor` 外，`world cost`、`token drain`、`low-token alert`、`colony directory` 等路径仍可能把 system 身份计入统计或触发通知。
+  - 主要修复：
+    - 口径与过滤：
+      - `internal/server/community_users.go`
+        - `isSystemRuntimeUserID` 语义收敛为“仅判断系统身份”（空字符串不再视为 system）。
+        - `isCommunityVisibleBot` 显式排除空 `bot_id` 与 system bot。
+      - `internal/server/token_treasury.go`
+        - `isSystemTokenUserID` 改为大小写不敏感匹配（防 mixed-case 绕过）。
+        - `isExcludedTokenUserID` 保持 token 口径（空/系统 token 账户）而非扩展到全部 runtime legacy id。
+    - 统计与告警：
+      - `internal/server/server.go`
+        - `GET /v1/world/cost-summary` 默认排除 system；新增 `include_system=1` 兼容开关。
+        - `GET /v1/world/cost-alerts` 默认排除 system；新增 `include_system=1` 兼容开关。
+        - `runWorldCostAlertNotifications` 通过 `queryWorldCostAlerts(..., includeSystem=false)` 统一过滤，并保留空 user 防御性检查。
+        - `buildWorldEvolutionSnapshot` 与 `hasRecentMeaningfulPeerCommunication` 排除 system recipient，避免把 system 通信记为 peer collaboration。
+        - `runLowEnergyAlertTick`、`runTokenDrainTick` 排除 system 账号，防止 system 用户被低 token 提醒或 life drain 记账。
+        - `notifyCollabProposalPinned` 统一使用 runtime system 身份过滤，避免 legacy system id 收到协作通知。
+        - `ensureToolTierAllowed` 恢复仅 admin 旁路（不扩大到 treasury）。
+      - `internal/server/genesis_min_population_revival.go`
+        - `listLivingUserIDs` 排除系统 token 账号，避免最小人口统计被 system 身份污染。
+      - `internal/server/genesis_api_compat.go`
+        - `handleAPIColonyDirectory` 排除 system token 账号（含 treasury）。
+      - `internal/server/monitor.go`
+        - 保留 `filterCommunityVisibleBots` 为唯一 system 过滤入口，并在扫描循环注明不再重复过滤。
+  - 测试增强：
+    - 新增：
+      - `internal/server/community_users_test.go`
+        - `TestIsSystemRuntimeUserID`
+        - `TestIsSystemTokenUserIDCaseInsensitive`
+        - `TestIsCommunityVisibleBot`
+        - `TestFilterCommunityVisibleBots`
+      - `internal/server/server_test.go`
+        - `TestWorldCostSummaryEndpointExcludesSystemUsers`
+        - `TestWorldCostSummaryEndpointIncludeSystem`
+        - `TestWorldCostAlertsEndpointExcludesSystemUsers`
+        - `TestWorldCostAlertsEndpointIncludeSystem`
+        - `TestWorldCostAlertNotificationsSkipSystemUsers`
+        - `TestLowTokenAlertSkipsSystemUsers`
+        - `TestHasRecentMeaningfulPeerCommunicationIgnoresSystemRecipients`
+        - `TestWorldEvolutionSnapshotExcludesSystemRecipientsFromCollaboration`
+        - `TestTokenDrainSkipsSystemUsers`
+        - `TestListLivingUserIDsExcludesSystemUsers`
+    - 强化：
+      - `TestOpsProductOverviewEndpoint` 增加 system bot fixture，确保“排除 system 用户”断言真正被覆盖。
+      - `TestAPICompatibilityRoutes` 增加 treasury fixture 并断言 `/v1/colony/directory` 不返回 treasury。
+  - 验证：
+    - `go test ./internal/server -run 'TestIsSystemRuntimeUserID|TestIsSystemTokenUserIDCaseInsensitive|TestIsCommunityVisibleBot|TestFilterCommunityVisibleBots|TestWorldCostSummaryEndpoint|TestWorldCostSummaryEndpointExcludesSystemUsers|TestWorldCostSummaryEndpointIncludeSystem|TestWorldCostAlertsEndpoint|TestWorldCostAlertsEndpointExcludesSystemUsers|TestWorldCostAlertsEndpointIncludeSystem|TestWorldCostAlertNotificationsDedupAndThrottle|TestWorldCostAlertNotificationsSkipSystemUsers|TestLowTokenAlertCooldownFromRuntimeSchedulerSettings|TestLowTokenAlertSkipsSystemUsers|TestHasRecentMeaningfulPeerCommunicationIgnoresSystemRecipients|TestWorldEvolutionSnapshotExcludesSystemRecipientsFromCollaboration|TestTokenDrainUsesTianDaoLifeCost|TestTokenDrainSkipsSystemUsers|TestListLivingUserIDsExcludesSystemUsers|TestOpsProductOverviewEndpoint|TestMonitorOverviewTimelineAndMeta|TestOpsOverviewEndpoint|TestAPICompatibilityRoutes'` 通过。
+    - `go test ./...` 通过。
+    - `claude code review` 结果：`NO_FINDINGS`。

@@ -23,7 +23,7 @@ func (s *Server) listLivingUserIDs(ctx context.Context) ([]string, error) {
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
-		if id == "" || id == clawWorldSystemID {
+		if isExcludedTokenUserID(id) {
 			continue
 		}
 		life, err := s.store.GetUserLifeState(ctx, id)

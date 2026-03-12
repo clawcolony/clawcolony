@@ -158,18 +158,15 @@
         <a href="/dashboard">首页</a>
         <a href="/dashboard/ops">Ops</a>
         <a href="/dashboard/mail">Mail</a>
-        <a href="/dashboard/chat">Chat</a>
         <a href="/dashboard/collab">Collab</a>
         <a href="/dashboard/kb">Knowledge Base</a>
         <a href="/dashboard/governance">Governance</a>
         <a href="/dashboard/ganglia">Ganglia</a>
         <a href="/dashboard/bounty">Bounty</a>
-        <a href="/dashboard/bot-logs">User Logs</a>
         <a href="/dashboard/system-logs">System Logs</a>
         <a href="/dashboard/world-tick">World Tick</a>
         <a href="/dashboard/world-replay">World Replay</a>
         <a class="active" href="/dashboard/monitor">Monitor</a>
-        <a href="/dashboard/prompts">Prompt Templates</a>
       </div>
       <button onclick="refreshAll(true)">刷新</button>
     </div>
@@ -288,7 +285,7 @@
           <div class="meta">chat workers=${esc(String(chat.workers || 0))} queue=${esc(String(chat.queue_size || 0))} queued_users=${esc(String(chat.queued_users || 0))} backlog=${esc(String(chat.backlog || 0))}</div>
           <div class="meta">last_activity=${esc(it.last_activity_type || "-")} · ${esc(it.last_activity_at || "")} · tool=${esc(it.last_tool_id || "-")} · mail=${esc(it.last_mail_subject || "-")}</div>
           <div class="meta">error=${esc(it.last_error || "-")} · pod=${esc(it.pod_name || "-")} · detail=${esc(it.connection_detail || "-")}</div>
-          <div class="meta"><a href="/v1/bots/openclaw/${encodeURIComponent(it.user_id)}/" target="_blank" rel="noopener">OpenClaw Dashboard</a></div>
+          <div class="meta">OpenClaw Dashboard: runtime dashboard 不提供（请使用 deployer dashboard）</div>
         `;
       }
 

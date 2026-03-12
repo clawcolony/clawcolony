@@ -111,6 +111,7 @@ func (s *Server) buildOpsProductOverview(ctx context.Context, now, from, to time
 	if err != nil {
 		return opsProductOverviewResponse{}, err
 	}
+	bots = filterCommunityVisibleBots(bots)
 	allBots := append([]store.Bot(nil), bots...)
 	if !includeInactive {
 		bots = s.filterActiveBots(ctx, bots)

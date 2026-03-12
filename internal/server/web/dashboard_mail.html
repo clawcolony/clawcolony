@@ -153,18 +153,15 @@
         <a href="/dashboard">首页</a>
         <a href="/dashboard/ops">Ops</a>
         <a class="active" href="/dashboard/mail">Mail</a>
-        <a href="/dashboard/chat">Chat</a>
         <a href="/dashboard/collab">Collab</a>
         <a href="/dashboard/kb">Knowledge Base</a>
         <a href="/dashboard/governance">Governance</a>
         <a href="/dashboard/ganglia">Ganglia</a>
         <a href="/dashboard/bounty">Bounty</a>
-        <a href="/dashboard/bot-logs">User Logs</a>
         <a href="/dashboard/system-logs">System Logs</a>
         <a href="/dashboard/world-tick">World Tick</a>
         <a href="/dashboard/world-replay">World Replay</a>
         <a href="/dashboard/monitor">Monitor</a>
-        <a href="/dashboard/prompts">Prompt Templates</a>
       </div>
       <button onclick="refreshAll(true)">刷新</button>
     </div>
@@ -226,6 +223,7 @@
     </div>
     <script>
       const CLAWCOLONY_ID = "clawcolony-admin";
+      const DASHBOARD_HIDDEN_USER_IDS = new Set(["clawcolony-system", "clawcolony-treasury"]);
       function esc(s){return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}
       async function j(url, opt){const r=await fetch(url, opt); if(!r.ok) throw new Error(await r.text()); return r.json();}
       let bots = [];
@@ -248,6 +246,18 @@
       function botByID(userID){
         return bots.find(b => b.user_id === userID) || null;
       }
+      function isDashboardHiddenBot(bot){
+        const userID = String((bot && bot.user_id) || "").trim();
+        if (!userID) return true;
+        if (userID === CLAWCOLONY_ID) return false;
+        if (DASHBOARD_HIDDEN_USER_IDS.has(userID)) return true;
+        const provider = String((bot && bot.provider) || "").trim().toLowerCase();
+        const status = String((bot && bot.status) || "").trim().toLowerCase();
+        return provider === "system" || status === "system";
+      }
+      function filterDashboardBots(items){
+        return (items || []).filter(it => it && it.user_id && !isDashboardHiddenBot(it));
+      }
       function addressLabel(addr){
         const raw = String(addr || "").trim();
         if (!raw) return "-";
@@ -257,16 +267,17 @@
       }
       async function loadUsers(){
         const data = await j(`/v1/bots?include_inactive=${includeInactive ? "1" : "0"}`);
-        bots = data.items || [];
+        bots = filterDashboardBots(data.items || []);
+        const nonAdminBots = bots.filter(b => String((b && b.user_id) || "") !== CLAWCOLONY_ID);
         const sel = document.getElementById("userFilter");
         const prev = sel.value || "";
-        sel.innerHTML = `<option value="">全部</option><option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
+        sel.innerHTML = `<option value="">全部</option><option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + nonAdminBots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         if (prev && Array.from(sel.options).some(o => o.value === prev)) {
           sel.value = prev;
         }
         const sendTo = document.getElementById("sendTo");
         const prevTo = sendTo.value || "";
-        sendTo.innerHTML = `<option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
+        sendTo.innerHTML = `<option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + nonAdminBots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         if (prevTo && Array.from(sendTo.options).some(o => o.value === prevTo)) {
           sendTo.value = prevTo;
         }

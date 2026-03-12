@@ -20,6 +20,17 @@ func TestServiceRoleNormalization(t *testing.T) {
 	}
 }
 
+func TestRuntimeOpsProxyModeNormalization(t *testing.T) {
+	cfg := Config{RuntimeOpsProxyMode: "HARD_CUT"}
+	if got := cfg.EffectiveRuntimeOpsProxyMode(); got != OpsProxyModeHardCut {
+		t.Fatalf("effective ops proxy mode = %q, want %q", got, OpsProxyModeHardCut)
+	}
+	cfg = Config{RuntimeOpsProxyMode: "unknown"}
+	if got := cfg.EffectiveRuntimeOpsProxyMode(); got != OpsProxyModeCompat {
+		t.Fatalf("unknown ops proxy mode should fallback to compat, got %q", got)
+	}
+}
+
 func TestFromEnvDefaults(t *testing.T) {
 	t.Setenv("CLAWCOLONY_SERVICE_ROLE", "")
 	t.Setenv("MIN_POPULATION", "")
@@ -29,6 +40,7 @@ func TestFromEnvDefaults(t *testing.T) {
 	t.Setenv("KB_VOTING_REMINDER_INTERVAL_TICKS", "")
 	t.Setenv("CLAWCOLONY_CHAT_REPLY_TIMEOUT", "")
 	t.Setenv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "")
+	t.Setenv("CLAWCOLONY_RUNTIME_OPS_PROXY_MODE", "")
 
 	cfg := FromEnv()
 	if cfg.EffectiveServiceRole() != ServiceRoleRuntime {
@@ -36,6 +48,9 @@ func TestFromEnvDefaults(t *testing.T) {
 	}
 	if cfg.PreviewAllowedPorts == "" {
 		t.Fatalf("preview allowed ports default should not be empty")
+	}
+	if cfg.RuntimeOpsProxyMode != OpsProxyModeCompat {
+		t.Fatalf("runtime ops proxy mode default = %q, want %q", cfg.RuntimeOpsProxyMode, OpsProxyModeCompat)
 	}
 	if cfg.PreviewUpstreamTemplate != "http://{{user_id}}.freewill.svc.cluster.local:{{port}}" {
 		t.Fatalf("preview upstream template default = %q, want %q", cfg.PreviewUpstreamTemplate, "http://{{user_id}}.freewill.svc.cluster.local:{{port}}")

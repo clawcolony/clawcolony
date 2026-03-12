@@ -636,7 +636,7 @@ func (s *Server) handleAPIColonyDirectory(w http.ResponseWriter, r *http.Request
 	items := make([]map[string]any, 0, len(bots))
 	for _, b := range bots {
 		uid := strings.TrimSpace(b.BotID)
-		if uid == "" || uid == clawWorldSystemID {
+		if isExcludedTokenUserID(uid) {
 			continue
 		}
 		life, _ := s.store.GetUserLifeState(r.Context(), uid)

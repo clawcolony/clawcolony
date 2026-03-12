@@ -12,18 +12,15 @@ func TestDashboardTopTabsConsistent(t *testing.T) {
 		"/dashboard",
 		"/dashboard/ops",
 		"/dashboard/mail",
-		"/dashboard/chat",
 		"/dashboard/collab",
 		"/dashboard/kb",
 		"/dashboard/governance",
 		"/dashboard/ganglia",
 		"/dashboard/bounty",
-		"/dashboard/bot-logs",
 		"/dashboard/system-logs",
 		"/dashboard/world-tick",
 		"/dashboard/world-replay",
 		"/dashboard/monitor",
-		"/dashboard/prompts",
 	}
 
 	pages := []struct {
@@ -33,18 +30,15 @@ func TestDashboardTopTabsConsistent(t *testing.T) {
 		{file: "web/dashboard_home.html", activeHref: "/dashboard"},
 		{file: "web/dashboard_ops.html", activeHref: "/dashboard/ops"},
 		{file: "web/dashboard_mail.html", activeHref: "/dashboard/mail"},
-		{file: "web/dashboard_chat.html", activeHref: "/dashboard/chat"},
 		{file: "web/dashboard_collab.html", activeHref: "/dashboard/collab"},
 		{file: "web/dashboard_kb.html", activeHref: "/dashboard/kb"},
 		{file: "web/dashboard_governance.html", activeHref: "/dashboard/governance"},
 		{file: "web/dashboard_ganglia.html", activeHref: "/dashboard/ganglia"},
 		{file: "web/dashboard_bounty.html", activeHref: "/dashboard/bounty"},
-		{file: "web/dashboard_bot_logs.html", activeHref: "/dashboard/bot-logs"},
 		{file: "web/dashboard_system_logs.html", activeHref: "/dashboard/system-logs"},
 		{file: "web/dashboard_world_tick.html", activeHref: "/dashboard/world-tick"},
 		{file: "web/dashboard_world_replay.html", activeHref: "/dashboard/world-replay"},
 		{file: "web/dashboard_monitor.html", activeHref: "/dashboard/monitor"},
-		{file: "web/dashboard_prompts.html", activeHref: "/dashboard/prompts"},
 	}
 
 	tabsBlockRe := regexp.MustCompile(`(?s)<div class="tabs">(.*?)</div>`)
@@ -115,11 +109,6 @@ func TestDashboardNoStaleUserListRefreshGuard(t *testing.T) {
 			requiredPattern:  "if (forceUsers || (usersRefreshTick % 3 === 0)) {",
 		},
 		{
-			file:             "web/dashboard_bot_logs.html",
-			forbiddenPattern: "if (!bots.length) await loadBots();",
-			requiredPattern:  "if (forceBots || (botRefreshTick % 4 === 0) || !selected) {",
-		},
-		{
 			file:             "web/dashboard_collab.html",
 			forbiddenPattern: "setInterval(()=>{ if (document.getElementById('collabId').value.trim()) loadDetail().catch(()=>{}); }, 3000);",
 			requiredPattern:  "if (autoRefreshTick % 3 === 0) {",
@@ -149,15 +138,6 @@ func TestDashboardPromptsKBPodsInteractionConsistency(t *testing.T) {
 		requiredTokens  []string
 		forbiddenTokens []string
 	}{
-		{
-			file: "web/dashboard_prompts.html",
-			requiredTokens: []string{
-				`id="promptsAutoRefresh"`,
-				`if (auto && !auto.checked) return;`,
-				`if (autoRefreshTick % 2 === 0) {`,
-				`loadUsers().catch(()=>{});`,
-			},
-		},
 		{
 			file: "web/dashboard_kb.html",
 			requiredTokens: []string{
