@@ -739,24 +739,10 @@ func (s *Server) runNPCTick(ctx context.Context, tickID int64) error {
 			resultPayload["open_wishes"] = open
 			resultPayload["action"] = "scan_only"
 		case "publisher":
-			audits, aerr := s.store.ListUpgradeAudits(ctx, "", 100)
-			if aerr != nil {
-				errText = aerr.Error()
-				break
-			}
-			running := 0
-			failed := 0
-			for _, it := range audits {
-				switch strings.ToLower(strings.TrimSpace(it.Status)) {
-				case "running":
-					running++
-				case "failed":
-					failed++
-				}
-			}
-			resultPayload["audits"] = len(audits)
-			resultPayload["running"] = running
-			resultPayload["failed"] = failed
+			resultPayload["audits"] = 0
+			resultPayload["running"] = 0
+			resultPayload["failed"] = 0
+			resultPayload["note"] = "upgrade domain moved to deployer"
 		case "archivist":
 			profiles, perr := s.getLobsterProfileState(ctx)
 			if perr != nil {

@@ -85,17 +85,6 @@ func (s *Server) handleInternalUserSync(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if strings.TrimSpace(req.User.GatewayToken) != "" || strings.TrimSpace(req.User.UpgradeToken) != "" {
-			_, err = s.store.UpsertBotCredentials(r.Context(), store.BotCredentials{
-				UserID:       userID,
-				GatewayToken: strings.TrimSpace(req.User.GatewayToken),
-				UpgradeToken: strings.TrimSpace(req.User.UpgradeToken),
-			})
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "ok",
 			"op":     op,

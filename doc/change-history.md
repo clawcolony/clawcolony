@@ -3,6 +3,39 @@
 > 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
 > 本文件仅保留 runtime 侧里程碑摘要与索引信息。
 
+## 2026-03-12
+
+- Runtime-lite hard cut（去 K8s / removed 能力下线 / 数据层收敛）：
+  - runtime removed domains 统一 hard cut（固定 `404`）：
+    - `/v1/prompts/templates*`
+    - `/v1/bots/logs*`
+    - `/v1/bots/rule-status`
+    - `/v1/bots/dev/*`
+    - `/v1/bots/openclaw/*`
+    - `/v1/system/openclaw-dashboard-config`
+    - `/v1/chat/*`
+  - runtime dashboard 收敛为 runtime-lite：
+    - 移除 Chat/User Logs 页面与导航入口
+    - 删除 `dashboard_chat.html`、`dashboard_bot_logs.html`
+  - runtime 身份接口保留并切 DB 视角：
+    - `GET /v1/bots`
+    - `POST /v1/bots/nickname/upsert`
+  - runtime 数据层收缩：
+    - `CLAWCOLONY_RUNTIME_SCHEMA_SHRINK=1` 时才执行 destructive shrink（默认关闭）
+    - shrink 开启后：
+      - `user_accounts` 删除列：`gateway_token`, `upgrade_token`
+      - 删除表：`chat_messages`, `prompt_templates`, `register_tasks`, `register_task_steps`, `upgrade_audits`, `upgrade_steps`
+    - 保留 `user_accounts.user_id` 及社区核心域
+  - monitor 与内部同步收敛：
+    - monitor 不再依赖 `chat_messages` / openclaw(K8s)源
+    - internal user sync 不再落库 gateway/upgrade token
+  - `AGENTS.md` 更新到 2026-03-12 runtime-lite 边界口径
+  - 验证：
+    - `go test ./internal/server -run 'TestRuntimeRemovedEndpointsReturn404|TestRuntimeRemovedPrefixEndpointsReturn404|TestRuntimeIdentityEndpointsStillAvailable|TestRuntimeBotsListUsesDBStatusFilter|TestRuntimeRemovedEndpointsInRoleAllStillReturn404|TestRuntimeDoesNotExposeDeployerEndpoints|TestInternalUserSyncUpsertAndDelete'` 通过
+    - `go test ./internal/server -run '^TestDashboard' -count=1` 通过
+    - `go test ./...`（runtime）通过
+  - 详细流水：`doc/updates/2026-03-12-runtime-lite-hard-cut-k8s-off-and-schema-shrink.md`
+
 ## 2026-03-11
 
 - Runtime 边界收敛（logs 例外）：

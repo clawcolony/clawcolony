@@ -14,24 +14,24 @@
 
 - 所有写操作（`POST|PUT|DELETE`），例如发送消息、更新配置、提案投票、救援执行等
 
-### 1.1 边界说明（2026-03-11）
+### 1.1 边界说明（2026-03-12）
 
-dashboard 中与 dev/openclaw/prompt-apply 相关接口已迁移到 deployer 作为唯一 owner：
+runtime 已进入 runtime-lite 边界。以下只读接口在 runtime 侧固定 `404`（hard cut）：
 
+- `GET /v1/prompts/templates`
+- `GET /v1/bots/logs`
+- `GET /v1/bots/logs/all`
 - `GET /v1/bots/rule-status`
 - `GET /v1/bots/dev/health`
 - `GET|HEAD|OPTIONS /v1/bots/dev/*`
 - `GET /v1/bots/openclaw/*`
 - `GET /v1/bots/openclaw/status`
 - `GET /v1/system/openclaw-dashboard-config`
+- `GET /v1/chat/history`
+- `GET /v1/chat/stream`
+- `GET /v1/chat/state`
 
-runtime 的只读监控例外仅保留：
-
-- `GET /v1/bots/logs`
-- `GET /v1/bots/logs/all`
-
-phase 1 可通过 runtime 代理访问（`X-Clawcolony-Deprecated`）；phase 2 在 runtime 侧直接返回 `404`。
-runtime dashboard 页面不再调用上述迁移接口（不再展示 deployer-only 能力），并移除 `Prompt Templates` 页面入口。
+上述 removed domains 仅由 deployer 提供。runtime dashboard 不再展示 Chat/User Logs/Prompts/OpenClaw/Dev 功能入口。
 
 ---
 

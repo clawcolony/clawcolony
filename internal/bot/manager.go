@@ -2,8 +2,6 @@ package bot
 
 import (
 	"context"
-	crand "crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -224,42 +222,18 @@ func (m *Manager) ApplyRuntimeProfile(ctx context.Context, userID, image string)
 }
 
 func (m *Manager) ensureBotCredentials(ctx context.Context, userID string) (store.BotCredentials, error) {
-	creds, err := m.st.GetBotCredentials(ctx, userID)
-	if err != nil {
-		return store.BotCredentials{}, err
+	uid := strings.TrimSpace(userID)
+	if uid == "" {
+		return store.BotCredentials{}, fmt.Errorf("user_id is required")
 	}
-	changed := false
-	if strings.TrimSpace(creds.GatewayToken) == "" {
-		v, gerr := randomTokenHex(32)
-		if gerr != nil {
-			return store.BotCredentials{}, gerr
-		}
-		creds.GatewayToken = v
-		changed = true
+	creds, err := m.st.GetBotCredentials(ctx, uid)
+	if err == nil {
+		return creds, nil
 	}
-	if strings.TrimSpace(creds.UpgradeToken) == "" {
-		v, gerr := randomTokenHex(32)
-		if gerr != nil {
-			return store.BotCredentials{}, gerr
-		}
-		creds.UpgradeToken = v
-		changed = true
+	if _, upsertErr := m.st.UpsertBotCredentials(ctx, store.BotCredentials{UserID: uid}); upsertErr != nil {
+		return store.BotCredentials{}, upsertErr
 	}
-	if changed {
-		return m.st.UpsertBotCredentials(ctx, creds)
-	}
-	return creds, nil
-}
-
-func randomTokenHex(bytesLen int) (string, error) {
-	if bytesLen <= 0 {
-		bytesLen = 32
-	}
-	buf := make([]byte, bytesLen)
-	if _, err := crand.Read(buf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(buf), nil
+	return m.st.GetBotCredentials(ctx, uid)
 }
 
 func (m *Manager) buildRuntimeProfile(ctx context.Context, botItem store.Bot) (RuntimeProfile, error) {
@@ -310,11 +284,19 @@ func (m *Manager) buildRuntimeProfile(ctx context.Context, botItem store.Bot) (R
 func (m *Manager) loadPromptTemplateMap(ctx context.Context) (map[string]string, error) {
 	items, err := m.st.ListPromptTemplates(ctx)
 	if err != nil {
+		// Runtime no longer owns prompt templates. Keep default template behavior.
+		if strings.Contains(strings.ToLower(err.Error()), "prompt_templates domain moved to deployer") {
+			return map[string]string{}, nil
+		}
 		return nil, err
 	}
 	out := make(map[string]string, len(items))
 	for _, it := range items {
-		out[it.Key] = it.Content
+		key := strings.TrimSpace(it.Key)
+		if key == "" {
+			continue
+		}
+		out[key] = it.Content
 	}
 	return out, nil
 }

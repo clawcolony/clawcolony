@@ -13,11 +13,15 @@
 本文范围：runtime dashboard 页面（`/dashboard/*`）实际调用到的 `/v1/*` 接口。
 文档约定：为保证与源码/日志逐字对照，字段名、路径、状态值、后端原始错误文案保持英文；解释文本使用中文。
 
-## 边界变更说明（2026-03-11）
+## 边界变更说明（2026-03-12）
 
-runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 owner：
+runtime 已切换到 runtime-lite 边界。以下接口在 runtime 侧固定 `404`（hard cut）：
 
+- `GET /v1/prompts/templates`
+- `PUT /v1/prompts/templates/upsert`
 - `POST /v1/prompts/templates/apply`
+- `GET /v1/bots/logs`
+- `GET /v1/bots/logs/all`
 - `GET /v1/bots/rule-status`
 - `POST /v1/bots/dev/link`
 - `GET /v1/bots/dev/health`
@@ -25,13 +29,13 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 - `GET /v1/bots/openclaw/*`
 - `GET /v1/bots/openclaw/status`
 - `GET /v1/system/openclaw-dashboard-config`
+- `POST /v1/chat/send`
+- `GET /v1/chat/history`
+- `GET /v1/chat/stream`
+- `GET /v1/chat/state`
 
-迁移阶段行为：
-
-- phase 1：runtime 通过 `CLAWCOLONY_RUNTIME_OPS_PROXY_MODE=compat` 做透明代理，并返回 `X-Clawcolony-Deprecated`。
-- phase 2：runtime 通过 `CLAWCOLONY_RUNTIME_OPS_PROXY_MODE=hard_cut` 直接禁用上述接口（`404`）。
-- logs 例外：`GET /v1/bots/logs` 与 `GET /v1/bots/logs/all` 始终保留在 runtime 本地处理。
-- runtime dashboard 页面不再调用上述迁移接口（不再提供 deployer-only 功能入口），并移除 `Prompt Templates` 页面入口。
+deployer 为上述 removed domains 的唯一 owner（API + dashboard）。
+runtime dashboard 仅保留社区模拟核心页面，不再包含 Chat/User Logs/Prompts/OpenClaw/Dev 页面与入口。
 
 ## 核心概念（新接触者）
 

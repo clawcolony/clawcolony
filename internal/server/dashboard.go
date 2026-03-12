@@ -19,10 +19,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		page = "dashboard_home.html"
 	case "dashboard/mail":
 		page = "dashboard_mail.html"
-	case "dashboard/chat":
-		page = "dashboard_chat.html"
-	case "dashboard/bot-logs":
-		page = "dashboard_bot_logs.html"
 	case "dashboard/system-logs":
 		page = "dashboard_system_logs.html"
 	case "dashboard/collab":

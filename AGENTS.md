@@ -20,38 +20,37 @@
 - 不依赖 `landlord/` 旧目录。
 - 不通过 runtime 直接操作 K8s 部署面。
 
-## 2.1 Runtime 边界落地口径（2026-03-11 起）
+## 2.1 Runtime 边界落地口径（2026-03-12 起）
 
-- runtime 最终保留（owner=runtime）：
-  - `GET /v1/bots/logs`
-  - `GET /v1/bots/logs/all`
-- runtime dashboard 页面边界：
-  - 保留 runtime-native 运营/观测页面（如 home/ops/monitor/mail/chat/collab/kb 等）
-  - 不保留 `Prompt Templates` dashboard 入口（该能力在 deployer dashboard 提供）
-- 下列接口 owner=deployer，runtime 不得继续实现业务语义：
-  - `POST /v1/prompts/templates/apply`
-  - `GET /v1/bots/rule-status`
-  - `POST /v1/bots/dev/link`
-  - `GET /v1/bots/dev/health`
-  - `GET|HEAD|OPTIONS /v1/bots/dev/*`
-  - `GET /v1/bots/openclaw/*`
-  - `GET /v1/bots/openclaw/status`
-  - `GET /v1/system/openclaw-dashboard-config`
-- Phase 1 兼容期：
-  - runtime 可对上述迁移接口做透明转发到 deployer（`compat`），并返回 `X-Clawcolony-Deprecated`
-  - 转发仅作兼容，不得在 runtime 添加新业务分支
-  - 必须显式配置：
-    - `CLAWCOLONY_DEPLOYER_API_BASE_URL`（runtime -> deployer 内部转发目标）
-    - `CLAWCOLONY_DEPLOYER_PUBLIC_BASE_URL`（dashboard 跳转/链接目标）
-- Phase 2 hard cut：
-  - runtime 对迁移接口返回 `404/disabled`
-  - 仅保留 logs 例外
-- 兼容代理守卫（必须保持）：
-  - 请求体上限 `10 MiB`
-  - 响应体上限 `20 MiB`
-  - 仅允许 `http|https` upstream，且禁止跟随重定向
-  - 不转发 `Cookie`，不透传 `Set-Cookie`
-- 除迁移接口外，runtime 对 deployer-only 管理接口（如 upgrade/openclaw admin/github app-token）应保持禁用，不做本地实现或代理扩展。
+- runtime 为 runtime-lite：只保留 agent 社区模拟/MCP 核心能力，不再承担 deployment/dev/openclaw/chat/prompt/pod logs 相关职责。
+- runtime 下列接口必须 hard cut（`404`）且不得恢复：
+  - `/v1/prompts/templates`
+  - `/v1/prompts/templates/upsert`
+  - `/v1/prompts/templates/apply`
+  - `/v1/bots/logs`
+  - `/v1/bots/logs/all`
+  - `/v1/bots/rule-status`
+  - `/v1/bots/dev/link`
+  - `/v1/bots/dev/health`
+  - `/v1/bots/dev/*`
+  - `/v1/bots/openclaw/*`
+  - `/v1/bots/openclaw/status`
+  - `/v1/system/openclaw-dashboard-config`
+  - `/v1/chat/send`
+  - `/v1/chat/history`
+  - `/v1/chat/stream`
+  - `/v1/chat/state`
+- runtime 仍保留身份接口：
+  - `GET /v1/bots`
+  - `POST /v1/bots/nickname/upsert`
+  - 且仅允许 DB 视角，不得依赖 K8s active set。
+- runtime dashboard 边界：
+  - 移除 Chat、User Logs、Prompts、OpenClaw/Dev 入口与页面。
+  - 保留社区模拟核心页面（mail/kb/collab/governance/world/token 等）。
+- 数据边界（runtime 侧）：
+  - `user_accounts.user_id` 必须保留，不可删除。
+  - 不再在 runtime `user_accounts` 持久化 `gateway_token`、`upgrade_token`。
+  - removed domains 仅由 deployer 持有（chat/prompt/register/upgrade）。
 
 ## 3. 命名与环境约定
 
