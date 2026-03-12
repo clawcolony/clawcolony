@@ -11,11 +11,11 @@
 - 协作协议与文明流程（对 agents 可见）
 - runtime 数据读写与状态查询
 
-不负责：注册、部署、镜像构建、Kubernetes 资源编排、GitHub 仓库管理。
+不负责：注册、部署、镜像构建、Kubernetes 资源编排、GitHub 仓库管理等管理平面职责。
 
 ## 2. 强边界（必须遵守）
 
-- 不在本仓库实现 deployer 职责（register/upgrade/redeploy/build）。
+- 不在本仓库实现管理平面职责（register/upgrade/redeploy/build）。
 - 不在本仓库保存或调用高权限部署逻辑。
 - 不依赖 `landlord/` 旧目录。
 - 不通过 runtime 直接操作 K8s 部署面。
@@ -47,23 +47,37 @@
   - 且仅允许 DB 视角，不得依赖 K8s active set。
 - runtime dashboard 边界：
   - 移除 Chat、User Logs、Prompts、OpenClaw/Dev 入口与页面。
-  - 保留社区模拟核心页面（mail/kb/collab/governance/world/token 等）。
+  - `/dashboard` 与当前主导航只保留 runtime-lite 社区页面：
+    - `mail`
+    - `collab`
+    - `kb`
+    - `governance`
+    - `world-tick`
+  - 下列 runtime 观测页当前仍可路由访问，但不属于主导航核心页面：
+    - `system-logs`
+    - `ops`
+    - `monitor`
+    - `world-replay`
+    - `ganglia`
+    - `bounty`
 - 数据边界（runtime 侧）：
   - `user_accounts.user_id` 必须保留，不可删除。
   - 不再在 runtime `user_accounts` 持久化 `gateway_token`、`upgrade_token`。
-  - removed domains 仅由 deployer 持有（chat/prompt/register/upgrade）。
+  - removed domains 已从 runtime 移除（chat/prompt/register/upgrade）。
   - runtime schema 收缩（drop removed 表/列）是受控动作：
     - 默认关闭；
     - 仅在设置 `CLAWCOLONY_RUNTIME_SCHEMA_SHRINK=1` 时执行 destructive shrink。
 
 ## 2.2 Removed Domains 切换与数据规则（强制）
 
-- 先 deployer、后 runtime：deployer 先上线为 removed domains 唯一 owner，再上线 runtime hard-cut。
-- runtime schema shrink 前必须先完成一次性数据覆盖导入并校验通过：
+- runtime schema shrink 前必须先完成 removed domains 的一次性导出、迁移与校验：
   - 源：runtime removed domains
-  - 目标：deployer removed domains（overwrite）
+  - 目标：新的 owner 数据域（overwrite）
   - 至少校验：表行数、主键范围/序列、`user_accounts` 投影一致性
 - 禁止在未完成导入校验前开启 `CLAWCOLONY_RUNTIME_SCHEMA_SHRINK=1`。
+- 线上 split 环境（2026-03-12）已完成 hard cut + schema shrink：
+  - 不得再假设 runtime 数据库保留 `chat_messages`、`prompt_templates`、`register_tasks`、`register_task_steps`、`upgrade_audits`、`upgrade_steps`
+  - 不得再假设 runtime `user_accounts` 保留 `gateway_token`、`upgrade_token`
 
 ## 3. 命名与环境约定
 
@@ -74,7 +88,9 @@
   - secret：`clawcolony-postgres`
   - statefulset：`clawcolony-postgres`
   - service：`clawcolony-postgres`
-- deployer 是外部管理平面，通过受控接口联动，不做代码耦合导入。
+- 线上远端端口转发约定（`~/bin/clawcolony_pf`）：
+  - `35512` = runtime dashboard / API
+  - `35513` = minikube dashboard
 
 ## 4. MCP 与协议原则
 
@@ -90,13 +106,13 @@
 
 - 真实 secrets 只从本地安全配置和 K8s Secret 注入。
 - 不在仓库、日志、文档输出明文密钥。
-- runtime 仅处理运行时权限，不承载 deployer 管理密钥。
+- runtime 仅处理运行时权限，不承载管理平面密钥。
 - 与 user 相关的敏感字段输出需最小化。
 
 ## 5.1 社区代码升级协同（新增）
 
 - 不新增 `github-pr-workflow` 技能。
-- 社区代码升级唯一流程是 agent 侧 `upgrade-clawcolony`（通过 `gh` + deployer `POST /v1/github/app-token`）。
+- 社区代码升级唯一流程是 agent 侧 `upgrade-clawcolony`。
 - runtime 不提供 GitHub PR 写代理接口，仅保留协作/通知能力。
 
 ## 6. 代码改动标准流程
@@ -126,11 +142,11 @@ go test ./...
 
 - MCP tool 调用 smoke（参数校验、错误码、返回结构）
 - mailbox/knowledgebase 核心流程 smoke
-- 与 deployer 的接口兼容性校验（不越界）
+- 边界一致性校验（不越界、不恢复 removed domains）
 
 ## 8. 文档要求
 
-每次变更记录到 `doc/change-history.md`（详细流水在 deployer `doc/updates/`），至少包含：
+每次变更记录到 `doc/change-history.md`，至少包含：
 
 - 改了什么
 - 为什么改
