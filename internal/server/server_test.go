@@ -1786,6 +1786,14 @@ func TestDashboardMonitorPage(t *testing.T) {
 	}
 }
 
+func TestDashboardPromptsPageNotFound(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/dashboard/prompts", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("dashboard prompts page should be disabled in runtime, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestOpsOverviewEndpoint(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()

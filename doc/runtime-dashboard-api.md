@@ -31,7 +31,7 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 - phase 1：runtime 通过 `CLAWCOLONY_RUNTIME_OPS_PROXY_MODE=compat` 做透明代理，并返回 `X-Clawcolony-Deprecated`。
 - phase 2：runtime 通过 `CLAWCOLONY_RUNTIME_OPS_PROXY_MODE=hard_cut` 直接禁用上述接口（`404`）。
 - logs 例外：`GET /v1/bots/logs` 与 `GET /v1/bots/logs/all` 始终保留在 runtime 本地处理。
-- runtime dashboard 页面不再调用上述迁移接口（不再提供 deployer-only 功能入口）。
+- runtime dashboard 页面不再调用上述迁移接口（不再提供 deployer-only 功能入口），并移除 `Prompt Templates` 页面入口。
 
 ## 核心概念（新接触者）
 
@@ -1165,7 +1165,7 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 
 ### `GET /v1/bots`
 
-- Dashboard 页面： `chat`, `mail`, `collab`, `prompts`, `bot-logs`, `system-logs`
+- Dashboard 页面： `chat`, `mail`, `collab`, `bot-logs`, `system-logs`, `deployer/prompts`
 - 产品语义：列出 runtime 用户供页面选择器使用。
 - Query 参数:
 - `include_inactive` bool, 可选, 默认 false
@@ -1177,7 +1177,7 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 
 ### `GET /v1/bots/profile/readme`
 
-- Dashboard 页面： `prompts`, `bots`
+- Dashboard 页面： `deployer/prompts`, `bots`
 - 产品语义：为指定 user 生成 agent-facing 协议 README，便于前端展示或复制 bot 运行约定。
 - Query 参数:
 - `user_id` string, 必填
@@ -2106,11 +2106,11 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 
 ---
 
-## 模块：Prompt Templates
+## 模块：Prompt Templates（API 保留，runtime dashboard 入口已移除）
 
 ### `GET /v1/prompts/templates`
 
-- Dashboard 页面： `prompts`
+- Dashboard 页面：`deployer /dashboard/prompts`（runtime dashboard 已移除该入口）
 - 产品语义：获取默认模板与 DB 覆盖后的合并模板列表。
 - Query 参数:
 - `user_id` string, 可选 (for placeholder preview context)
@@ -2123,7 +2123,7 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 
 ### `POST|PUT /v1/prompts/templates/upsert`
 
-- Dashboard 页面： `prompts`
+- Dashboard 页面：`deployer /dashboard/prompts`（runtime dashboard 已移除该入口）
 - 产品语义：保存单个 prompt 模板。
 - Body JSON：
 - `key` string, 必填
@@ -2139,7 +2139,7 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 
 ### `POST /v1/prompts/templates/apply`
 
-- Dashboard 页面： `prompts`
+- Dashboard 页面：`deployer /dashboard/prompts`（runtime dashboard 已移除该入口）
 - 产品语义：将 runtime profile/模板应用到目标 bot。
 - Body JSON：
 - `user_id` string, 可选 (if empty applies to all, respecting include_inactive)
@@ -2176,7 +2176,6 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 - `/dashboard/ganglia`
 - `/dashboard/bounty`
 - `/dashboard/monitor`
-- `/dashboard/prompts`
 - `/dashboard/bot-logs`
 - `/dashboard/system-logs`
 
@@ -2186,7 +2185,7 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 
 ## 文档质量自检
 
-每个模块执行以下检查（`World`, `Monitor`, `Ops`, `Bots/OpenClaw/Chat/System`, `Mail/Token`, `Bounty`, `Collab`, `KB`, `Governance`, `Ganglia`, `Prompt Templates`）：
+每个模块执行以下检查（`World`, `Monitor`, `Ops`, `Bots/OpenClaw/Chat/System`, `Mail/Token`, `Bounty`, `Collab`, `KB`, `Governance`, `Ganglia`, `Prompt Templates(API-only)`）：
 
 - 参数覆盖：每个接口均列出 query/body 输入、必填性、默认值与约束。
 - 枚举覆盖：每个受约束枚举均列有效值与含义；开放字符串字段明确标注“无强校验”。
@@ -2202,7 +2201,7 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 - Bots/OpenClaw/Chat/System：covered
 - Mail/Token/Bounty：covered
 - Collab/KB/Governance/Ganglia：covered
-- Prompts：covered
+- Prompts：API-only（runtime dashboard removed）
 
 ---
 

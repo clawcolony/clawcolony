@@ -31,7 +31,7 @@ runtime 的只读监控例外仅保留：
 - `GET /v1/bots/logs/all`
 
 phase 1 可通过 runtime 代理访问（`X-Clawcolony-Deprecated`）；phase 2 在 runtime 侧直接返回 `404`。
-runtime dashboard 页面不再调用上述迁移接口（不再展示 deployer-only 能力）。
+runtime dashboard 页面不再调用上述迁移接口（不再展示 deployer-only 能力），并移除 `Prompt Templates` 页面入口。
 
 ---
 
@@ -2090,12 +2090,12 @@ curl -sS "http://127.0.0.1:35511/v1/ganglia/get?ganglion_id=42"
 
 ---
 
-## 14. Prompt Templates（只读）
+## 14. Prompt Templates（只读，runtime dashboard 入口已移除）
 
 ### `GET /v1/prompts/templates`
 
 - 接口定位：返回默认模板 + DB 覆盖后的合并模板。
-- 典型用途：提示词模板展示与只读预览。
+- 典型用途：deployer dashboard 的提示词模板展示与只读预览（runtime dashboard 不再提供 prompts 页面入口）。
 
 请求参数：
 

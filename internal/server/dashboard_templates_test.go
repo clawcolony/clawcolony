@@ -23,7 +23,6 @@ func TestDashboardTopTabsConsistent(t *testing.T) {
 		"/dashboard/world-tick",
 		"/dashboard/world-replay",
 		"/dashboard/monitor",
-		"/dashboard/prompts",
 	}
 
 	pages := []struct {
@@ -44,7 +43,6 @@ func TestDashboardTopTabsConsistent(t *testing.T) {
 		{file: "web/dashboard_world_tick.html", activeHref: "/dashboard/world-tick"},
 		{file: "web/dashboard_world_replay.html", activeHref: "/dashboard/world-replay"},
 		{file: "web/dashboard_monitor.html", activeHref: "/dashboard/monitor"},
-		{file: "web/dashboard_prompts.html", activeHref: "/dashboard/prompts"},
 	}
 
 	tabsBlockRe := regexp.MustCompile(`(?s)<div class="tabs">(.*?)</div>`)
@@ -149,15 +147,6 @@ func TestDashboardPromptsKBPodsInteractionConsistency(t *testing.T) {
 		requiredTokens  []string
 		forbiddenTokens []string
 	}{
-		{
-			file: "web/dashboard_prompts.html",
-			requiredTokens: []string{
-				`id="promptsAutoRefresh"`,
-				`if (auto && !auto.checked) return;`,
-				`if (autoRefreshTick % 2 === 0) {`,
-				`loadUsers().catch(()=>{});`,
-			},
-		},
 		{
 			file: "web/dashboard_kb.html",
 			requiredTokens: []string{

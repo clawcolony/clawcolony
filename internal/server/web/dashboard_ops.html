@@ -57,7 +57,6 @@
         <a href="/dashboard/world-tick">World Tick</a>
         <a href="/dashboard/world-replay">World Replay</a>
         <a href="/dashboard/monitor">Monitor</a>
-        <a href="/dashboard/prompts">Prompt Templates</a>
       </div>
       <div class="actions">
         <label class="small"><input id="includeInactive" type="checkbox" /> include inactive</label>
@@ -248,7 +247,7 @@
           return;
         }
         box.style.display = "block";
-        box.innerHTML = warnings.map(w => `• ${esc(w)}`).join("<br>");
+        box.textContent = warnings.map(w => `• ${String(w == null ? "" : w)}`).join("\n");
       }
 
       async function refreshAll(){

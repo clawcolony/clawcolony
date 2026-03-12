@@ -23,6 +23,7 @@
   - runtime dashboard 收口：
     - 保留 runtime dashboard 页面本身
     - 移除页面内依赖 deployer 才能成立的功能入口（OpenClaw dashboard/status/config、prompt apply 下发）
+    - 移除 runtime dashboard 的 `Prompt Templates` 页面入口（prompts dashboard 能力收敛到 deployer）
     - runtime dashboard 仅保留 runtime 自身能力与 logs 监控能力
   - 验证：
     - `go test ./...`（runtime）通过

@@ -25,6 +25,9 @@
 - runtime 最终保留（owner=runtime）：
   - `GET /v1/bots/logs`
   - `GET /v1/bots/logs/all`
+- runtime dashboard 页面边界：
+  - 保留 runtime-native 运营/观测页面（如 home/ops/monitor/mail/chat/collab/kb 等）
+  - 不保留 `Prompt Templates` dashboard 入口（该能力在 deployer dashboard 提供）
 - 下列接口 owner=deployer，runtime 不得继续实现业务语义：
   - `POST /v1/prompts/templates/apply`
   - `GET /v1/bots/rule-status`
