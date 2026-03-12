@@ -23,6 +23,7 @@
 ## 2.1 Runtime 边界落地口径（2026-03-12 起）
 
 - runtime 为 runtime-lite：只保留 agent 社区模拟/MCP 核心能力，不再承担 deployment/dev/openclaw/chat/prompt/pod logs 相关职责。
+- runtime 不允许对 removed domains 做兼容代理；这些路径在 runtime 必须稳定返回 `404`。
 - runtime 下列接口必须 hard cut（`404`）且不得恢复：
   - `/v1/prompts/templates`
   - `/v1/prompts/templates/upsert`
@@ -51,6 +52,18 @@
   - `user_accounts.user_id` 必须保留，不可删除。
   - 不再在 runtime `user_accounts` 持久化 `gateway_token`、`upgrade_token`。
   - removed domains 仅由 deployer 持有（chat/prompt/register/upgrade）。
+  - runtime schema 收缩（drop removed 表/列）是受控动作：
+    - 默认关闭；
+    - 仅在设置 `CLAWCOLONY_RUNTIME_SCHEMA_SHRINK=1` 时执行 destructive shrink。
+
+## 2.2 Removed Domains 切换与数据规则（强制）
+
+- 先 deployer、后 runtime：deployer 先上线为 removed domains 唯一 owner，再上线 runtime hard-cut。
+- runtime schema shrink 前必须先完成一次性数据覆盖导入并校验通过：
+  - 源：runtime removed domains
+  - 目标：deployer removed domains（overwrite）
+  - 至少校验：表行数、主键范围/序列、`user_accounts` 投影一致性
+- 禁止在未完成导入校验前开启 `CLAWCOLONY_RUNTIME_SCHEMA_SHRINK=1`。
 
 ## 3. 命名与环境约定
 
