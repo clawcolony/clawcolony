@@ -193,16 +193,10 @@
             <div class="hint" id="placeholders"></div>
             <div class="row">
               <button class="ok" onclick="saveTemplate()">保存模板</button>
-              <label>应用到 USER</label>
-              <select id="applyUser" style="width:300px">
-                <option value="">全部活跃 USER</option>
-              </select>
-              <label>镜像(可选)</label>
-              <input id="applyImage" placeholder="留空=自动读取当前镜像" style="width:320px" />
-              <button id="applyBtn" onclick="applyTemplates()">保存后下发</button>
+              <button id="applyBtn" onclick="applyTemplates()" disabled>runtime 不支持下发</button>
             </div>
             <div class="hint">
-              说明：下发会更新目标 USER 的模板配置（AGENTS/IDENTITY/USER/skills 等），由运行时配置加载流程生效。
+              说明：runtime dashboard 仅支持模板查看/编辑；模板下发属于 deployer 管理面能力。
             </div>
             <pre class="status" id="status">ready</pre>
             <div class="hint" style="margin-top:8px;border-top:1px solid var(--line);padding-top:10px">
@@ -221,52 +215,12 @@
       let bots = [];
       let autoRefreshTick = 0;
       let editorDirty = false;
-      let runtimeOpsProxyMode = "compat";
-      let deployerPublicBaseURL = "";
-
-      function isHardCutMode(){
-        return runtimeOpsProxyMode === "hard_cut";
-      }
-
-      function normalizeBaseURL(raw){
-        const v = String(raw || "").trim();
-        if (!v) return "";
-        try {
-          const parsed = new URL(v, window.location.origin);
-          const proto = String(parsed.protocol || "").toLowerCase();
-          if (proto !== "http:" && proto !== "https:") return "";
-          return (parsed.origin + parsed.pathname).replace(/\/+$/, "");
-        } catch (_) {
-          return "";
-        }
-      }
-
-      function toDeployerURL(path){
-        const rel = String(path || "").trim();
-        if (!rel.startsWith("/")) return rel;
-        if (!deployerPublicBaseURL) return rel;
-        return deployerPublicBaseURL + rel;
-      }
-
-      async function loadBoundaryMeta(){
-        try {
-          const meta = await j("/v1/meta");
-          runtimeOpsProxyMode = String(meta.runtime_ops_proxy_mode || "compat").trim() || "compat";
-          deployerPublicBaseURL = normalizeBaseURL(meta.deployer_public_base_url || "");
-        } catch (_) {
-          runtimeOpsProxyMode = "compat";
-          deployerPublicBaseURL = "";
-        }
-      }
 
       function syncBoundaryUI(){
         const applyBtn = document.getElementById("applyBtn");
         if (!applyBtn) return;
-        if (isHardCutMode()) {
-          applyBtn.textContent = "保存后前往 Deployer 下发";
-        } else {
-          applyBtn.textContent = "保存后下发";
-        }
+        applyBtn.textContent = "runtime 不支持下发";
+        applyBtn.disabled = true;
       }
 
       function distinctNonEmpty(parts){
@@ -282,10 +236,6 @@
       function botDisplayLabel(bot){
         if (!bot) return "-";
         return distinctNonEmpty([bot.nickname, bot.name, bot.user_id]).join(" · ") || "-";
-      }
-      function botLabelByID(userID){
-        const bot = bots.find(b => b.user_id === userID);
-        return bot ? botDisplayLabel(bot) : String(userID || "");
       }
 
       function currentItem(){
@@ -337,11 +287,6 @@
         const targetPrev = targetSel.value;
         targetSel.innerHTML = `<option value="">example-user</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
         targetSel.value = targetPrev;
-
-        const applySel = document.getElementById("applyUser");
-        const applyPrev = applySel.value;
-        applySel.innerHTML = `<option value="">全部活跃 USER</option>` + bots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
-        applySel.value = bots.some(b => b.user_id === applyPrev) ? applyPrev : "";
       }
 
       function pick(key){
@@ -375,39 +320,12 @@
       }
 
       async function applyTemplates(){
-        const applyUser = document.getElementById("applyUser").value.trim();
-        const applyImage = document.getElementById("applyImage").value.trim();
-        await saveTemplate();
-        if (isHardCutMode()) {
-          const endpoint = toDeployerURL("/v1/prompts/templates/apply");
-          const dashboardURL = toDeployerURL("/dashboard/prompts");
-          setStatus(`runtime 已切到 hard_cut，apply 已迁移到 deployer。\n请改用: ${endpoint}\n可打开: ${dashboardURL}`, "warn");
-          if (dashboardURL.startsWith("http://") || dashboardURL.startsWith("https://")) {
-            window.open(dashboardURL, "_blank", "noopener");
-          }
-          return;
-        }
-        const data = await j("/v1/prompts/templates/apply", {
-          method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({
-            user_id: applyUser,
-            image: applyImage
-          })
-        });
-        const lines = [];
-        lines.push(`apply result: ok=${data.ok_count}/${data.all_count}`);
-        for (const it of (data.items || [])) {
-          lines.push(`${botLabelByID(it.user_id)} ${it.status} image=${it.image || "-"} ${it.error || ""}`.trim());
-        }
-        setStatus(lines.join("\n"), data.ok_count > 0 ? "ok" : "bad");
+        setStatus("runtime dashboard 不提供模板下发功能（deployer-only）", "warn");
       }
 
       document.getElementById("content").addEventListener("input", () => { editorDirty = true; });
-      loadBoundaryMeta().then(() => {
-        syncBoundaryUI();
-        return loadUsers();
-      }).then(() => {
+      syncBoundaryUI();
+      loadUsers().then(() => {
         return refreshTemplates();
       }).catch(err => setStatus("加载失败: " + String(err.message || err), "bad"));
       setInterval(() => {

@@ -20,6 +20,10 @@
     - compat 代理新增响应体上限（20 MiB）与超限错误返回
     - `service_role=all` 且未配置 deployer base 时，迁移接口回退本地处理（避免默认 503 回归）
     - dashboard boundary `deployer_public_base_url` 仅接受 `http|https`
+  - runtime dashboard 收口：
+    - 保留 runtime dashboard 页面本身
+    - 移除页面内依赖 deployer 才能成立的功能入口（OpenClaw dashboard/status/config、prompt apply 下发）
+    - runtime dashboard 仅保留 runtime 自身能力与 logs 监控能力
   - 验证：
     - `go test ./...`（runtime）通过
   - 详细流水：`clawcolony-deployer/doc/updates/2026-03-11-runtime-boundary-ops-migration-phase1-phase2.md`

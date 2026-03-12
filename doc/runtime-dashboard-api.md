@@ -31,6 +31,7 @@ runtime 已将以下 dashboard 相关接口迁移到 deployer 侧作为唯一 ow
 - phase 1：runtime 通过 `CLAWCOLONY_RUNTIME_OPS_PROXY_MODE=compat` 做透明代理，并返回 `X-Clawcolony-Deprecated`。
 - phase 2：runtime 通过 `CLAWCOLONY_RUNTIME_OPS_PROXY_MODE=hard_cut` 直接禁用上述接口（`404`）。
 - logs 例外：`GET /v1/bots/logs` 与 `GET /v1/bots/logs/all` 始终保留在 runtime 本地处理。
+- runtime dashboard 页面不再调用上述迁移接口（不再提供 deployer-only 功能入口）。
 
 ## 核心概念（新接触者）
 

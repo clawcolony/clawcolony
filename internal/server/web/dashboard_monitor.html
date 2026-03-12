@@ -239,43 +239,6 @@
       let selected = "";
       let includeInactive = false;
       let metaRefreshTick = 0;
-      let runtimeOpsProxyMode = "compat";
-      let deployerPublicBaseURL = "";
-
-      function isHardCutMode(){
-        return runtimeOpsProxyMode === "hard_cut";
-      }
-
-      function normalizeBaseURL(raw){
-        const v = String(raw || "").trim();
-        if (!v) return "";
-        try {
-          const parsed = new URL(v, window.location.origin);
-          const proto = String(parsed.protocol || "").toLowerCase();
-          if (proto !== "http:" && proto !== "https:") return "";
-          return (parsed.origin + parsed.pathname).replace(/\/+$/, "");
-        } catch (_) {
-          return "";
-        }
-      }
-
-      function openclawPathForUser(userID){
-        const rel = `/v1/bots/openclaw/${encodeURIComponent(String(userID || "").trim())}/`;
-        if (!isHardCutMode()) return rel;
-        if (!deployerPublicBaseURL) return rel;
-        return deployerPublicBaseURL + rel;
-      }
-
-      async function loadBoundaryMeta(){
-        try {
-          const meta = await j("/v1/meta");
-          runtimeOpsProxyMode = String(meta.runtime_ops_proxy_mode || "compat").trim() || "compat";
-          deployerPublicBaseURL = normalizeBaseURL(meta.deployer_public_base_url || "");
-        } catch (_) {
-          runtimeOpsProxyMode = "compat";
-          deployerPublicBaseURL = "";
-        }
-      }
 
       function filteredAgents(){
         const kw = document.getElementById("kw").value.trim().toLowerCase();
@@ -325,7 +288,7 @@
           <div class="meta">chat workers=${esc(String(chat.workers || 0))} queue=${esc(String(chat.queue_size || 0))} queued_users=${esc(String(chat.queued_users || 0))} backlog=${esc(String(chat.backlog || 0))}</div>
           <div class="meta">last_activity=${esc(it.last_activity_type || "-")} · ${esc(it.last_activity_at || "")} · tool=${esc(it.last_tool_id || "-")} · mail=${esc(it.last_mail_subject || "-")}</div>
           <div class="meta">error=${esc(it.last_error || "-")} · pod=${esc(it.pod_name || "-")} · detail=${esc(it.connection_detail || "-")}</div>
-          <div class="meta"><a href="${openclawPathForUser(it.user_id)}" target="_blank" rel="noopener">OpenClaw Dashboard</a></div>
+          <div class="meta">OpenClaw Dashboard: runtime dashboard 不提供（请使用 deployer dashboard）</div>
         `;
       }
 
@@ -412,7 +375,7 @@
       document.getElementById("category").addEventListener("change", () => { if (selected) void pick(selected); });
       document.getElementById("showAll").addEventListener("change", async (e) => { includeInactive = !!e.target.checked; await refreshAll(true); });
       setInterval(refreshAll, 10000);
-      loadBoundaryMeta().then(() => refreshAll(true)).catch(() => refreshAll(true));
+      refreshAll(true);
     </script>
   </body>
 </html>

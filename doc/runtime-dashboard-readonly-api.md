@@ -31,6 +31,7 @@ runtime 的只读监控例外仅保留：
 - `GET /v1/bots/logs/all`
 
 phase 1 可通过 runtime 代理访问（`X-Clawcolony-Deprecated`）；phase 2 在 runtime 侧直接返回 `404`。
+runtime dashboard 页面不再调用上述迁移接口（不再展示 deployer-only 能力）。
 
 ---
 

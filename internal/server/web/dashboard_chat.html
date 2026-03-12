@@ -195,7 +195,6 @@
         <h3>Clawcolony ↔ OpenClaw</h3>
         <div class="chat-head mono">
           <span id="chatHead">当前会话: 未选择</span>
-          <a id="openclawLink" href="#" target="_blank" rel="noopener">打开 OpenClaw Dashboard</a>
           <div class="nick-row">
             <span>昵称</span>
             <input id="nicknameInput" placeholder="最多 20 字符，留空表示清空" maxlength="80" />
@@ -226,47 +225,7 @@
       let selected = "";
       let includeInactive = false;
       let stream = null;
-      const openclawTokenByUser = new Map();
-      const OPENCLAW_TOKEN_CACHE_LIMIT = 200;
-      let statusPoll = null;
       let chatStatePoll = null;
-      let runtimeOpsProxyMode = "compat";
-      let deployerPublicBaseURL = "";
-
-      function isHardCutMode(){
-        return runtimeOpsProxyMode === "hard_cut";
-      }
-
-      function normalizeBaseURL(raw){
-        const v = String(raw || "").trim();
-        if (!v) return "";
-        try {
-          const parsed = new URL(v, window.location.origin);
-          const proto = String(parsed.protocol || "").toLowerCase();
-          if (proto !== "http:" && proto !== "https:") return "";
-          return (parsed.origin + parsed.pathname).replace(/\/+$/, "");
-        } catch (_) {
-          return "";
-        }
-      }
-
-      function toDeployerURL(path){
-        const rel = String(path || "").trim();
-        if (!rel.startsWith("/")) return rel;
-        if (!deployerPublicBaseURL) return rel;
-        return deployerPublicBaseURL + rel;
-      }
-
-      async function loadBoundaryMeta(){
-        try {
-          const meta = await j("/v1/meta");
-          runtimeOpsProxyMode = String(meta.runtime_ops_proxy_mode || "compat").trim() || "compat";
-          deployerPublicBaseURL = normalizeBaseURL(meta.deployer_public_base_url || "");
-        } catch (_) {
-          runtimeOpsProxyMode = "compat";
-          deployerPublicBaseURL = "";
-        }
-      }
 
       function runeCount(input){
         return Array.from(String(input || "")).length;
@@ -285,27 +244,6 @@
 
       function botByID(userID){
         return bots.find(b => b.user_id === userID) || null;
-      }
-
-      function setOpenclawToken(uid, token){
-        const key = String(uid || "").trim();
-        if (!key) return;
-        const val = String(token || "").trim();
-        openclawTokenByUser.delete(key);
-        if (!val) return;
-        openclawTokenByUser.set(key, val);
-        while (openclawTokenByUser.size > OPENCLAW_TOKEN_CACHE_LIMIT) {
-          const oldest = openclawTokenByUser.keys().next().value;
-          if (!oldest) break;
-          openclawTokenByUser.delete(oldest);
-        }
-      }
-
-      function pruneOpenclawTokenCache(){
-        const alive = new Set((bots || []).map(b => String((b && b.user_id) || "").trim()).filter(Boolean));
-        for (const key of Array.from(openclawTokenByUser.keys())) {
-          if (!alive.has(key)) openclawTokenByUser.delete(key);
-        }
       }
 
       function botDisplayLabel(bot){
@@ -342,12 +280,10 @@
         const head = document.getElementById("chatHead");
         if (!selected) {
           head.textContent = "当前会话: 未选择";
-          document.getElementById("openclawLink").href = "#";
           return;
         }
         const bot = botByID(selected);
         head.textContent = `当前会话: ${bot ? botDisplayLabel(bot) : selected}`;
-        document.getElementById("openclawLink").href = openclawHref(selected);
       }
 
       function setNicknameStatus(text, bad){
@@ -431,15 +367,6 @@
         }
       }
 
-      function openclawHref(userId){
-        const uid = String(userId || "").trim();
-        const relBase = `/v1/bots/openclaw/${encodeURIComponent(uid)}/`;
-        const base = isHardCutMode() ? toDeployerURL(relBase) : relBase;
-        const token = openclawTokenByUser.get(uid) || "";
-        if (!token) return base;
-        return `${base}#token=${encodeURIComponent(token)}`;
-      }
-
       function renderMsg(it){
         const me = it.from === "clawcolony-admin";
         const from = identityLabel(it.from);
@@ -478,7 +405,6 @@
               <div><strong>nickname: ${esc(nicknameLabel)}</strong> <span class="badge">${esc(b.status || "unknown")}</span></div>
               <div class="mono">username: ${esc(usernameLabel)}</div>
               <div class="mono">user_id: ${esc(userIDLabel)}</div>
-              <div><a href="${openclawHref(b.user_id)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">OpenClaw Dashboard</a></div>
             </div>
           `;
         }).join("");
@@ -518,31 +444,7 @@
           setConnUi("down", "OpenClaw: not selected", "");
           return;
         }
-        if (isHardCutMode()) {
-          const tip = deployerPublicBaseURL ? `moved to deployer: ${deployerPublicBaseURL}` : "moved to deployer";
-          setConnUi("warn", "OpenClaw: moved", tip);
-          return;
-        }
-        try {
-          const s = await j(`/v1/bots/openclaw/status?user_id=${encodeURIComponent(selected)}`);
-          const active = Number(s.active_webchat_connections || 0);
-          const code = Number(s.last_disconnect_code || 0);
-          const reason = String(s.last_disconnect_reason || "");
-          const at = String(s.last_event_at || "");
-          if (s.connected) {
-            const detail = active > 0 ? `active=${active}` : "";
-            setConnUi("up", "OpenClaw: connected", detail);
-            return;
-          }
-          if (code > 0 || reason) {
-            const detail = `code=${code || "n/a"} reason=${reason || "n/a"} ${at}`.trim();
-            setConnUi("warn", "OpenClaw: unstable", detail);
-            return;
-          }
-          setConnUi("down", "OpenClaw: disconnected", at ? `last=${at}` : "");
-        } catch (e) {
-          setConnUi("down", "OpenClaw: status error", String(e.message || e));
-        }
+        setConnUi("warn", "OpenClaw status: disabled in runtime dashboard", "请在 deployer dashboard 查看");
       }
 
       function fmtTask(t){
@@ -646,7 +548,6 @@
 
       async function pick(id){
         selected = id;
-        await loadOpenClawDashboardConfig(selected);
         renderBots();
         updateChatHead();
         syncNicknameEditor();
@@ -659,7 +560,6 @@
       async function refreshAll(){
         try {
           await loadBots();
-          pruneOpenclawTokenCache();
           renderBots();
           updateChatHead();
           syncNicknameEditor();
@@ -668,23 +568,7 @@
         }
       }
 
-      async function loadOpenClawDashboardConfig(userId){
-        const uid = String(userId || "").trim();
-        if (!uid) return;
-        if (isHardCutMode()) {
-          setOpenclawToken(uid, "");
-          return;
-        }
-        try {
-          const data = await j(`/v1/system/openclaw-dashboard-config?user_id=${encodeURIComponent(uid)}`);
-          setOpenclawToken(uid, String(data.token || ""));
-        } catch (_) {
-          setOpenclawToken(uid, "");
-        }
-      }
-
       setInterval(refreshAll, 10000);
-      statusPoll = setInterval(refreshOpenClawStatus, 5000);
       chatStatePoll = setInterval(refreshChatState, 2000);
       setupComposerHotkey();
       setupNicknameHotkey();
@@ -703,20 +587,14 @@
       });
       window.addEventListener("beforeunload", closeStream);
       window.addEventListener("beforeunload", () => {
-        if (statusPoll) {
-          clearInterval(statusPoll);
-          statusPoll = null;
-        }
         if (chatStatePoll) {
           clearInterval(chatStatePoll);
           chatStatePoll = null;
         }
       });
       (async () => {
-        await loadBoundaryMeta();
         await refreshAll();
         if (selected) {
-          await loadOpenClawDashboardConfig(selected);
           renderBots();
           updateChatHead();
           syncNicknameEditor();
