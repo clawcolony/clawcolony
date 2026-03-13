@@ -39,6 +39,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		page = "dashboard_ganglia.html"
 	case "dashboard/bounty":
 		page = "dashboard_bounty.html"
+	case "dashboard/agent-register":
+		page = "dashboard_agent_register.html"
+	case "dashboard/agent-owner":
+		page = "dashboard_agent_owner.html"
 	default:
 		writeError(w, http.StatusNotFound, "dashboard page not found")
 		return

@@ -13,6 +13,14 @@ import (
 type InMemoryStore struct {
 	mu                   sync.Mutex
 	bots                 map[string]Bot
+	agentRegistrations   map[string]AgentRegistration
+	agentProfiles        map[string]AgentProfile
+	humanOwners          map[string]HumanOwner
+	humanOwnerByEmail    map[string]string
+	humanOwnerSessions   map[string]HumanOwnerSession
+	agentBindings        map[string]AgentHumanBinding
+	socialLinks          map[string]SocialLink
+	socialRewardGrants   map[string]SocialRewardGrant
 	accounts             map[string]TokenAccount
 	ledger               []TokenLedger
 	nextLedgerID         int64
@@ -77,18 +85,26 @@ type InMemoryStore struct {
 
 func NewInMemory() *InMemoryStore {
 	return &InMemoryStore{
-		bots:           make(map[string]Bot),
-		accounts:       make(map[string]TokenAccount),
-		contacts:       make(map[string]map[string]MailContact),
-		prompts:        make(map[string]PromptTemplate),
-		collab:         make(map[string]CollabSession),
-		kbEntries:      make(map[int64]KBEntry),
-		kbProposals:    make(map[int64]KBProposal),
-		kbChanges:      make(map[int64]KBProposalChange),
-		tianDaoLaws:    make(map[string]TianDaoLaw),
-		worldSettings:  make(map[string]WorldSetting),
-		userLifeStates: make(map[string]UserLifeState),
-		ganglia:        make(map[int64]Ganglion),
+		bots:               make(map[string]Bot),
+		agentRegistrations: make(map[string]AgentRegistration),
+		agentProfiles:      make(map[string]AgentProfile),
+		humanOwners:        make(map[string]HumanOwner),
+		humanOwnerByEmail:  make(map[string]string),
+		humanOwnerSessions: make(map[string]HumanOwnerSession),
+		agentBindings:      make(map[string]AgentHumanBinding),
+		socialLinks:        make(map[string]SocialLink),
+		socialRewardGrants: make(map[string]SocialRewardGrant),
+		accounts:           make(map[string]TokenAccount),
+		contacts:           make(map[string]map[string]MailContact),
+		prompts:            make(map[string]PromptTemplate),
+		collab:             make(map[string]CollabSession),
+		kbEntries:          make(map[int64]KBEntry),
+		kbProposals:        make(map[int64]KBProposal),
+		kbChanges:          make(map[int64]KBProposalChange),
+		tianDaoLaws:        make(map[string]TianDaoLaw),
+		worldSettings:      make(map[string]WorldSetting),
+		userLifeStates:     make(map[string]UserLifeState),
+		ganglia:            make(map[int64]Ganglion),
 	}
 }
 

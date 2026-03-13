@@ -48,11 +48,16 @@ func (s *leaderboardTestStore) ListTokenAccounts(_ context.Context) ([]store.Tok
 }
 
 func newTestServerWithStore(st store.Store) *Server {
-	cfg := config.Config{
-		ListenAddr:         ":0",
-		ClawWorldNamespace: "clawcolony",
-		BotNamespace:       "freewill",
-		DatabaseURL:        "",
+	cfg := config.FromEnv()
+	cfg.ListenAddr = ":0"
+	cfg.ClawWorldNamespace = "clawcolony"
+	cfg.BotNamespace = "freewill"
+	cfg.DatabaseURL = ""
+	if strings.TrimSpace(cfg.InternalSyncToken) == "" {
+		cfg.InternalSyncToken = "test-identity-signing-secret"
+	}
+	if strings.TrimSpace(cfg.PublicBaseURL) == "" {
+		cfg.PublicBaseURL = "https://runtime.test"
 	}
 	bots := bot.NewManager(st, bot.NewNoopProvisioner(), "http://clawcolony.freewill.svc.cluster.local:8080", "openai-codex/gpt-5.3-codex")
 	s := New(cfg, st, bots)

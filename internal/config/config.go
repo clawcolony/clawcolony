@@ -17,10 +17,27 @@ type Config struct {
 	ClawWorldAPIBase                   string
 	DeployerAPIBaseURL                 string
 	DeployerPublicBaseURL              string
+	PublicBaseURL                      string
+	IdentitySigningKey                 string
 	RuntimeOpsProxyMode                string
 	PreviewAllowedPorts                string
 	PreviewUpstreamTemplate            string
 	PreviewPublicBaseURL               string
+	XOAuthClientID                     string
+	XOAuthClientSecret                 string
+	XOAuthAuthorizeURL                 string
+	XOAuthTokenURL                     string
+	XOAuthUserInfoURL                  string
+	SocialRewardXAuth                  int64
+	SocialRewardXMention               int64
+	SocialRewardGitHubAuth             int64
+	SocialRewardGitHubStar             int64
+	SocialRewardGitHubFork             int64
+	GitHubOAuthClientID                string
+	GitHubOAuthClientSecret            string
+	GitHubOAuthAuthorizeURL            string
+	GitHubOAuthTokenURL                string
+	GitHubOAuthUserInfoURL             string
 	BotDefaultImage                    string
 	BotEnvSecretName                   string
 	BotSourceRepoBranch                string
@@ -91,10 +108,27 @@ func FromEnv() Config {
 		ClawWorldAPIBase:                   getEnv("CLAWCOLONY_API_BASE_URL", "http://clawcolony.freewill.svc.cluster.local:8080"),
 		DeployerAPIBaseURL:                 getEnv("CLAWCOLONY_DEPLOYER_API_BASE_URL", ""),
 		DeployerPublicBaseURL:              getEnv("CLAWCOLONY_DEPLOYER_PUBLIC_BASE_URL", ""),
+		PublicBaseURL:                      getEnv("CLAWCOLONY_PUBLIC_BASE_URL", ""),
+		IdentitySigningKey:                 getEnv("CLAWCOLONY_IDENTITY_SIGNING_KEY", ""),
 		RuntimeOpsProxyMode:                normalizeRuntimeOpsProxyMode(getEnv("CLAWCOLONY_RUNTIME_OPS_PROXY_MODE", OpsProxyModeCompat)),
 		PreviewAllowedPorts:                getEnv("CLAWCOLONY_PREVIEW_ALLOWED_PORTS", "3000,3001,4173,5173,8000,8080,8787"),
 		PreviewUpstreamTemplate:            getEnv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "http://{{user_id}}.freewill.svc.cluster.local:{{port}}"),
 		PreviewPublicBaseURL:               getEnv("CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL", ""),
+		XOAuthClientID:                     getEnv("CLAWCOLONY_X_OAUTH_CLIENT_ID", ""),
+		XOAuthClientSecret:                 getEnv("CLAWCOLONY_X_OAUTH_CLIENT_SECRET", ""),
+		XOAuthAuthorizeURL:                 getEnv("CLAWCOLONY_X_OAUTH_AUTHORIZE_URL", ""),
+		XOAuthTokenURL:                     getEnv("CLAWCOLONY_X_OAUTH_TOKEN_URL", ""),
+		XOAuthUserInfoURL:                  getEnv("CLAWCOLONY_X_OAUTH_USERINFO_URL", ""),
+		SocialRewardXAuth:                  getEnvInt64("CLAWCOLONY_SOCIAL_REWARD_X_AUTH", 20),
+		SocialRewardXMention:               getEnvInt64("CLAWCOLONY_SOCIAL_REWARD_X_MENTION", 10),
+		SocialRewardGitHubAuth:             getEnvInt64("CLAWCOLONY_SOCIAL_REWARD_GITHUB_AUTH", 10),
+		SocialRewardGitHubStar:             getEnvInt64("CLAWCOLONY_SOCIAL_REWARD_GITHUB_STAR", 10),
+		SocialRewardGitHubFork:             getEnvInt64("CLAWCOLONY_SOCIAL_REWARD_GITHUB_FORK", 30),
+		GitHubOAuthClientID:                getEnv("CLAWCOLONY_GITHUB_OAUTH_CLIENT_ID", ""),
+		GitHubOAuthClientSecret:            getEnv("CLAWCOLONY_GITHUB_OAUTH_CLIENT_SECRET", ""),
+		GitHubOAuthAuthorizeURL:            getEnv("CLAWCOLONY_GITHUB_OAUTH_AUTHORIZE_URL", ""),
+		GitHubOAuthTokenURL:                getEnv("CLAWCOLONY_GITHUB_OAUTH_TOKEN_URL", ""),
+		GitHubOAuthUserInfoURL:             getEnv("CLAWCOLONY_GITHUB_OAUTH_USERINFO_URL", ""),
 		BotDefaultImage:                    getEnv("BOT_DEFAULT_IMAGE", "openclaw:onepod-dev"),
 		BotEnvSecretName:                   getEnv("BOT_ENV_SECRET_NAME", "aibot-llm-secret"),
 		BotSourceRepoBranch:                getEnv("BOT_SOURCE_REPO_BRANCH", "main"),

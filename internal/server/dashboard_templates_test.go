@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -170,6 +171,21 @@ func TestDashboardPromptsKBPodsInteractionConsistency(t *testing.T) {
 				if strings.Contains(s, tok) {
 					t.Fatalf("forbidden token exists: %q", tok)
 				}
+			}
+		})
+	}
+}
+
+func TestDashboardIdentityPagesLoad(t *testing.T) {
+	srv := newTestServer()
+	for _, route := range []string{
+		"/dashboard/agent-register",
+		"/dashboard/agent-owner",
+	} {
+		t.Run(strings.TrimPrefix(route, "/dashboard/"), func(t *testing.T) {
+			w := doJSONRequest(t, srv.mux, http.MethodGet, route, nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("route=%s status=%d body=%s", route, w.Code, w.Body.String())
 			}
 		})
 	}

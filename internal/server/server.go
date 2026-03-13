@@ -83,6 +83,9 @@ type Server struct {
 	chatTaskRecent       map[string][]chatTaskRecord
 	chatExecSem          chan struct{}
 	chatUserExecMu       sync.Mutex
+	identityActivationMu sync.Mutex
+	socialStartMu        sync.Mutex
+	socialStartLast      map[string]time.Time
 	chatUserExecSem      map[string]chan struct{}
 	chatAgentCall        func(ctx context.Context, userID, message string) (reply string, sessionID string, podName string, err error)
 	chatWorkerOnce       sync.Once
@@ -484,6 +487,7 @@ func New(cfg config.Config, st store.Store, bots *bot.Manager) *Server {
 		chatTaskRecent:   make(map[string][]chatTaskRecord),
 		chatExecSem:      make(chan struct{}, chatExecMaxConc),
 		chatUserExecSem:  make(map[string]chan struct{}),
+		socialStartLast:  make(map[string]time.Time),
 		mailNotified:     make(map[string]time.Time),
 		alertLastSent:    make(map[string]time.Time),
 		alertLastAmt:     make(map[string]int64),
@@ -530,7 +534,7 @@ func (s *Server) Start() error {
 	if s.cfg.RuntimeEnabled() {
 		go s.startWorldTickLoop()
 	}
-	handler := s.roleAccessMiddleware(s.mux)
+	handler := s.roleAccessMiddleware(s.ownerAndPricingMiddleware(s.mux))
 	return http.ListenAndServe(s.cfg.ListenAddr, s.httpAccessLogMiddleware(handler))
 }
 
@@ -1064,6 +1068,21 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/bots/nickname/upsert", s.handleBotNicknameUpsert)
 	s.mux.HandleFunc("/v1/bots/profile/readme", s.handleBotProfileReadme)
 	s.mux.HandleFunc("/v1/bots/thoughts", s.handleBotThoughts)
+	s.mux.HandleFunc("/v1/users/register", s.handleUserRegister)
+	s.mux.HandleFunc("/v1/users/status", s.handleUserStatus)
+	s.mux.HandleFunc("/v1/claims/request-magic-link", s.handleClaimRequestMagicLink)
+	s.mux.HandleFunc("/v1/claims/complete", s.handleClaimComplete)
+	s.mux.HandleFunc("/v1/owner/me", s.handleOwnerMe)
+	s.mux.HandleFunc("/v1/owner/logout", s.handleOwnerLogout)
+	s.mux.HandleFunc("/v1/social/x/connect/start", s.handleSocialXConnectStart)
+	s.mux.HandleFunc("/v1/social/x/verify", s.handleSocialXVerify)
+	s.mux.HandleFunc("/v1/social/github/connect/start", s.handleSocialGitHubConnectStart)
+	s.mux.HandleFunc("/v1/social/github/verify", s.handleSocialGitHubVerify)
+	s.mux.HandleFunc("/auth/x/callback", s.handleSocialXCallback)
+	s.mux.HandleFunc("/auth/github/callback", s.handleSocialGitHubCallback)
+	s.mux.HandleFunc("/v1/social/policy", s.handleSocialPolicy)
+	s.mux.HandleFunc("/v1/social/rewards/status", s.handleSocialRewardsStatus)
+	s.mux.HandleFunc("/v1/token/pricing", s.handleTokenPricing)
 	s.mux.HandleFunc("/v1/policy/mission", s.handleMissionPolicy)
 	s.mux.HandleFunc("/v1/policy/mission/default", s.handleMissionDefault)
 	s.mux.HandleFunc("/v1/policy/mission/room", s.handleMissionRoom)
@@ -1192,6 +1211,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/tasks/pi/history", s.handlePiTaskHistory)
 	s.mux.HandleFunc("/dashboard", s.handleDashboard)
 	s.mux.HandleFunc("/dashboard/", s.handleDashboard)
+	s.mux.HandleFunc("/claim/", s.handleClaimPage)
 	s.mux.HandleFunc("/", s.handleNotFound)
 }
 

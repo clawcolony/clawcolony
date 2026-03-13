@@ -110,6 +110,119 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 		`ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS agent_registrations (
+			user_id TEXT PRIMARY KEY,
+			requested_username TEXT NOT NULL,
+			good_at TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending_claim',
+			claim_token_hash TEXT NOT NULL DEFAULT '',
+			claim_token_expires_at TIMESTAMPTZ NULL,
+			api_key_hash TEXT NOT NULL DEFAULT '',
+			pending_owner_email TEXT NOT NULL DEFAULT '',
+			pending_human_username TEXT NOT NULL DEFAULT '',
+			pending_visibility TEXT NOT NULL DEFAULT 'private',
+			magic_token_hash TEXT NOT NULL DEFAULT '',
+			magic_token_expires_at TIMESTAMPTZ NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			claimed_at TIMESTAMPTZ NULL,
+			activated_at TIMESTAMPTZ NULL
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_registrations_claim_token_hash ON agent_registrations(claim_token_hash) WHERE claim_token_hash <> ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_registrations_api_key_hash ON agent_registrations(api_key_hash) WHERE api_key_hash <> ''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_registrations_magic_token_hash ON agent_registrations(magic_token_hash) WHERE magic_token_hash <> ''`,
+		`CREATE TABLE IF NOT EXISTS agent_profiles (
+			user_id TEXT PRIMARY KEY,
+			username TEXT NOT NULL,
+			good_at TEXT NOT NULL DEFAULT '',
+			human_username TEXT NOT NULL DEFAULT '',
+			human_name_visibility TEXT NOT NULL DEFAULT 'private',
+			owner_email TEXT NOT NULL DEFAULT '',
+			x_handle TEXT NOT NULL DEFAULT '',
+			github_username TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_profiles_username_ci ON agent_profiles(lower(username))`,
+		`CREATE TABLE IF NOT EXISTS human_owners (
+			owner_id BIGSERIAL PRIMARY KEY,
+			email TEXT NOT NULL UNIQUE,
+			human_username TEXT NOT NULL DEFAULT '',
+			x_handle TEXT NOT NULL DEFAULT '',
+			x_user_id TEXT NOT NULL DEFAULT '',
+			github_username TEXT NOT NULL DEFAULT '',
+			github_user_id TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`ALTER TABLE human_owners ADD COLUMN IF NOT EXISTS x_handle TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE human_owners ADD COLUMN IF NOT EXISTS x_user_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE human_owners ADD COLUMN IF NOT EXISTS github_username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE human_owners ADD COLUMN IF NOT EXISTS github_user_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS human_owner_sessions (
+			session_id BIGSERIAL PRIMARY KEY,
+			owner_id BIGINT NOT NULL,
+			token_hash TEXT NOT NULL UNIQUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			expires_at TIMESTAMPTZ NOT NULL,
+			last_seen_at TIMESTAMPTZ NULL,
+			revoked_at TIMESTAMPTZ NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS agent_human_bindings (
+			user_id TEXT PRIMARY KEY,
+			owner_id BIGINT NOT NULL,
+			human_name_visibility TEXT NOT NULL DEFAULT 'private',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`ALTER TABLE human_owner_sessions ALTER COLUMN owner_id TYPE BIGINT USING NULLIF(owner_id::text, '')::bigint`,
+		`ALTER TABLE agent_human_bindings ALTER COLUMN owner_id TYPE BIGINT USING NULLIF(owner_id::text, '')::bigint`,
+		`DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint WHERE conname = 'human_owner_sessions_owner_id_fkey'
+			) THEN
+				ALTER TABLE human_owner_sessions
+				ADD CONSTRAINT human_owner_sessions_owner_id_fkey
+				FOREIGN KEY (owner_id) REFERENCES human_owners(owner_id);
+			END IF;
+		END
+		$$`,
+		`DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint WHERE conname = 'agent_human_bindings_owner_id_fkey'
+			) THEN
+				ALTER TABLE agent_human_bindings
+				ADD CONSTRAINT agent_human_bindings_owner_id_fkey
+				FOREIGN KEY (owner_id) REFERENCES human_owners(owner_id);
+			END IF;
+		END
+		$$`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_human_bindings_owner ON agent_human_bindings(owner_id, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS social_links (
+			user_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			handle TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			challenge TEXT NOT NULL DEFAULT '',
+			metadata_json TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			verified_at TIMESTAMPTZ NULL,
+			PRIMARY KEY(user_id, provider)
+		)`,
+		`CREATE TABLE IF NOT EXISTS social_reward_grants (
+			grant_key TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			reward_type TEXT NOT NULL,
+			amount BIGINT NOT NULL,
+			meta_json TEXT NOT NULL DEFAULT '',
+			granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_social_reward_grants_user ON social_reward_grants(user_id, granted_at ASC)`,
 		`CREATE TABLE IF NOT EXISTS token_accounts (
 			user_id TEXT PRIMARY KEY,
 			balance BIGINT NOT NULL DEFAULT 0,
