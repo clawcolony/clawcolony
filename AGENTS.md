@@ -6,7 +6,8 @@
 
 `clawcolony-runtime` 是运行时平面，核心职责是为 OpenClaw users 提供 agent-facing 能力：
 
-- MCP server 与 tools
+- hosted static skill bundle（`/skill.md`、`/skill.json`、根路径子 skill）
+- runtime HTTP API（`/v1/...`）与共享执行面
 - mailbox / contacts / threads / knowledgebase 等运行时接口
 - 协作协议与文明流程（对 agents 可见）
 - runtime 数据读写与状态查询
@@ -22,7 +23,7 @@
 
 ## 2.1 Runtime 边界落地口径（2026-03-12 起）
 
-- runtime 为 runtime-lite：只保留 agent 社区模拟/MCP 核心能力，不再承担 deployment/dev/openclaw/chat/prompt/pod logs 相关职责。
+- runtime 为 runtime-lite：只保留 agent 社区模拟、hosted skill、runtime HTTP API 等核心能力，不再承担 deployment/dev/openclaw/chat/prompt/pod logs 相关职责。
 - runtime 不允许对 removed domains 做兼容代理；这些路径在 runtime 必须稳定返回 `404`。
 - runtime 下列接口必须 hard cut（`404`）且不得恢复：
   - `/v1/prompts/templates`
@@ -92,14 +93,26 @@
   - `35512` = runtime dashboard / API
   - `35513` = minikube dashboard
 
-## 4. MCP 与协议原则
+## 4. Hosted Skills 与协议原则
 
-- 对 agents 暴露的能力优先走 MCP tools。
-- tools 命名、描述、入参、出参必须稳定、可读、可追踪。
+- hosted static `skill.md`、`skill.json` 与根路径子 skill 是 agent 的 instruction layer。
+- runtime `/v1/...` HTTP API 是 execution layer；skill 文档负责说明什么时候调用、按什么顺序调用、成功证据是什么。
+- 对外 canonical hosted URLs 固定为根路径：
+  - `/skill.md`
+  - `/skill.json`
+  - `/heartbeat.md`
+  - `/knowledge-base.md`
+  - `/collab-mode.md`
+  - `/colony-tools.md`
+  - `/ganglia-stack.md`
+  - `/governance.md`
+  - `/upgrade-clawcolony.md`
+- `/skills/*.md` 仅保留兼容别名，不作为正式公开地址写进 agent-facing 文档。
 - 协议变更必须同步更新：
   - runtime 文档
-  - tool 描述
+  - hosted skill bundle
   - agent 可见说明（skills/instructions）
+- `upgrade-clawcolony` 只覆盖社区代码协作，不得把 deploy、管理平面操作、dev-preview、self-core-upgrade 重新写回 runtime protocol。
 - 禁止在 agent-facing 指令中暴露无关内部实现细节。
 
 ## 5. 安全与数据规则
@@ -119,28 +132,32 @@
 
 1. 明确改动是否仅 runtime
 2. 完成实现
-3. **执行 code review（强制）**——每次代码更改后必须调用 `claude code review`，审查变更并修复发现的所有问题
+3. **执行 code review（强制）**——优先调用 `claude code review`；若 CLI 因缺少 stdin、无输出超时、或当前环境不可用而阻塞，必须显式记录 blocker，再继续手动 diff review 与测试验证
 4. 运行单测与必要联调
 5. 更新 `doc/updates/`
 6. commit + push
 
 强制性规则：
 
-- **每次更改完代码都必须调用 `claude code review`，并修复找到的所有问题，然后才能继续后续步骤。**
-- 若 review 发现问题，修复后需重新 review 直至通过。
+- **每次更改完代码都必须先尝试 `claude code review`。**
+- 若 `claude code review` 可用且发现问题，必须修复后重新 review 直至通过。
+- 若 `claude code review` 因环境问题不可完成，必须记录具体 blocker，然后补充：
+  - 手动 diff review 结论
+  - 相关测试结果
+  - 未覆盖风险
+- 禁止在 reviewer 未实际返回结果时谎称 “review 已通过”。
 
 ## 7. 测试基线
 
 最小基线命令：
 
 ```bash
-cd /Users/waken/workspace/landlord/clawcolony-runtime-upstream
 go test ./...
 ```
 
 涉及协议或 tool 变更时，至少补充：
 
-- MCP tool 调用 smoke（参数校验、错误码、返回结构）
+- hosted skill route/content regression（如 `/skill.md`、`/skill.json`、根路径子 skill 与 `/skills/*.md` alias）
 - mailbox/knowledgebase 核心流程 smoke
 - 边界一致性校验（不越界、不恢复 removed domains）
 

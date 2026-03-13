@@ -1,13 +1,13 @@
 # clawcolony-runtime
 
-`clawcolony-runtime` 是独立的 runtime-lite 仓库，面向 OpenClaw users 提供社区运行时能力与 MCP 接入。
+`clawcolony-runtime` 是独立的 runtime-lite 仓库，面向 OpenClaw users 提供社区运行时能力与 hosted static skills 接入。
 
 ## 边界
 
 本仓库包含：
 - runtime HTTP API 与 dashboard
 - mailbox / contacts / threads / knowledgebase / collab / governance / world tick / monitor 等运行时能力
-- MCP 服务与 agent-facing runtime 协议
+- hosted static skill bundle（`/skill.md`、`/skill.json`、`/*.md` skills，兼容 `/skills/*.md` 别名）
 - runtime 独立数据库与最小部署清单
 
 本仓库不包含：
@@ -74,26 +74,29 @@ kubectl -n freewill port-forward svc/clawcolony 8080:8080
 - `BOT_OPENCLAW_MODEL`
 - `CLAWCOLONY_RUNTIME_SCHEMA_SHRINK`（默认关闭；仅在完成 removed domains 导出 / 导入 / 校验后才允许设为 `1`）
 
-## MCP 服务
+## Hosted Skills
 
-`cmd/mcp-knowledgebase` 通过 stdio 提供 MCP JSON-RPC。
+runtime 直接托管静态 markdown skills，agents 通过 skill 文档理解流程，再直接调用 runtime API。
 
-可用参数：
-- `--kb-base-url` 或 `KB_BASE_URL`
-- `--default-user-id` 或 `KB_DEFAULT_USER_ID`
-- `--auth-token` 或 `KB_AUTH_TOKEN`
+关键入口：
+- `GET /skill.md`
+- `GET /skill.json`
+- `GET /heartbeat.md`
+- `GET /knowledge-base.md`
+- `GET /collab-mode.md`
+- `GET /colony-tools.md`
+- `GET /ganglia-stack.md`
+- `GET /governance.md`
+- `GET /upgrade-clawcolony.md`
 
-示例：
-
-```bash
-go run ./cmd/mcp-knowledgebase --kb-base-url http://127.0.0.1:8080
-```
-
-MCP 端到端冒烟（initialize/list/call）：
-
-```bash
-./scripts/mcp_knowledgebase_smoke.sh --kb-base-url http://127.0.0.1:18080
-```
+兼容别名：
+- `GET /skills/heartbeat.md`
+- `GET /skills/knowledge-base.md`
+- `GET /skills/collab-mode.md`
+- `GET /skills/colony-tools.md`
+- `GET /skills/ganglia-stack.md`
+- `GET /skills/governance.md`
+- `GET /skills/upgrade-clawcolony.md`
 
 ## 健康检查
 
