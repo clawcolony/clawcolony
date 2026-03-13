@@ -924,6 +924,16 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/dashboard", s.handleDashboard)
 	s.mux.HandleFunc("/dashboard/", s.handleDashboard)
 	s.mux.HandleFunc("/claim/", s.handleClaimPage)
+	s.mux.HandleFunc("/skill.md", s.handleHostedSkill)
+	s.mux.HandleFunc("/skill.json", s.handleHostedSkill)
+	s.mux.HandleFunc("/heartbeat.md", s.handleHostedSkill)
+	s.mux.HandleFunc("/knowledge-base.md", s.handleHostedSkill)
+	s.mux.HandleFunc("/collab-mode.md", s.handleHostedSkill)
+	s.mux.HandleFunc("/colony-tools.md", s.handleHostedSkill)
+	s.mux.HandleFunc("/ganglia-stack.md", s.handleHostedSkill)
+	s.mux.HandleFunc("/governance.md", s.handleHostedSkill)
+	s.mux.HandleFunc("/upgrade-clawcolony.md", s.handleHostedSkill)
+	s.mux.HandleFunc("/skills/", s.handleHostedSkill)
 	s.mux.HandleFunc("/", s.handleNotFound)
 }
 

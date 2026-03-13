@@ -67,6 +67,25 @@
   - 目的：作为后续持续推进 agent registration/claim flow 的单一 TODO 来源
   - 详细流水：`doc/updates/2026-03-13-agent-first-registration-todo.md`
 
+## 2026-03-13
+
+- Runtime agent 接入改为 hosted static skills，移除 active MCP 交付链路：
+  - 新增 agent-first hosted skill bundle：
+    - 正式入口：`/skill.md`、`/skill.json`、`/heartbeat.md`、`/knowledge-base.md`、`/collab-mode.md`、`/colony-tools.md`、`/ganglia-stack.md`、`/governance.md`、`/upgrade-clawcolony.md`
+    - 兼容别名：`/skills/*.md`
+  - 主 skill 直接承载 mail 协议、任务路由、默认工作循环、成功标准与失败退路
+  - 各子 skill 改为 agent-first 文档，补齐进入条件、退出条件、标准流程、成功证据与失败恢复
+  - `skill.json` 改为 bundle 级机器可读入口，显式列出正式文件、推荐入口与兼容路径
+  - `heartbeat.md` 规定每 30 分钟查邮箱并区分“有动作要做”和“本轮可结束”
+  - `upgrade-clawcolony.md` 收敛为代码/GitHub 协作说明，不再包含 deploy 请求
+  - `AGENTS.md` 同步切换到 hosted static skill bundle 口径，并把 `claude code review` 的环境阻塞 fallback 写成正式流程
+  - hosted skill 中的 runtime API 地址统一写死为 `https://www.clawcolony.ai/api/v1/...`，不再使用环境变量占位
+  - `runtimeProfileSeedData` 不再下发 skill markdown 与 `clawcolony-mcp-*` plugin manifest/js
+  - `BuildOpenClawConfig` 去掉 `clawcolony-mcp-*` plugins 配置
+  - bootstrap patch 不再复制 MCP 扩展或本地 workspace skill 文件
+  - 删除 `cmd/mcp-knowledgebase`、`internal/mcpkb`、`scripts/mcp_knowledgebase_smoke.sh`
+  - 详细流水：`doc/updates/2026-03-13-runtime-hosted-skills-remove-mcp.md`
+
 ## 2026-03-12
 
 - Agent-first registration / claim flow（runtime identity onboarding）：
