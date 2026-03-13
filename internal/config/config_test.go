@@ -1,68 +1,43 @@
 package config
 
-import (
-	"testing"
-	"time"
-)
-
-func TestServiceRoleNormalization(t *testing.T) {
-	cfg := Config{ServiceRole: "RUNTIME"}
-	if cfg.EffectiveServiceRole() != ServiceRoleRuntime {
-		t.Fatalf("effective role = %q, want %q", cfg.EffectiveServiceRole(), ServiceRoleRuntime)
-	}
-	if !cfg.RuntimeEnabled() {
-		t.Fatalf("runtime role enable flag mismatch: runtime=%v", cfg.RuntimeEnabled())
-	}
-
-	cfg = Config{ServiceRole: ""}
-	if cfg.EffectiveServiceRole() != ServiceRoleRuntime {
-		t.Fatalf("empty role should normalize to runtime, got %q", cfg.EffectiveServiceRole())
-	}
-}
-
-func TestRuntimeOpsProxyModeNormalization(t *testing.T) {
-	cfg := Config{RuntimeOpsProxyMode: "HARD_CUT"}
-	if got := cfg.EffectiveRuntimeOpsProxyMode(); got != OpsProxyModeHardCut {
-		t.Fatalf("effective ops proxy mode = %q, want %q", got, OpsProxyModeHardCut)
-	}
-	cfg = Config{RuntimeOpsProxyMode: "unknown"}
-	if got := cfg.EffectiveRuntimeOpsProxyMode(); got != OpsProxyModeCompat {
-		t.Fatalf("unknown ops proxy mode should fallback to compat, got %q", got)
-	}
-}
+import "testing"
 
 func TestFromEnvDefaults(t *testing.T) {
-	t.Setenv("CLAWCOLONY_SERVICE_ROLE", "")
-	t.Setenv("MIN_POPULATION", "")
+	t.Setenv("CLAWCOLONY_LISTEN_ADDR", "")
+	t.Setenv("CLAWCOLONY_NAMESPACE", "")
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("CLAWCOLONY_INTERNAL_SYNC_TOKEN", "")
+	t.Setenv("CLAWCOLONY_API_BASE_URL", "")
+	t.Setenv("COLONY_REPO_URL", "")
+	t.Setenv("COLONY_REPO_BRANCH", "")
+	t.Setenv("COLONY_REPO_LOCAL_PATH", "")
+	t.Setenv("COLONY_REPO_SYNC_ENABLED", "")
 	t.Setenv("AUTONOMY_REMINDER_INTERVAL_TICKS", "")
 	t.Setenv("COMMUNITY_COMM_REMINDER_INTERVAL_TICKS", "")
 	t.Setenv("KB_ENROLLMENT_REMINDER_INTERVAL_TICKS", "")
 	t.Setenv("KB_VOTING_REMINDER_INTERVAL_TICKS", "")
-	t.Setenv("CLAWCOLONY_CHAT_REPLY_TIMEOUT", "")
-	t.Setenv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "")
-	t.Setenv("CLAWCOLONY_RUNTIME_OPS_PROXY_MODE", "")
 
 	cfg := FromEnv()
-	if cfg.EffectiveServiceRole() != ServiceRoleRuntime {
-		t.Fatalf("service role default = %q", cfg.EffectiveServiceRole())
+	if cfg.ListenAddr != ":8080" {
+		t.Fatalf("ListenAddr default = %q, want :8080", cfg.ListenAddr)
 	}
-	if cfg.PreviewAllowedPorts == "" {
-		t.Fatalf("preview allowed ports default should not be empty")
+	if cfg.ClawWorldNamespace != "freewill" {
+		t.Fatalf("ClawWorldNamespace default = %q, want freewill", cfg.ClawWorldNamespace)
 	}
-	if cfg.RuntimeOpsProxyMode != OpsProxyModeCompat {
-		t.Fatalf("runtime ops proxy mode default = %q, want %q", cfg.RuntimeOpsProxyMode, OpsProxyModeCompat)
+	if cfg.InternalSyncToken != "" {
+		t.Fatalf("InternalSyncToken default = %q, want empty", cfg.InternalSyncToken)
 	}
-	if cfg.PreviewUpstreamTemplate != "http://{{user_id}}.freewill.svc.cluster.local:{{port}}" {
-		t.Fatalf("preview upstream template default = %q, want %q", cfg.PreviewUpstreamTemplate, "http://{{user_id}}.freewill.svc.cluster.local:{{port}}")
+	if cfg.ClawWorldAPIBase != "http://clawcolony.freewill.svc.cluster.local:8080" {
+		t.Fatalf("ClawWorldAPIBase default = %q", cfg.ClawWorldAPIBase)
 	}
-	if cfg.BotModel == "" {
-		t.Fatalf("bot model default should not be empty")
+	if cfg.ColonyRepoBranch != "main" {
+		t.Fatalf("ColonyRepoBranch default = %q, want main", cfg.ColonyRepoBranch)
 	}
-	if cfg.BotModel != "openai/gpt-5-mini" {
-		t.Fatalf("bot model default = %q, want %q", cfg.BotModel, "openai/gpt-5-mini")
+	if cfg.ColonyRepoLocalPath != "/tmp/clawcolony-civilization-repo" {
+		t.Fatalf("ColonyRepoLocalPath default = %q", cfg.ColonyRepoLocalPath)
 	}
-	if cfg.MinPopulation != 0 {
-		t.Fatalf("MinPopulation default = %d, want 0", cfg.MinPopulation)
+	if cfg.ColonyRepoSync {
+		t.Fatal("ColonyRepoSync default should be false")
 	}
 	if cfg.AutonomyReminderIntervalTicks != 0 {
 		t.Fatalf("AutonomyReminderIntervalTicks default = %d, want 0", cfg.AutonomyReminderIntervalTicks)
@@ -76,7 +51,86 @@ func TestFromEnvDefaults(t *testing.T) {
 	if cfg.KBVotingReminderIntervalTicks != 0 {
 		t.Fatalf("KBVotingReminderIntervalTicks default = %d, want 0", cfg.KBVotingReminderIntervalTicks)
 	}
-	if cfg.ChatReplyTimeout != 8*time.Minute {
-		t.Fatalf("ChatReplyTimeout default = %s, want 8m0s", cfg.ChatReplyTimeout)
+}
+
+func TestFromEnvParsesRuntimeFields(t *testing.T) {
+	t.Setenv("CLAWCOLONY_LISTEN_ADDR", ":18080")
+	t.Setenv("CLAWCOLONY_NAMESPACE", "runtime-test")
+	t.Setenv("DATABASE_URL", "postgres://runtime")
+	t.Setenv("CLAWCOLONY_INTERNAL_SYNC_TOKEN", "sync-token")
+	t.Setenv("CLAWCOLONY_API_BASE_URL", "https://runtime.example")
+	t.Setenv("COLONY_REPO_URL", "https://example.com/repo.git")
+	t.Setenv("COLONY_REPO_BRANCH", "runtime-lite")
+	t.Setenv("COLONY_REPO_LOCAL_PATH", "/tmp/runtime-lite")
+	t.Setenv("COLONY_REPO_SYNC_ENABLED", "true")
+	t.Setenv("AUTONOMY_REMINDER_INTERVAL_TICKS", "240")
+	t.Setenv("COMMUNITY_COMM_REMINDER_INTERVAL_TICKS", "480")
+	t.Setenv("KB_ENROLLMENT_REMINDER_INTERVAL_TICKS", "360")
+	t.Setenv("KB_VOTING_REMINDER_INTERVAL_TICKS", "120")
+
+	cfg := FromEnv()
+	if cfg.ListenAddr != ":18080" {
+		t.Fatalf("ListenAddr = %q, want :18080", cfg.ListenAddr)
+	}
+	if cfg.ClawWorldNamespace != "runtime-test" {
+		t.Fatalf("ClawWorldNamespace = %q, want runtime-test", cfg.ClawWorldNamespace)
+	}
+	if cfg.DatabaseURL != "postgres://runtime" {
+		t.Fatalf("DatabaseURL = %q, want postgres://runtime", cfg.DatabaseURL)
+	}
+	if cfg.InternalSyncToken != "sync-token" {
+		t.Fatalf("InternalSyncToken = %q, want sync-token", cfg.InternalSyncToken)
+	}
+	if cfg.ClawWorldAPIBase != "https://runtime.example" {
+		t.Fatalf("ClawWorldAPIBase = %q, want https://runtime.example", cfg.ClawWorldAPIBase)
+	}
+	if cfg.ColonyRepoURL != "https://example.com/repo.git" {
+		t.Fatalf("ColonyRepoURL = %q, want repo url", cfg.ColonyRepoURL)
+	}
+	if cfg.ColonyRepoBranch != "runtime-lite" {
+		t.Fatalf("ColonyRepoBranch = %q, want runtime-lite", cfg.ColonyRepoBranch)
+	}
+	if cfg.ColonyRepoLocalPath != "/tmp/runtime-lite" {
+		t.Fatalf("ColonyRepoLocalPath = %q, want /tmp/runtime-lite", cfg.ColonyRepoLocalPath)
+	}
+	if !cfg.ColonyRepoSync {
+		t.Fatal("ColonyRepoSync should parse true")
+	}
+	if cfg.AutonomyReminderIntervalTicks != 240 {
+		t.Fatalf("AutonomyReminderIntervalTicks = %d, want 240", cfg.AutonomyReminderIntervalTicks)
+	}
+	if cfg.CommunityCommReminderIntervalTicks != 480 {
+		t.Fatalf("CommunityCommReminderIntervalTicks = %d, want 480", cfg.CommunityCommReminderIntervalTicks)
+	}
+	if cfg.KBEnrollmentReminderIntervalTicks != 360 {
+		t.Fatalf("KBEnrollmentReminderIntervalTicks = %d, want 360", cfg.KBEnrollmentReminderIntervalTicks)
+	}
+	if cfg.KBVotingReminderIntervalTicks != 120 {
+		t.Fatalf("KBVotingReminderIntervalTicks = %d, want 120", cfg.KBVotingReminderIntervalTicks)
+	}
+}
+
+func TestFromEnvInvalidValuesFallBack(t *testing.T) {
+	t.Setenv("COLONY_REPO_SYNC_ENABLED", "maybe")
+	t.Setenv("AUTONOMY_REMINDER_INTERVAL_TICKS", "bad")
+	t.Setenv("COMMUNITY_COMM_REMINDER_INTERVAL_TICKS", "bad")
+	t.Setenv("KB_ENROLLMENT_REMINDER_INTERVAL_TICKS", "bad")
+	t.Setenv("KB_VOTING_REMINDER_INTERVAL_TICKS", "bad")
+
+	cfg := FromEnv()
+	if cfg.ColonyRepoSync {
+		t.Fatal("invalid bool should fall back to false")
+	}
+	if cfg.AutonomyReminderIntervalTicks != 0 {
+		t.Fatalf("invalid autonomy interval should fall back to 0, got %d", cfg.AutonomyReminderIntervalTicks)
+	}
+	if cfg.CommunityCommReminderIntervalTicks != 0 {
+		t.Fatalf("invalid community interval should fall back to 0, got %d", cfg.CommunityCommReminderIntervalTicks)
+	}
+	if cfg.KBEnrollmentReminderIntervalTicks != 0 {
+		t.Fatalf("invalid kb enroll interval should fall back to 0, got %d", cfg.KBEnrollmentReminderIntervalTicks)
+	}
+	if cfg.KBVotingReminderIntervalTicks != 0 {
+		t.Fatalf("invalid kb vote interval should fall back to 0, got %d", cfg.KBVotingReminderIntervalTicks)
 	}
 }

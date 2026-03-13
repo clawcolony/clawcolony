@@ -4,25 +4,16 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type Config struct {
 	ListenAddr                         string
-	ServiceRole                        string
 	ClawWorldNamespace                 string
-	BotNamespace                       string
 	DatabaseURL                        string
 	InternalSyncToken                  string
 	ClawWorldAPIBase                   string
-	DeployerAPIBaseURL                 string
-	DeployerPublicBaseURL              string
 	PublicBaseURL                      string
 	IdentitySigningKey                 string
-	RuntimeOpsProxyMode                string
-	PreviewAllowedPorts                string
-	PreviewUpstreamTemplate            string
-	PreviewPublicBaseURL               string
 	XOAuthClientID                     string
 	XOAuthClientSecret                 string
 	XOAuthAuthorizeURL                 string
@@ -38,11 +29,6 @@ type Config struct {
 	GitHubOAuthAuthorizeURL            string
 	GitHubOAuthTokenURL                string
 	GitHubOAuthUserInfoURL             string
-	BotDefaultImage                    string
-	BotEnvSecretName                   string
-	BotSourceRepoBranch                string
-	BotModel                           string
-	BotStatePVCSize                    string
 	ColonyRepoURL                      string
 	ColonyRepoBranch                   string
 	ColonyRepoLocalPath                string
@@ -78,42 +64,17 @@ type Config struct {
 	KBEnrollmentReminderOffsetTicks    int64
 	KBVotingReminderIntervalTicks      int64
 	KBVotingReminderOffsetTicks        int64
-	ChatReplyTimeout                   time.Duration
-	ChatWorkerCount                    int
-	ChatQueueSize                      int
-	ChatExecMaxConc                    int
-	ChatLatestWins                     bool
-	ChatCancelRunning                  bool
-	ChatWarmupRetries                  int
-	ChatSessionRetries                 int
-	ChatRetryDelay                     time.Duration
 }
-
-const (
-	ServiceRoleAll          = "all"
-	ServiceRoleRuntime      = "runtime"
-	OpsProxyModeCompat      = "compat"
-	OpsProxyModeHardCut     = "hard_cut"
-	OpsProxyModeLocalLegacy = "local"
-)
 
 func FromEnv() Config {
 	return Config{
 		ListenAddr:                         getEnv("CLAWCOLONY_LISTEN_ADDR", ":8080"),
-		ServiceRole:                        normalizeServiceRole(getEnv("CLAWCOLONY_SERVICE_ROLE", ServiceRoleRuntime)),
 		ClawWorldNamespace:                 getEnv("CLAWCOLONY_NAMESPACE", "freewill"),
-		BotNamespace:                       getEnvAny([]string{"USER_NAMESPACE", "BOT_NAMESPACE"}, "freewill"),
 		DatabaseURL:                        getEnv("DATABASE_URL", ""),
 		InternalSyncToken:                  getEnv("CLAWCOLONY_INTERNAL_SYNC_TOKEN", ""),
 		ClawWorldAPIBase:                   getEnv("CLAWCOLONY_API_BASE_URL", "http://clawcolony.freewill.svc.cluster.local:8080"),
-		DeployerAPIBaseURL:                 getEnv("CLAWCOLONY_DEPLOYER_API_BASE_URL", ""),
-		DeployerPublicBaseURL:              getEnv("CLAWCOLONY_DEPLOYER_PUBLIC_BASE_URL", ""),
 		PublicBaseURL:                      getEnv("CLAWCOLONY_PUBLIC_BASE_URL", ""),
 		IdentitySigningKey:                 getEnv("CLAWCOLONY_IDENTITY_SIGNING_KEY", ""),
-		RuntimeOpsProxyMode:                normalizeRuntimeOpsProxyMode(getEnv("CLAWCOLONY_RUNTIME_OPS_PROXY_MODE", OpsProxyModeCompat)),
-		PreviewAllowedPorts:                getEnv("CLAWCOLONY_PREVIEW_ALLOWED_PORTS", "3000,3001,4173,5173,8000,8080,8787"),
-		PreviewUpstreamTemplate:            getEnv("CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE", "http://{{user_id}}.freewill.svc.cluster.local:{{port}}"),
-		PreviewPublicBaseURL:               getEnv("CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL", ""),
 		XOAuthClientID:                     getEnv("CLAWCOLONY_X_OAUTH_CLIENT_ID", ""),
 		XOAuthClientSecret:                 getEnv("CLAWCOLONY_X_OAUTH_CLIENT_SECRET", ""),
 		XOAuthAuthorizeURL:                 getEnv("CLAWCOLONY_X_OAUTH_AUTHORIZE_URL", ""),
@@ -129,11 +90,6 @@ func FromEnv() Config {
 		GitHubOAuthAuthorizeURL:            getEnv("CLAWCOLONY_GITHUB_OAUTH_AUTHORIZE_URL", ""),
 		GitHubOAuthTokenURL:                getEnv("CLAWCOLONY_GITHUB_OAUTH_TOKEN_URL", ""),
 		GitHubOAuthUserInfoURL:             getEnv("CLAWCOLONY_GITHUB_OAUTH_USERINFO_URL", ""),
-		BotDefaultImage:                    getEnv("BOT_DEFAULT_IMAGE", "openclaw:onepod-dev"),
-		BotEnvSecretName:                   getEnv("BOT_ENV_SECRET_NAME", "aibot-llm-secret"),
-		BotSourceRepoBranch:                getEnv("BOT_SOURCE_REPO_BRANCH", "main"),
-		BotModel:                           getEnv("BOT_OPENCLAW_MODEL", "openai/gpt-5-mini"),
-		BotStatePVCSize:                    getEnv("BOT_STATE_PVC_SIZE", "5Gi"),
 		ColonyRepoURL:                      getEnv("COLONY_REPO_URL", ""),
 		ColonyRepoBranch:                   getEnv("COLONY_REPO_BRANCH", "main"),
 		ColonyRepoLocalPath:                getEnv("COLONY_REPO_LOCAL_PATH", "/tmp/clawcolony-civilization-repo"),
@@ -169,52 +125,6 @@ func FromEnv() Config {
 		KBEnrollmentReminderOffsetTicks:    getEnvInt64("KB_ENROLLMENT_REMINDER_OFFSET_TICKS", 2),
 		KBVotingReminderIntervalTicks:      getEnvInt64("KB_VOTING_REMINDER_INTERVAL_TICKS", 0),
 		KBVotingReminderOffsetTicks:        getEnvInt64("KB_VOTING_REMINDER_OFFSET_TICKS", 8),
-		ChatReplyTimeout:                   getEnvDuration("CLAWCOLONY_CHAT_REPLY_TIMEOUT", 8*time.Minute),
-		ChatWorkerCount:                    getEnvInt("CLAWCOLONY_CHAT_WORKERS", 4),
-		ChatQueueSize:                      getEnvInt("CLAWCOLONY_CHAT_QUEUE_SIZE", 4096),
-		ChatExecMaxConc:                    getEnvInt("CLAWCOLONY_CHAT_EXEC_MAX_CONCURRENCY", 4),
-		ChatLatestWins:                     getEnvBool("CLAWCOLONY_CHAT_LATEST_WINS", true),
-		ChatCancelRunning:                  getEnvBool("CLAWCOLONY_CHAT_CANCEL_RUNNING", true),
-		ChatWarmupRetries:                  getEnvInt("CLAWCOLONY_CHAT_WARMUP_RETRIES", 1),
-		ChatSessionRetries:                 getEnvInt("CLAWCOLONY_CHAT_SESSION_RETRIES", 1),
-		ChatRetryDelay:                     getEnvDuration("CLAWCOLONY_CHAT_RETRY_DELAY", 600*time.Millisecond),
-	}
-}
-
-func (c Config) EffectiveServiceRole() string {
-	return normalizeServiceRole(c.ServiceRole)
-}
-
-func (c Config) RuntimeEnabled() bool {
-	role := c.EffectiveServiceRole()
-	return role == ServiceRoleAll || role == ServiceRoleRuntime
-}
-
-func (c Config) EffectiveRuntimeOpsProxyMode() string {
-	return normalizeRuntimeOpsProxyMode(c.RuntimeOpsProxyMode)
-}
-
-func normalizeServiceRole(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case ServiceRoleRuntime:
-		return ServiceRoleRuntime
-	case ServiceRoleAll:
-		return ServiceRoleAll
-	default:
-		return ServiceRoleRuntime
-	}
-}
-
-func normalizeRuntimeOpsProxyMode(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case OpsProxyModeCompat:
-		return OpsProxyModeCompat
-	case OpsProxyModeHardCut:
-		return OpsProxyModeHardCut
-	case OpsProxyModeLocalLegacy:
-		return OpsProxyModeLocalLegacy
-	default:
-		return OpsProxyModeCompat
 	}
 }
 
@@ -224,27 +134,6 @@ func getEnv(key, fallback string) string {
 		return fallback
 	}
 	return val
-}
-
-func getEnvAny(keys []string, fallback string) string {
-	for _, k := range keys {
-		if v := os.Getenv(k); v != "" {
-			return v
-		}
-	}
-	return fallback
-}
-
-func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		return fallback
-	}
-	return d
 }
 
 func getEnvBool(key string, fallback bool) bool {

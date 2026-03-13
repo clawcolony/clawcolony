@@ -26,40 +26,22 @@ const (
 	monitorMergeCapLimit        = 50000
 )
 
-type monitorChatPipeline struct {
-	Workers        int              `json:"workers"`
-	QueueSize      int              `json:"queue_size"`
-	QueuedUsers    int              `json:"queued_users"`
-	Backlog        int              `json:"backlog"`
-	PendingTaskID  int64            `json:"pending_task_id,omitempty"`
-	PendingStatus  string           `json:"pending_status,omitempty"`
-	RunningTaskID  int64            `json:"running_task_id,omitempty"`
-	RunningStatus  string           `json:"running_status,omitempty"`
-	RecentStatuses map[string]int64 `json:"recent_statuses,omitempty"`
-}
-
 type monitorAgentOverviewItem struct {
-	UserID                   string              `json:"user_id"`
-	Name                     string              `json:"name"`
-	Status                   string              `json:"status"`
-	LifeState                string              `json:"life_state"`
-	Connected                bool                `json:"connected"`
-	ConnectedKnown           bool                `json:"connected_known"`
-	ActiveWebchatConnections int                 `json:"active_webchat_connections"`
-	PodName                  string              `json:"pod_name,omitempty"`
-	ConnectionDetail         string              `json:"connection_detail,omitempty"`
-	ChatPipeline             monitorChatPipeline `json:"chat_pipeline"`
-	CurrentState             string              `json:"current_state"`
-	CurrentReason            string              `json:"current_reason,omitempty"`
-	LastActivityAt           *time.Time          `json:"last_activity_at,omitempty"`
-	LastActivityType         string              `json:"last_activity_type,omitempty"`
-	LastActivitySummary      string              `json:"last_activity_summary,omitempty"`
-	LastToolID               string              `json:"last_tool_id,omitempty"`
-	LastToolTier             string              `json:"last_tool_tier,omitempty"`
-	LastToolAt               *time.Time          `json:"last_tool_at,omitempty"`
-	LastMailSubject          string              `json:"last_mail_subject,omitempty"`
-	LastMailAt               *time.Time          `json:"last_mail_at,omitempty"`
-	LastError                string              `json:"last_error,omitempty"`
+	UserID              string     `json:"user_id"`
+	Name                string     `json:"name"`
+	Status              string     `json:"status"`
+	LifeState           string     `json:"life_state"`
+	CurrentState        string     `json:"current_state"`
+	CurrentReason       string     `json:"current_reason,omitempty"`
+	LastActivityAt      *time.Time `json:"last_activity_at,omitempty"`
+	LastActivityType    string     `json:"last_activity_type,omitempty"`
+	LastActivitySummary string     `json:"last_activity_summary,omitempty"`
+	LastToolID          string     `json:"last_tool_id,omitempty"`
+	LastToolTier        string     `json:"last_tool_tier,omitempty"`
+	LastToolAt          *time.Time `json:"last_tool_at,omitempty"`
+	LastMailSubject     string     `json:"last_mail_subject,omitempty"`
+	LastMailAt          *time.Time `json:"last_mail_at,omitempty"`
+	LastError           string     `json:"last_error,omitempty"`
 }
 
 type monitorTimelineEvent struct {
@@ -185,7 +167,7 @@ func (s *Server) handleMonitorAgentsTimeline(w http.ResponseWriter, r *http.Requ
 		eventLimit = monitorMaxTimelineLimit
 	}
 	since, sinceSeconds := monitorSinceFromQuery(r.URL.Query().Get("since_seconds"))
-	items, err := s.collectMonitorEvents(ctx, userID, eventLimit, since, nil)
+	items, err := s.collectMonitorEvents(ctx, userID, eventLimit, since)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to query monitor timeline")
 		return
@@ -254,7 +236,7 @@ func (s *Server) handleMonitorAgentsTimelineAll(w http.ResponseWriter, r *http.R
 			truncated = true
 			break
 		}
-		evs, collectErr := s.collectMonitorEvents(ctx, strings.TrimSpace(it.BotID), perUserEventLimit, since, nil)
+		evs, collectErr := s.collectMonitorEvents(ctx, strings.TrimSpace(it.BotID), perUserEventLimit, since)
 		if collectErr != nil {
 			partialErrors++
 			if len(skippedUsers) < 20 {
@@ -438,13 +420,7 @@ func (s *Server) buildMonitorOverviewItem(ctx context.Context, b store.Bot, even
 	}
 	item.LifeState = lifeState
 
-	chatSnap := s.chatStateSnapshot(userID)
-	item.ChatPipeline = monitorPipelineFromChatState(chatSnap)
-	if strings.TrimSpace(chatSnap.LastError) != "" {
-		item.LastError = monitorShort(strings.TrimSpace(chatSnap.LastError), 200)
-	}
-
-	events, err := s.collectMonitorEvents(ctx, userID, maxInt(eventLimit, 30), since, &chatSnap)
+	events, err := s.collectMonitorEvents(ctx, userID, maxInt(eventLimit, 30), since)
 	if err == nil && len(events) > 0 {
 		monitorSortAndAssignEventIDs(events, "overview:"+userID)
 		top := events[0]
@@ -585,7 +561,7 @@ func (s *Server) collectMonitorCommunications(ctx context.Context, includeInacti
 	return out, nil
 }
 
-func (s *Server) collectMonitorEvents(ctx context.Context, userID string, limit int, since time.Time, chatSnap *chatStateView) ([]monitorTimelineEvent, error) {
+func (s *Server) collectMonitorEvents(ctx context.Context, userID string, limit int, since time.Time) ([]monitorTimelineEvent, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return []monitorTimelineEvent{}, nil
@@ -642,30 +618,6 @@ func (s *Server) collectMonitorEvents(ctx context.Context, userID string, limit 
 			if ev, ok := monitorCostEventToTimeline(it); ok {
 				addEvent(ev)
 			}
-		}
-	}
-
-	// chat pipeline tasks (recent/pending/running)
-	snap := chatStateView{}
-	if chatSnap != nil {
-		snap = *chatSnap
-	} else {
-		snap = s.chatStateSnapshot(userID)
-	}
-	taskSeen := make(map[int64]struct{}, len(snap.Recent))
-	for _, it := range snap.Recent {
-		ev := monitorChatTaskToTimeline(userID, it, "chat_state")
-		taskSeen[it.TaskID] = struct{}{}
-		addEvent(ev)
-	}
-	if snap.Running != nil {
-		if _, ok := taskSeen[snap.Running.TaskID]; !ok {
-			addEvent(monitorChatTaskToTimeline(userID, *snap.Running, "chat_state"))
-		}
-	}
-	if snap.Pending != nil {
-		if _, ok := taskSeen[snap.Pending.TaskID]; !ok {
-			addEvent(monitorChatTaskToTimeline(userID, *snap.Pending, "chat_state"))
 		}
 	}
 
@@ -755,29 +707,6 @@ func (s *Server) collectMonitorEvents(ctx context.Context, userID string, limit 
 	return events, nil
 }
 
-func monitorPipelineFromChatState(snap chatStateView) monitorChatPipeline {
-	statuses := make(map[string]int64, len(snap.RecentStatuses))
-	for k, v := range snap.RecentStatuses {
-		statuses[k] = v
-	}
-	out := monitorChatPipeline{
-		Workers:        snap.Workers,
-		QueueSize:      snap.QueueSize,
-		QueuedUsers:    snap.QueuedUsers,
-		Backlog:        snap.Backlog,
-		RecentStatuses: statuses,
-	}
-	if snap.Pending != nil {
-		out.PendingTaskID = snap.Pending.TaskID
-		out.PendingStatus = strings.TrimSpace(snap.Pending.Status)
-	}
-	if snap.Running != nil {
-		out.RunningTaskID = snap.Running.TaskID
-		out.RunningStatus = strings.TrimSpace(snap.Running.Status)
-	}
-	return out
-}
-
 func monitorCostEventToTimeline(it store.CostEvent) (monitorTimelineEvent, bool) {
 	costType := strings.TrimSpace(strings.ToLower(it.CostType))
 	meta := monitorDecodeJSONMap(it.MetaJSON)
@@ -836,23 +765,6 @@ func monitorCostEventToTimeline(it store.CostEvent) (monitorTimelineEvent, bool)
 				"output_units":  outputUnits,
 			},
 		}, true
-	case costType == "comm.chat.send":
-		return monitorTimelineEvent{
-			TS:       it.CreatedAt,
-			UserID:   strings.TrimSpace(it.UserID),
-			Category: "chat",
-			Action:   "chat.send",
-			Status:   "ok",
-			Summary:  monitorShort(fmt.Sprintf("chat send amount=%d units=%d", it.Amount, it.Units), 220),
-			Source:   "cost_events",
-			Meta: map[string]any{
-				"cost_event_id": it.ID,
-				"tick_id":       it.TickID,
-				"cost_type":     it.CostType,
-				"amount":        it.Amount,
-				"units":         it.Units,
-			},
-		}, true
 	case costType == "comm.mail.send" || costType == "comm.mail.send_list":
 		return monitorTimelineEvent{
 			TS:       it.CreatedAt,
@@ -875,37 +787,6 @@ func monitorCostEventToTimeline(it store.CostEvent) (monitorTimelineEvent, bool)
 	}
 }
 
-func monitorChatTaskToTimeline(userID string, task chatTaskRecord, source string) monitorTimelineEvent {
-	ts := task.CreatedAt
-	if task.FinishedAt != nil {
-		ts = *task.FinishedAt
-	} else if task.StartedAt != nil {
-		ts = *task.StartedAt
-	}
-	summary := fmt.Sprintf("task#%d %s", task.TaskID, strings.TrimSpace(task.Status))
-	if strings.TrimSpace(task.Error) != "" {
-		summary += " err=" + monitorShort(strings.TrimSpace(task.Error), 120)
-	}
-	status := strings.TrimSpace(task.Status)
-	if status == "" {
-		status = "info"
-	}
-	return monitorTimelineEvent{
-		TS:       ts,
-		UserID:   userID,
-		Category: "chat",
-		Action:   "chat.task",
-		Status:   status,
-		Summary:  monitorShort(summary, 220),
-		Source:   source,
-		Meta: map[string]any{
-			"task_id":       task.TaskID,
-			"execution_pod": strings.TrimSpace(task.ExecutionPod),
-			"attempt":       task.Attempt,
-		},
-	}
-}
-
 func monitorCommunicationPartyForUser(userID string, idx map[string]monitorCommunicationParty) monitorCommunicationParty {
 	uid := strings.TrimSpace(userID)
 	if uid == "" {
@@ -924,8 +805,6 @@ func monitorCategoryActionForPath(path string) (string, string) {
 	switch strings.TrimSpace(path) {
 	case "/v1/tools/invoke":
 		return "tool", "tool.invoke.request"
-	case "/v1/chat/send":
-		return "chat", "chat.send.request"
 	case "/v1/mail/send":
 		return "mail", "mail.send.request"
 	case "/v1/mail/send-list":
@@ -1087,12 +966,6 @@ func monitorCurrentState(item monitorAgentOverviewItem, now time.Time) (string, 
 	case "hibernated":
 		return "hibernated", "life_state=hibernated"
 	}
-	if item.ChatPipeline.RunningTaskID > 0 {
-		return "thinking", fmt.Sprintf("running_task=%d", item.ChatPipeline.RunningTaskID)
-	}
-	if item.ChatPipeline.PendingTaskID > 0 || item.ChatPipeline.Backlog > 0 {
-		return "queued", "chat pipeline pending/backlog"
-	}
 	if item.LastActivityAt != nil {
 		if now.Sub(item.LastActivityAt.UTC()) <= 2*time.Minute {
 			switch {
@@ -1100,15 +973,10 @@ func monitorCurrentState(item monitorAgentOverviewItem, now time.Time) (string, 
 				return "using_tool", monitorDefaultText(item.LastActivityType, "tool activity")
 			case strings.HasPrefix(item.LastActivityType, "mail."):
 				return "mailing", monitorDefaultText(item.LastActivityType, "mail activity")
-			case strings.HasPrefix(item.LastActivityType, "chat."):
-				return "chatting", monitorDefaultText(item.LastActivityType, "chat activity")
 			case strings.HasPrefix(item.LastActivityType, "think"):
 				return "thinking", monitorDefaultText(item.LastActivityType, "think activity")
 			}
 		}
-	}
-	if item.ConnectedKnown && !item.Connected {
-		return "disconnected", monitorDefaultText(item.ConnectionDetail, "no active webchat connection")
 	}
 	return "idle", "no active task"
 }

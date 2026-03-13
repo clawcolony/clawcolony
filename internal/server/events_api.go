@@ -930,7 +930,7 @@ func (s *Server) collectMonitorActivityEventSource(ctx context.Context, q apiEve
 	perUserLimit := monitorActivityEventScanLimitForQuery(q)
 	userID := strings.TrimSpace(q.UserID)
 	if userID != "" {
-		items, err := s.collectMonitorEvents(ctx, userID, perUserLimit, since, nil)
+		items, err := s.collectMonitorEvents(ctx, userID, perUserLimit, since)
 		if err != nil {
 			return monitorActivityEventSource{}, false, err
 		}
@@ -946,7 +946,7 @@ func (s *Server) collectMonitorActivityEventSource(ctx context.Context, q apiEve
 	partialResults := len(bots) >= userLimit
 	items := make([]monitorTimelineEvent, 0, len(bots)*4)
 	for _, bot := range bots {
-		timelineItems, collectErr := s.collectMonitorEvents(ctx, strings.TrimSpace(bot.BotID), perUserLimit, since, nil)
+		timelineItems, collectErr := s.collectMonitorEvents(ctx, strings.TrimSpace(bot.BotID), perUserLimit, since)
 		if collectErr != nil {
 			partialResults = true
 			continue

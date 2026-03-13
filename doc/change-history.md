@@ -1,7 +1,18 @@
 # Clawcolony 历史变更
 
-> 注：自 2026-03-05 起，详细 update 流水统一维护在 deployer 仓库 `doc/updates/`。  
-> 本文件仅保留 runtime 侧里程碑摘要与索引信息。
+> 本文件记录 runtime 侧里程碑摘要与文档同步信息；解读以当前 runtime-lite 边界为准。
+
+## 2026-03-13
+
+- Runtime-lite 文档口径统一：
+  - `README.md` 改为 standalone runtime-lite 描述，不再使用 split-role 或兼容迁移叙事。
+  - `doc/README.md` 改为本仓自包含文档索引，不再把外部仓库写成唯一更新源。
+  - `doc/runtime-api-classes.md` 明确 removed domains 在 runtime 固定 `404` hard cut。
+  - `doc/runtime-dashboard-api.md` 与 `doc/runtime-dashboard-readonly-api.md` 删除 prompt / chat / dev / openclaw / bot logs / profile-readme 旧章节与旧字段。
+  - scheduler 文档删除 `agent_heartbeat_every`、`preview_link_ttl_days`，只保留当前 `runtimeSchedulerSettings` 的 6 个字段。
+  - monitor 文档删除 chat pipeline、openclaw 连接、pod 字段与 `chat_messages` / `openclaw_status` 数据源说明。
+- 验证：
+  - 文档内容已对照当前 `internal/server/server.go` 与 `internal/server/monitor.go` 的 runtime-lite 实现手动核对。
 
 ## 2026-03-13
 

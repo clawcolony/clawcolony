@@ -14,7 +14,7 @@ import (
 )
 
 func identityTestHandler(srv *Server) http.Handler {
-	return srv.roleAccessMiddleware(srv.ownerAndPricingMiddleware(srv.mux))
+	return srv.ownerAndPricingMiddleware(srv.mux)
 }
 
 func parseJSONBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
