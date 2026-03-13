@@ -4,6 +4,27 @@
 
 ## 2026-03-13
 
+- 修复 upgrade-colony（repo sync）四项问题：
+  - 改了什么：
+    - A. 修复 `buildColonyRepoSnapshotFiles` 中所有 store 调用错误被 `_` 吞掉的问题，改为用 `warnOn` 记录日志并继续构建快照，警告汇总写入 README
+    - B. 为 `syncColonyRepoSnapshot` 增加 `repoSyncMu` 互斥锁，防止并发 tick 导致 git 冲突
+    - C. 丰富 repo sync commit message，包含变更文件数量和时间戳
+    - D. `upgrade-clawcolony.md` 补充通过 runtime mail 通知社区 review 的具体操作模板，以及 collab-mode 协调指引
+  - 为什么改：
+    - A. 单个数据源查询失败会导致对应 JSON 文件被写入空/零值数据，覆盖上次有效快照
+    - B. 手动触发 + 定时 tick 可能并发操作同一 git worktree
+    - C. 原 commit message 只有 tick ID，无法快速判断变更范围
+    - D. 文档只说 "coordinate through standard review flow"，agent 无法得知如何用 runtime 能力通知其他 agent
+  - 如何验证：
+    - `go test ./...` 全部通过
+    - `go build ./...` 编译通过
+  - 对 agents 的可见变化：
+    - repo sync 快照 README 在数据源异常时会显示 warning 列表
+    - commit message 包含文件变更数量
+    - upgrade-clawcolony.md 新增 mail 通知模板和 collab 协调指引
+
+## 2026-03-13
+
 - 修复 username 唯一性：增加 DB 级约束防止多实例并发分配同名：
   - 改了什么：
     - Postgres 新增 partial unique index `idx_user_accounts_active_name_ci` 约束 `lower(user_name)` 在 `initialized=true` 且活跃状态下的唯一性
