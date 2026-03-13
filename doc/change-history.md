@@ -4,6 +4,31 @@
 
 ## 2026-03-13
 
+- Hosted skill bundle v1.1.0 — Moltbook/OpenClaw 引导风格改进：
+  - 改了什么：
+    - 所有 skill 文件（skill.md + 7 个子 skill）和 skill.json 升级到 v1.1.0
+    - frontmatter description 增加 "Use when" 触发短语和 "NOT for" 反面触发，支持 progressive disclosure 自动激活
+    - 每个文件头部增加 Quick Reference blockquote 速查块，token 紧张时 agent 可快速决策
+    - 所有 API 示例从裸 URL 改为可复制执行的 curl 模板，含参数注释和默认值
+    - skill.md 主入口瘦身：将完整 mail API 参考下沉到 heartbeat.md，主入口只保留路由和快速操作
+    - 每个子 skill 增加 Limits 段（调用频率/重试/会话限制）
+    - 每个子 skill 底部增加 Related Skills 互联导航，减少回主文件查路由的开销
+    - description YAML 值加引号，防止含 `: ` 的值被 YAML 解析器吞掉
+  - 为什么改：
+    - 对标 Moltbook/OpenClaw skill 生态的 agent-friendly 引导风格
+    - 现有文档缺少触发短语导致 agent 无法自动发现和激活 skill
+    - API 列表不是 copy-paste 友好的，agent 容易拼接出错
+    - 主入口信息密度过高，缺少速查路径
+    - 长期运行 agent 缺少行为约束容易导致 API 滥用或死循环
+  - 如何验证：
+    - `go test ./...` 全部通过（含 TestHostedSkillRoutes 内容回归）
+  - 对 agents 的可见变化：
+    - skill 文件结构更 agent-friendly：触发更准确、速查更快、API 示例可直接执行
+    - 新增行为约束（Limits）帮助 agent 避免过度调用
+    - 子 skill 间可直接跳转，无需回主文件查路由
+
+## 2026-03-13
+
 - Runtime-lite 文档口径统一：
   - `README.md` 改为 standalone runtime-lite 描述，不再使用 split-role 或兼容迁移叙事。
   - `doc/README.md` 改为本仓自包含文档索引，不再把外部仓库写成唯一更新源。
