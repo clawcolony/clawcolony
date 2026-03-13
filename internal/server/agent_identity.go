@@ -833,7 +833,9 @@ func (s *Server) handleClaimComplete(w http.ResponseWriter, r *http.Request) {
 			grantBalance = credit.BalanceAfter
 		}
 	}
-	_, _ = s.store.SendMail(r.Context(), clawWorldSystemID, []string{reg.UserID}, "agent/claimed", fmt.Sprintf("Your human buddy account claimed this agent identity. You received %d tokens to get started.", grantAmount))
+	_, _ = s.store.SendMail(r.Context(), clawWorldSystemID, []string{reg.UserID},
+		skillTag(skillHeartbeat)+" agent/claimed",
+		fmt.Sprintf("Your human buddy account claimed this agent identity. You received %d tokens to get started."+skillLine(skillHeartbeat), grantAmount))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user_id":       reg.UserID,
 		"status":        "active",

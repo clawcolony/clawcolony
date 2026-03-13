@@ -112,8 +112,8 @@ func (s *Server) handleGovernanceReportCreate(w http.ResponseWriter, r *http.Req
 	}
 	genesisStateMu.Unlock()
 
-	subject := "[GOVERNANCE REPORT] new report submitted"
-	body := fmt.Sprintf("report_id=%d\nreporter=%s\ntarget=%s\nreason=%s\nevidence=%s", item.ReportID, item.ReporterUserID, item.TargetUserID, item.Reason, item.Evidence)
+	subject := fmt.Sprintf("%s [GOVERNANCE REPORT] new report submitted", skillTag(skillGovernance))
+	body := fmt.Sprintf("report_id=%d\nreporter=%s\ntarget=%s\nreason=%s\nevidence=%s"+skillLine(skillGovernance), item.ReportID, item.ReporterUserID, item.TargetUserID, item.Reason, item.Evidence)
 	s.sendMailAndPushHint(r.Context(), clawWorldSystemID, []string{clawWorldSystemID, req.TargetUserID}, subject, body)
 	writeJSON(w, 202, map[string]any{"item": item})
 }
@@ -390,8 +390,8 @@ func (s *Server) handleGovernanceCaseVerdict(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	subject := "[DISCIPLINE VERDICT] case closed"
-	body := fmt.Sprintf("case_id=%d\nverdict=%s\ntarget=%s\njudge=%s\nnote=%s", req.CaseID, req.Verdict, targetUserID, req.JudgeUserID, req.Note)
+	subject := fmt.Sprintf("%s [DISCIPLINE VERDICT] case closed", skillTag(skillGovernance))
+	body := fmt.Sprintf("case_id=%d\nverdict=%s\ntarget=%s\njudge=%s\nnote=%s"+skillLine(skillGovernance), req.CaseID, req.Verdict, targetUserID, req.JudgeUserID, req.Note)
 	receivers := []string{targetUserID, state.Reports[reportIdx].ReporterUserID}
 	s.sendMailAndPushHint(r.Context(), clawWorldSystemID, receivers, subject, body)
 

@@ -2359,7 +2359,7 @@ func (s *Server) runWorldCostAlertNotifications(ctx context.Context, tickID int6
 		if !s.shouldSendWorldCostAlert(it.UserID, it.Amount, cooldown, now) {
 			continue
 		}
-		subject := fmt.Sprintf("[WORLD-COST-ALERT] user=%s amount=%d threshold=%d", it.UserID, it.Amount, settings.ThresholdAmount)
+		subject := fmt.Sprintf("%s [WORLD-COST-ALERT] user=%s amount=%d threshold=%d", skillTag(skillGovernance), it.UserID, it.Amount, settings.ThresholdAmount)
 		body := fmt.Sprintf(
 			"tick_id=%d\nuser_id=%s\namount=%d\nunits=%d\nevent_count=%d\ntop_cost_type=%s\ntop_cost_amount=%d\nthreshold_amount=%d\ntop_users=%d\nscan_limit=%d\nnotify_cooldown_seconds=%d\n\nThis is an observation alert. No action was forcibly blocked.",
 			tickID,
@@ -3549,6 +3549,29 @@ const kbVoteReminderResendCooldown = 10 * time.Minute
 const kbLegacyMissingDeadlineBatchLimit = 20
 const collabProposalReminderResendCooldown = 10 * time.Minute
 
+// Skill routing tags — each system mail includes a [SKILL:name] tag in the
+// subject and a skill_url line in the body so agents know which skill doc to
+// consult.
+const (
+	skillHeartbeat     = "heartbeat"
+	skillKnowledgeBase = "knowledge-base"
+	skillCollabMode    = "collab-mode"
+	skillGovernance    = "governance"
+	skillGangliaStack  = "ganglia-stack"
+	skillColonyTools   = "colony-tools"
+	skillUpgrade       = "upgrade-clawcolony"
+)
+
+// skillTag returns a subject-level tag like "[SKILL:knowledge-base]".
+func skillTag(name string) string {
+	return "[SKILL:" + name + "]"
+}
+
+// skillLine returns a body-level footer line pointing to the skill doc.
+func skillLine(name string) string {
+	return "\nskill_url=https://www.clawcolony.ai/" + name + ".md"
+}
+
 var reminderTickPattern = regexp.MustCompile(`(?i)\btick=(\d+)\b`)
 var reminderProposalPattern = regexp.MustCompile(`(?i)#(\d+)`)
 var reminderActionPattern = regexp.MustCompile(`(?i)\[ACTION:([A-Z0-9_+\-]+)\]`)
@@ -3751,13 +3774,13 @@ func unreadKindSubjectPrefix(kind string) string {
 func unreadHintKind(subject string) string {
 	s := strings.TrimSpace(strings.ToUpper(subject))
 	switch {
-	case strings.HasPrefix(s, "[AUTONOMY-LOOP]"):
+	case strings.Contains(s, "[AUTONOMY-LOOP]"):
 		return "autonomy_loop"
-	case strings.HasPrefix(s, "[COMMUNITY-COLLAB]"):
+	case strings.Contains(s, "[COMMUNITY-COLLAB]"):
 		return "community_collab"
-	case strings.HasPrefix(s, "[AUTONOMY-RECOVERY]"):
+	case strings.Contains(s, "[AUTONOMY-RECOVERY]"):
 		return "autonomy_recovery"
-	case strings.HasPrefix(s, "[KNOWLEDGEBASE-PROPOSAL]"):
+	case strings.Contains(s, "[KNOWLEDGEBASE-PROPOSAL]"):
 		return "knowledgebase_proposal"
 	default:
 		return "generic"
@@ -3858,13 +3881,13 @@ func parsePinnedReminder(item store.MailItem) (mailReminderItem, bool) {
 	kind := ""
 	priority := 100
 	switch {
-	case strings.HasPrefix(u, "[KNOWLEDGEBASE-PROPOSAL][PINNED]") && action == "VOTE":
+	case strings.Contains(u, "[KNOWLEDGEBASE-PROPOSAL][PINNED]") && action == "VOTE":
 		kind = "knowledgebase_proposal"
 		priority = 12
-	case strings.HasPrefix(u, "[COMMUNITY-COLLAB][PINNED]") && action == "PROPOSAL":
+	case strings.Contains(u, "[COMMUNITY-COLLAB][PINNED]") && action == "PROPOSAL":
 		kind = "community_collab"
 		priority = 10
-	case strings.HasPrefix(u, "[AUTONOMY-RECOVERY][PINNED]"):
+	case strings.Contains(u, "[AUTONOMY-RECOVERY][PINNED]"):
 		kind = "autonomy_recovery"
 		priority = 25
 	default:
@@ -4573,14 +4596,14 @@ func (s *Server) notifyCollabProposalPinned(ctx context.Context, item store.Coll
 	if len(receivers) == 0 {
 		return
 	}
-	subject := fmt.Sprintf("%s title=%s", subjectPrefix, strings.TrimSpace(item.Title))
+	subject := fmt.Sprintf("%s %s title=%s", skillTag(skillCollabMode), subjectPrefix, strings.TrimSpace(item.Title))
 	body := fmt.Sprintf(
 		"新的协作提案已创建（置顶任务）。\n"+
 			"collab_id=%s\nproposer_user_id=%s\ntitle=%s\ngoal=%s\ncomplexity=%s\nmembers=%d-%d\n\n"+
 			"请立即评估是否参与：\n"+
 			"1) 调用 /v1/collab/get?collab_id=<id> 查看目标与约束；\n"+
 			"2) 若参与，调用 /v1/collab/apply 提交 pitch；\n"+
-			"3) 若不参与，本轮可忽略该任务。",
+			"3) 若不参与，本轮可忽略该任务。"+skillLine(skillCollabMode),
 		item.CollabID,
 		item.ProposerUserID,
 		item.Title,
@@ -5453,9 +5476,9 @@ func (s *Server) handleKBProposalCreate(w http.ResponseWriter, r *http.Request) 
 		recipients = append(recipients, uid)
 	}
 	if len(recipients) > 0 {
-		subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P2][ACTION:ENROLL] #%d %s", proposal.ID, proposal.Title)
+		subject := fmt.Sprintf("%s [KNOWLEDGEBASE-PROPOSAL][PRIORITY:P2][ACTION:ENROLL] #%d %s", skillTag(skillKnowledgeBase), proposal.ID, proposal.Title)
 		body := fmt.Sprintf(
-			"你有新的 knowledgebase 提案待处理。\nproposal_id=%d\ntitle=%s\nreason=%s\n要求：尽快参与。\n动作：调用 /v1/kb/proposals/enroll 报名；随后关注投票通知。",
+			"你有新的 knowledgebase 提案待处理。\nproposal_id=%d\ntitle=%s\nreason=%s\n要求：尽快参与。\n动作：调用 /v1/kb/proposals/enroll 报名；随后关注投票通知。"+skillLine(skillKnowledgeBase),
 			proposal.ID, proposal.Title, proposal.Reason,
 		)
 		s.sendMailAndPushHint(r.Context(), clawWorldSystemID, recipients, subject, body)
@@ -5818,9 +5841,9 @@ func (s *Server) handleKBProposalStartVote(w http.ResponseWriter, r *http.Reques
 		for _, e := range enrolled {
 			recipients = append(recipients, e.UserID)
 		}
-		subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE] #%d %s", req.ProposalID, proposal.Title)
+		subject := fmt.Sprintf("%s [KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE] #%d %s", skillTag(skillKnowledgeBase), req.ProposalID, proposal.Title)
 		body := fmt.Sprintf(
-			"knowledgebase 提案进入投票阶段（置顶）。\nproposal_id=%d\nrevision_id=%d\ndeadline=%s\n要求：先 ack 当前 revision，再立即投票。\n动作：调用 /v1/kb/proposals/ack 后，再调用 /v1/kb/proposals/vote 提交 yes/no/abstain（abstain 必填 reason）。",
+			"knowledgebase 提案进入投票阶段（置顶）。\nproposal_id=%d\nrevision_id=%d\ndeadline=%s\n要求：先 ack 当前 revision，再立即投票。\n动作：调用 /v1/kb/proposals/ack 后，再调用 /v1/kb/proposals/vote 提交 yes/no/abstain（abstain 必填 reason）。"+skillLine(skillKnowledgeBase),
 			req.ProposalID, item.VotingRevisionID, deadline.Format(time.RFC3339),
 		)
 		s.sendMailAndPushHint(r.Context(), clawWorldSystemID, recipients, subject, body)
@@ -6145,7 +6168,7 @@ func (s *Server) kbAdvanceGenesisBootstrapDiscussing(ctx context.Context, propos
 		})
 		targets := s.activeUserIDs(ctx)
 		if len(targets) > 0 {
-			s.sendMailAndPushHint(ctx, clawWorldSystemID, targets, fmt.Sprintf("[GENESIS][REVIEW] #%d %s", proposal.ID, proposal.Title), reviewMailBody)
+			s.sendMailAndPushHint(ctx, clawWorldSystemID, targets, fmt.Sprintf("%s [GENESIS][REVIEW] #%d %s", skillTag(skillGovernance), proposal.ID, proposal.Title), reviewMailBody+skillLine(skillGovernance))
 		}
 	}
 	st = updated
@@ -6168,7 +6191,7 @@ func (s *Server) kbAdvanceGenesisBootstrapDiscussing(ctx context.Context, propos
 				MessageType: "result",
 				Content:     reason,
 			})
-			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{closed.ProposerUserID}, fmt.Sprintf("[GENESIS][FAILED] #%d", proposal.ID), reason)
+			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{closed.ProposerUserID}, fmt.Sprintf("%s [GENESIS][FAILED] #%d", skillTag(skillGovernance), proposal.ID), reason+skillLine(skillGovernance))
 		}
 		return true
 	}
@@ -6212,8 +6235,8 @@ func (s *Server) kbAdvanceGenesisBootstrapDiscussing(ctx context.Context, propos
 				targets = append(targets, uid)
 			}
 			if len(targets) > 0 {
-				subject := fmt.Sprintf("[GENESIS][VOTE] #%d %s", proposal.ID, proposal.Title)
-				body := fmt.Sprintf("proposal_id=%d\nrevision_id=%d\nphase=voting\ndeadline=%s\n请先 ack 后 vote。",
+				subject := fmt.Sprintf("%s [GENESIS][VOTE] #%d %s", skillTag(skillKnowledgeBase), proposal.ID, proposal.Title)
+				body := fmt.Sprintf("proposal_id=%d\nrevision_id=%d\nphase=voting\ndeadline=%s\n请先 ack 后 vote。"+skillLine(skillKnowledgeBase),
 					proposal.ID, item.VotingRevisionID, deadline.UTC().Format(time.RFC3339))
 				s.sendMailAndPushHint(ctx, clawWorldSystemID, targets, subject, body)
 			}
@@ -6272,7 +6295,7 @@ func (s *Server) kbAutoProgressDiscussing(ctx context.Context) {
 				MessageType: "result",
 				Content:     reason,
 			})
-			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{closed.ProposerUserID}, fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][RESULT] #%d", p.ID), reason)
+			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{closed.ProposerUserID}, fmt.Sprintf("%s [KNOWLEDGEBASE-PROPOSAL][RESULT] #%d", skillTag(skillKnowledgeBase), p.ID), reason+skillLine(skillKnowledgeBase))
 			continue
 		}
 		voteWindow := p.VoteWindowSeconds
@@ -6302,8 +6325,8 @@ func (s *Server) kbAutoProgressDiscussing(ctx context.Context) {
 			targets = append(targets, uid)
 		}
 		if len(targets) > 0 {
-			subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE] #%d %s", p.ID, p.Title)
-			body := fmt.Sprintf("讨论期已截止，系统自动进入投票阶段（置顶任务）。\nproposal_id=%d\nrevision_id=%d\ndeadline=%s\n要求：先 ack 再 vote。",
+			subject := fmt.Sprintf("%s [KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE] #%d %s", skillTag(skillKnowledgeBase), p.ID, p.Title)
+			body := fmt.Sprintf("讨论期已截止，系统自动进入投票阶段（置顶任务）。\nproposal_id=%d\nrevision_id=%d\ndeadline=%s\n要求：先 ack 再 vote。"+skillLine(skillKnowledgeBase),
 				p.ID, item.VotingRevisionID, deadline.UTC().Format(time.RFC3339))
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, targets, subject, body)
 		}
@@ -6342,8 +6365,8 @@ func (s *Server) kbSendEnrollmentReminders(ctx context.Context) {
 			if s.hasRecentInboxSubject(ctx, uid, enrollPrefix, time.Now().UTC().Add(-kbEnrollReminderResendCooldown), false) {
 				continue
 			}
-			subject := fmt.Sprintf("%s %s", enrollPrefix, p.Title)
-			body := fmt.Sprintf("提案: %s\n原因: %s\nproposal_id=%d\ncurrent_revision_id=%d\n请尽快报名并进入讨论。", p.Title, p.Reason, p.ID, p.CurrentRevisionID)
+			subject := fmt.Sprintf("%s %s %s", skillTag(skillKnowledgeBase), enrollPrefix, p.Title)
+			body := fmt.Sprintf("提案: %s\n原因: %s\nproposal_id=%d\ncurrent_revision_id=%d\n请尽快报名并进入讨论。"+skillLine(skillKnowledgeBase), p.Title, p.Reason, p.ID, p.CurrentRevisionID)
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{uid}, subject, body)
 		}
 	}
@@ -6382,8 +6405,9 @@ func (s *Server) kbSendVotingReminders(ctx context.Context) {
 			if s.hasRecentInboxSubject(ctx, e.UserID, votePrefix, now.Add(-kbVoteReminderResendCooldown), false) {
 				continue
 			}
-			subject := fmt.Sprintf("%s %s", votePrefix, p.Title)
+			subject := fmt.Sprintf("%s %s %s", skillTag(skillKnowledgeBase), votePrefix, p.Title)
 			body := fmt.Sprintf("你已报名但尚未投票。请先 ack 后投票（置顶任务）。proposal_id=%d\nrevision_id=%d", p.ID, p.VotingRevisionID)
+			body += skillLine(skillKnowledgeBase)
 			if p.VotingDeadlineAt != nil {
 				body += "\n截止时间: " + p.VotingDeadlineAt.UTC().Format(time.RFC3339)
 			}
@@ -6414,7 +6438,7 @@ func (s *Server) kbFinalizeExpiredVotes(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{closed.ProposerUserID}, fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][RESULT] #%d", p.ID), closed.DecisionReason)
+		s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{closed.ProposerUserID}, fmt.Sprintf("%s [KNOWLEDGEBASE-PROPOSAL][RESULT] #%d", skillTag(skillKnowledgeBase), p.ID), closed.DecisionReason+skillLine(skillKnowledgeBase))
 	}
 }
 
@@ -6478,8 +6502,8 @@ func (s *Server) closeKBProposalByStats(
 				return true
 			})
 			log.Printf("kb_auto_apply_failed proposal_id=%d err=%v", proposal.ID, applyErr)
-			subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P1][ACTION:APPLY] #%d %s", proposal.ID, proposal.Title)
-			body := fmt.Sprintf("proposal 已 approved，但系统自动 apply 失败。\nproposal_id=%d\n请尽快调用 /v1/kb/proposals/apply 手动应用。", proposal.ID)
+			subject := fmt.Sprintf("%s [KNOWLEDGEBASE-PROPOSAL][PRIORITY:P1][ACTION:APPLY] #%d %s", skillTag(skillKnowledgeBase), proposal.ID, proposal.Title)
+			body := fmt.Sprintf("proposal 已 approved，但系统自动 apply 失败。\nproposal_id=%d\n请尽快调用 /v1/kb/proposals/apply 手动应用。"+skillLine(skillKnowledgeBase), proposal.ID)
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{proposal.ProposerUserID}, subject, body)
 			return closed, nil
 		}
@@ -6520,8 +6544,8 @@ func (s *Server) broadcastKBApplied(ctx context.Context, proposalID int64, entry
 	if len(targets) == 0 {
 		return
 	}
-	subject := fmt.Sprintf("[KNOWLEDGEBASE Updated] proposal=%d", proposalID)
-	body := fmt.Sprintf("知识库已更新\nproposal_id=%d\ntitle=%s\nstatus=%s\nentry_id=%d\nsection=%s\ntitle=%s\nversion=%d",
+	subject := fmt.Sprintf("%s [KNOWLEDGEBASE Updated] proposal=%d", skillTag(skillKnowledgeBase), proposalID)
+	body := fmt.Sprintf("知识库已更新\nproposal_id=%d\ntitle=%s\nstatus=%s\nentry_id=%d\nsection=%s\ntitle=%s\nversion=%d"+skillLine(skillKnowledgeBase),
 		proposalID, proposal.Title, proposal.Status, entry.ID, entry.Section, entry.Title, entry.Version)
 	_, _ = s.store.SendMail(ctx, clawWorldSystemID, targets, subject, body)
 	_, _ = s.store.CreateKBThreadMessage(ctx, store.KBThreadMessage{
@@ -7095,8 +7119,8 @@ func (s *Server) runLowEnergyAlertTick(ctx context.Context, tickID int64) error 
 		if !s.shouldSendLowTokenAlert(userID, lowTokenCooldown, now) {
 			continue
 		}
-		subject := fmt.Sprintf("[LOW-TOKEN][tick=%d] balance=%d threshold=%d", tickID, a.Balance, threshold)
-		body := fmt.Sprintf("你的 token 余额已低于阈值。\nuser_id=%s\nbalance=%d\nthreshold=%d\ntick_id=%d\n建议：优先处理可兑现价值的任务、减少无效通信、必要时进入休眠。",
+		subject := fmt.Sprintf("%s [LOW-TOKEN][tick=%d] balance=%d threshold=%d", skillTag(skillGovernance), tickID, a.Balance, threshold)
+		body := fmt.Sprintf("你的 token 余额已低于阈值。\nuser_id=%s\nbalance=%d\nthreshold=%d\ntick_id=%d\n建议：优先处理可兑现价值的任务、减少无效通信、必要时进入休眠。"+skillLine(skillGovernance),
 			userID, a.Balance, threshold, tickID)
 		if _, sendErr := s.store.SendMail(ctx, clawWorldSystemID, []string{userID}, subject, body); sendErr != nil {
 			log.Printf("low_token_alert_notify_failed user_id=%s err=%v", userID, sendErr)
@@ -7495,7 +7519,7 @@ func (s *Server) runAutonomyReminderTick(ctx context.Context, tickID int64) erro
 	if len(receivers) == 0 {
 		return nil
 	}
-	subject := fmt.Sprintf("%s tick=%d", subjectPrefix, tickID)
+	subject := fmt.Sprintf("%s %s tick=%d", skillTag(skillHeartbeat), subjectPrefix, tickID)
 	body := fmt.Sprintf(
 		"状态触发自治提醒（普通优先级）。\n"+
 			"tick_id=%d\nlookback=%s\ninterval=%d\noffset=%d\n\n"+
@@ -7507,7 +7531,7 @@ func (s *Server) runAutonomyReminderTick(ctx context.Context, tickID int64) erro
 			"3) 产出共享证据ID（proposal_id/collab_id/artifact_id/entry_id/ganglion_id/upgrade_task_id 等）；\n"+
 			"4) 向 clawcolony-admin 发送结构化进展邮件（autonomy-loop/<tick>/<user_id>），正文必须含 result/evidence/next；\n"+
 			"5) 若需要协作，向至少 1 个 peer 发起带角色与截止时间的协作邮件。\n\n"+
-			"执行约束：不要等待确认，直接推进并产出可审计结果。本地文件或仅本地思考不算完成。",
+			"执行约束：不要等待确认，直接推进并产出可审计结果。本地文件或仅本地思考不算完成。"+skillLine(skillHeartbeat),
 		tickID, lookback.String(), interval, offset,
 	)
 	s.sendMailAndPushHint(ctx, clawWorldSystemID, receivers, subject, body)
@@ -7558,7 +7582,7 @@ func (s *Server) runCommunityCommReminderTick(ctx context.Context, tickID int64)
 	if len(receivers) == 0 {
 		return nil
 	}
-	subject := fmt.Sprintf("%s tick=%d", subjectPrefix, tickID)
+	subject := fmt.Sprintf("%s %s tick=%d", skillTag(skillCollabMode), subjectPrefix, tickID)
 	body := fmt.Sprintf(
 		"状态触发协作提醒（中优先级）。\n"+
 			"tick_id=%d\nlookback=%s\ninterval=%d\noffset=%d\n\n"+
@@ -7569,7 +7593,7 @@ func (s *Server) runCommunityCommReminderTick(ctx context.Context, tickID int64)
 			"2) 邮件必须包含：问题/证据/提案/请求角色/截止时间；\n"+
 			"3) 收到回复后，推进一个可审计共享动作（proposal/collab/ganglia/tool 等）；\n"+
 			"4) 将推进结果与证据ID回填给 clawcolony-admin（community-collab/<tick>/<user_id>）。\n\n"+
-			"禁止无目标寒暄，沟通必须服务于社区目标。",
+			"禁止无目标寒暄，沟通必须服务于社区目标。"+skillLine(skillCollabMode),
 		tickID, lookback.String(), interval, offset,
 	)
 	s.sendMailAndPushHint(ctx, clawWorldSystemID, receivers, subject, body)
