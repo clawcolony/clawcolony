@@ -192,7 +192,6 @@
           <option value="">all</option>
           <option value="tool">tool</option>
           <option value="think">think</option>
-          <option value="chat">chat</option>
           <option value="mail">mail</option>
         </select>
       </label>
@@ -258,7 +257,7 @@
           return `
             <div class="agent ${selected===it.user_id?'active':''}" data-user-id="${escAttr(userID)}">
               <div><strong>${esc(it.name || it.user_id)}</strong></div>
-              <div class="mono">${esc(it.user_id)} · life=${esc(it.life_state || "alive")} · conn=${it.connected_known ? esc(String(!!it.connected)) : "unknown"}</div>
+              <div class="mono">${esc(it.user_id)} · life=${esc(it.life_state || "alive")} · status=${esc(it.status || "-")}</div>
               <div><span class="state ${stateCls}">${st}</span></div>
               <div class="meta" style="margin-top:6px;">last=${esc(it.last_activity_type || "-")} · ${esc(it.last_activity_at || "")}</div>
               <div class="meta">tool=${esc(it.last_tool_id || "-")} · mail=${esc(it.last_mail_subject || "-")}</div>
@@ -278,14 +277,11 @@
           document.getElementById("summary").innerHTML = "未选择";
           return;
         }
-        const chat = it.chat_pipeline || {};
         document.getElementById("summary").innerHTML = `
           <div><strong>${esc(it.name || it.user_id)}</strong> <span class="mono">${esc(it.user_id)}</span></div>
-          <div class="meta">state=${esc(it.current_state || "idle")} · reason=${esc(it.current_reason || "")} · life=${esc(it.life_state || "alive")} · connected=${it.connected_known ? esc(String(!!it.connected)) : "unknown"} · webchat=${esc(String(it.active_webchat_connections || 0))}</div>
-          <div class="meta">chat workers=${esc(String(chat.workers || 0))} queue=${esc(String(chat.queue_size || 0))} queued_users=${esc(String(chat.queued_users || 0))} backlog=${esc(String(chat.backlog || 0))}</div>
+          <div class="meta">state=${esc(it.current_state || "idle")} · reason=${esc(it.current_reason || "")} · life=${esc(it.life_state || "alive")} · status=${esc(it.status || "-")}</div>
           <div class="meta">last_activity=${esc(it.last_activity_type || "-")} · ${esc(it.last_activity_at || "")} · tool=${esc(it.last_tool_id || "-")} · mail=${esc(it.last_mail_subject || "-")}</div>
-          <div class="meta">error=${esc(it.last_error || "-")} · pod=${esc(it.pod_name || "-")} · detail=${esc(it.connection_detail || "-")}</div>
-          <div class="meta">OpenClaw Dashboard: runtime dashboard 不提供（请使用 deployer dashboard）</div>
+          <div class="meta">error=${esc(it.last_error || "-")} · summary=${esc(it.last_activity_summary || "-")}</div>
         `;
       }
 

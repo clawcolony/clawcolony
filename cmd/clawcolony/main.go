@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 
-	"clawcolony/internal/bot"
 	"clawcolony/internal/config"
 	"clawcolony/internal/server"
 	"clawcolony/internal/store"
@@ -12,7 +11,6 @@ import (
 
 func main() {
 	cfg := config.FromEnv()
-	cfg.ServiceRole = config.ServiceRoleRuntime
 	ctx := context.Background()
 
 	var st store.Store
@@ -28,11 +26,9 @@ func main() {
 	}
 	defer st.Close()
 
-	// Runtime project does not embed privileged management-plane executors.
-	botManager := bot.NewManager(st, bot.NewNoopProvisioner(), cfg.ClawWorldAPIBase, cfg.BotModel)
-	srv := server.New(cfg, st, botManager)
+	srv := server.New(cfg, st)
 
-	log.Printf("clawcolony-runtime starting on %s (service_role=%s)", cfg.ListenAddr, cfg.EffectiveServiceRole())
+	log.Printf("clawcolony-runtime starting on %s", cfg.ListenAddr)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("clawcolony-runtime stopped: %v", err)
 	}

@@ -1,31 +1,26 @@
-# Clawcolony Runtime 文档规范
+# Clawcolony Runtime Docs
 
-本仓库仅承载 runtime 运行面文档（设计/协议/运行说明）。  
-更新流水、变更日志、阶段记录统一维护在 deployer 私有仓库：
+本目录只记录 `clawcolony-runtime` 自身文档。runtime 以 standalone runtime-lite 形式维护。
 
-- `git@gitlab.webpilotai.com:webpilot/clawcolony-deployer.git`
-- 路径：`doc/updates/`
+## 目录
 
-## 目录说明
+- `doc/change-history.md`：runtime 里程碑与文档同步记录
+- `doc/runtime-api-classes.md`：runtime API 分类
+- `doc/runtime-dashboard-api.md`：dashboard 实际调用 API 的开发者文档
+- `doc/runtime-dashboard-readonly-api.md`：dashboard 只读接口文档
+- `doc/design/`：专题设计文档
+- `doc/runbooks/`：运行与排障手册
+- `doc/updates/`：本仓历史 update 记录；新旧记录并存，以 runtime 自身边界为准解读
 
-- `doc/design.md`：runtime 设计文档（运行目标、协议、边界）
-- `doc/change-history.md`：runtime 里程碑历史（高层摘要）
-- `doc/runtime-api-classes.md`：runtime HTTP 接口分类文档（`public-anon` / `public-auth` / `internal-admin`）
-- `doc/design/*.md`：专题设计（例如 runtime/deployer 分离）
-- `doc/runbooks/*.md`：运行与排障手册
+## 文档要求
 
-## 强制规则
+1. runtime 文档只描述 runtime 当前保留的职责与接口。
+2. removed domains 必须明确写为 runtime `404` hard cut，不写兼容迁移口径。
+3. 任何 prompt / chat / dev / openclaw / profile-readme 旧 ownership 表述都不应继续出现在 runtime 文档中。
+4. scheduler、monitor、dashboard 导航说明必须与 runtime-lite 当前实现一致。
 
-1. runtime 代码变更必须同步更新 runtime 自身文档（`doc/design*`、`doc/change-history.md`、`doc/runbooks*`）。
-2. 详细 update 记录不再写入 runtime 仓库，统一写入 deployer 仓库 `doc/updates/`。
-3. runtime 文档中的变更记录引用应指向 deployer 仓库的 update 文档。
-
-## 检查方式
-
-执行：
+## 检查
 
 ```bash
 make check-doc
 ```
-
-runtime 中的 `check-doc` 仅检查“文档是否自洽”，不再强制本仓存在 `doc/updates/*.md`。

@@ -678,46 +678,6 @@ func (s *PostgresStore) UpdateBotNickname(ctx context.Context, botID, nickname s
 	return b, nil
 }
 
-func (s *PostgresStore) GetBotCredentials(ctx context.Context, userID string) (BotCredentials, error) {
-	var creds BotCredentials
-	creds.UserID = strings.TrimSpace(userID)
-	if creds.UserID == "" {
-		return BotCredentials{}, fmt.Errorf("user_id is required")
-	}
-	err := s.db.QueryRowContext(ctx, `
-		SELECT user_id
-		FROM user_accounts
-		WHERE user_id = $1
-	`, creds.UserID).Scan(&creds.UserID)
-	if err != nil {
-		return BotCredentials{}, err
-	}
-	creds.GatewayToken = ""
-	creds.UpgradeToken = ""
-	return creds, nil
-}
-
-func (s *PostgresStore) UpsertBotCredentials(ctx context.Context, creds BotCredentials) (BotCredentials, error) {
-	uid := strings.TrimSpace(creds.UserID)
-	if uid == "" {
-		return BotCredentials{}, fmt.Errorf("user_id is required")
-	}
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO user_accounts(user_id, user_name, provider, status, initialized, updated_at)
-		VALUES($1, $1, 'system', 'active', true, NOW())
-		ON CONFLICT (user_id) DO UPDATE SET
-			updated_at = NOW()
-	`, uid); err != nil {
-		return BotCredentials{}, err
-	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO token_accounts(user_id, balance) VALUES($1, 0) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
-		return BotCredentials{}, err
-	}
-	return BotCredentials{
-		UserID: uid,
-	}, nil
-}
-
 func (s *PostgresStore) EnsureTianDaoLaw(ctx context.Context, item TianDaoLaw) (TianDaoLaw, error) {
 	item.LawKey = strings.TrimSpace(item.LawKey)
 	if item.LawKey == "" {
@@ -1590,90 +1550,6 @@ func (s *PostgresStore) ListTokenLedger(ctx context.Context, botID string, limit
 		items = append(items, l)
 	}
 	return items, rows.Err()
-}
-
-func runtimeRemovedDomainError(domain string) error {
-	return fmt.Errorf("%s domain moved to deployer", strings.TrimSpace(domain))
-}
-
-func (s *PostgresStore) CreateUpgradeAudit(ctx context.Context, item UpgradeAudit) (UpgradeAudit, error) {
-	_, _ = ctx, item
-	return UpgradeAudit{}, runtimeRemovedDomainError("upgrade_audits")
-}
-
-func (s *PostgresStore) AppendUpgradeStep(ctx context.Context, step UpgradeStep) (UpgradeStep, error) {
-	_, _ = ctx, step
-	return UpgradeStep{}, runtimeRemovedDomainError("upgrade_steps")
-}
-
-func (s *PostgresStore) FinishUpgradeAudit(ctx context.Context, id int64, status, image, errorText string, finishedAt time.Time) (UpgradeAudit, error) {
-	_, _, _, _, _, _ = ctx, id, status, image, errorText, finishedAt
-	return UpgradeAudit{}, runtimeRemovedDomainError("upgrade_audits")
-}
-
-func (s *PostgresStore) GetUpgradeAudit(ctx context.Context, id int64) (UpgradeAudit, error) {
-	_, _ = ctx, id
-	return UpgradeAudit{}, runtimeRemovedDomainError("upgrade_audits")
-}
-
-func (s *PostgresStore) ListUpgradeAudits(ctx context.Context, userID string, limit int) ([]UpgradeAudit, error) {
-	_, _, _ = ctx, userID, limit
-	return []UpgradeAudit{}, runtimeRemovedDomainError("upgrade_audits")
-}
-
-func (s *PostgresStore) ListUpgradeSteps(ctx context.Context, auditID int64, limit int) ([]UpgradeStep, error) {
-	_, _, _ = ctx, auditID, limit
-	return []UpgradeStep{}, runtimeRemovedDomainError("upgrade_steps")
-}
-
-func (s *PostgresStore) CreateRegisterTask(ctx context.Context, item RegisterTask) (RegisterTask, error) {
-	_, _ = ctx, item
-	return RegisterTask{}, runtimeRemovedDomainError("register_tasks")
-}
-
-func (s *PostgresStore) AppendRegisterTaskStep(ctx context.Context, step RegisterTaskStep) (RegisterTaskStep, error) {
-	_, _ = ctx, step
-	return RegisterTaskStep{}, runtimeRemovedDomainError("register_task_steps")
-}
-
-func (s *PostgresStore) FinishRegisterTask(ctx context.Context, id int64, status, userID, userName, repoFullName, image, errorText string, finishedAt time.Time) (RegisterTask, error) {
-	_, _, _, _, _, _, _, _, _ = ctx, id, status, userID, userName, repoFullName, image, errorText, finishedAt
-	return RegisterTask{}, runtimeRemovedDomainError("register_tasks")
-}
-
-func (s *PostgresStore) GetRegisterTask(ctx context.Context, id int64) (RegisterTask, error) {
-	_, _ = ctx, id
-	return RegisterTask{}, runtimeRemovedDomainError("register_tasks")
-}
-
-func (s *PostgresStore) ListRegisterTasks(ctx context.Context, limit int) ([]RegisterTask, error) {
-	_, _ = ctx, limit
-	return []RegisterTask{}, runtimeRemovedDomainError("register_tasks")
-}
-
-func (s *PostgresStore) ListRegisterTaskSteps(ctx context.Context, taskID int64, limit int) ([]RegisterTaskStep, error) {
-	_, _, _ = ctx, taskID, limit
-	return []RegisterTaskStep{}, runtimeRemovedDomainError("register_task_steps")
-}
-
-func (s *PostgresStore) AppendChatMessage(ctx context.Context, msg ChatMessage) (ChatMessage, error) {
-	_, _ = ctx, msg
-	return ChatMessage{}, runtimeRemovedDomainError("chat_messages")
-}
-
-func (s *PostgresStore) ListChatMessages(ctx context.Context, userID string, limit int) ([]ChatMessage, error) {
-	_, _, _ = ctx, userID, limit
-	return []ChatMessage{}, runtimeRemovedDomainError("chat_messages")
-}
-
-func (s *PostgresStore) ListPromptTemplates(ctx context.Context) ([]PromptTemplate, error) {
-	_ = ctx
-	return []PromptTemplate{}, runtimeRemovedDomainError("prompt_templates")
-}
-
-func (s *PostgresStore) UpsertPromptTemplate(ctx context.Context, item PromptTemplate) (PromptTemplate, error) {
-	_, _ = ctx, item
-	return PromptTemplate{}, runtimeRemovedDomainError("prompt_templates")
 }
 
 func (s *PostgresStore) CreateCollabSession(ctx context.Context, item CollabSession) (CollabSession, error) {

@@ -28,16 +28,14 @@ func costEventRecipientUserID(metaJSON string) string {
 }
 
 type Bot struct {
-	BotID        string    `json:"user_id"`
-	Name         string    `json:"name"`
-	Nickname     string    `json:"nickname"`
-	Provider     string    `json:"provider"`
-	Status       string    `json:"status"`
-	Initialized  bool      `json:"initialized"`
-	GatewayToken string    `json:"-"`
-	UpgradeToken string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	BotID       string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Nickname    string    `json:"nickname"`
+	Provider    string    `json:"provider"`
+	Status      string    `json:"status"`
+	Initialized bool      `json:"initialized"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type BotUpsertInput struct {
@@ -99,68 +97,6 @@ type TokenLedger struct {
 	Amount       int64     `json:"amount"`
 	BalanceAfter int64     `json:"balance_after"`
 	CreatedAt    time.Time `json:"created_at"`
-}
-
-type UpgradeAudit struct {
-	ID          int64      `json:"id"`
-	UserID      string     `json:"user_id"`
-	RepoURL     string     `json:"repo_url"`
-	Branch      string     `json:"branch"`
-	RequestedBy string     `json:"requested_by"`
-	Status      string     `json:"status"`
-	Image       string     `json:"image"`
-	Error       string     `json:"error,omitempty"`
-	StartedAt   time.Time  `json:"started_at"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
-	DurationMS  int64      `json:"duration_ms,omitempty"`
-}
-
-type UpgradeStep struct {
-	ID        int64     `json:"id"`
-	AuditID   int64     `json:"audit_id"`
-	Step      string    `json:"step"`
-	Status    string    `json:"status"`
-	Command   string    `json:"command,omitempty"`
-	Output    string    `json:"output,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type RegisterTask struct {
-	ID           int64      `json:"id"`
-	Provider     string     `json:"provider"`
-	UserID       string     `json:"user_id"`
-	UserName     string     `json:"user_name"`
-	RepoFullName string     `json:"repo_full_name"`
-	Image        string     `json:"image"`
-	Status       string     `json:"status"`
-	Error        string     `json:"error,omitempty"`
-	StartedAt    time.Time  `json:"started_at"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
-	DurationMS   int64      `json:"duration_ms,omitempty"`
-}
-
-type RegisterTaskStep struct {
-	ID        int64     `json:"id"`
-	TaskID    int64     `json:"task_id"`
-	Step      string    `json:"step"`
-	Status    string    `json:"status"`
-	Message   string    `json:"message,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type ChatMessage struct {
-	ID     int64     `json:"id"`
-	UserID string    `json:"user_id"`
-	From   string    `json:"from"`
-	To     string    `json:"to"`
-	Body   string    `json:"body"`
-	SentAt time.Time `json:"sent_at"`
-}
-
-type PromptTemplate struct {
-	Key       string    `json:"key"`
-	Content   string    `json:"content"`
-	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type CollabSession struct {
@@ -392,12 +328,6 @@ type WorldSetting struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-type BotCredentials struct {
-	UserID       string `json:"user_id"`
-	GatewayToken string `json:"-"`
-	UpgradeToken string `json:"-"`
-}
-
 type WorldTickRecord struct {
 	ID             int64     `json:"id"`
 	TickID         int64     `json:"tick_id"`
@@ -489,8 +419,6 @@ type Store interface {
 	GetBot(ctx context.Context, botID string) (Bot, error)
 	UpsertBot(ctx context.Context, input BotUpsertInput) (Bot, error)
 	UpdateBotNickname(ctx context.Context, botID, nickname string) (Bot, error)
-	GetBotCredentials(ctx context.Context, userID string) (BotCredentials, error)
-	UpsertBotCredentials(ctx context.Context, creds BotCredentials) (BotCredentials, error)
 	EnsureTianDaoLaw(ctx context.Context, item TianDaoLaw) (TianDaoLaw, error)
 	GetTianDaoLaw(ctx context.Context, lawKey string) (TianDaoLaw, error)
 	AppendWorldTick(ctx context.Context, item WorldTickRecord) (WorldTickRecord, error)
@@ -517,22 +445,6 @@ type Store interface {
 	Recharge(ctx context.Context, botID string, amount int64) (TokenLedger, error)
 	Consume(ctx context.Context, botID string, amount int64) (TokenLedger, error)
 	ListTokenLedger(ctx context.Context, botID string, limit int) ([]TokenLedger, error)
-	CreateUpgradeAudit(ctx context.Context, item UpgradeAudit) (UpgradeAudit, error)
-	AppendUpgradeStep(ctx context.Context, step UpgradeStep) (UpgradeStep, error)
-	FinishUpgradeAudit(ctx context.Context, id int64, status, image, errorText string, finishedAt time.Time) (UpgradeAudit, error)
-	GetUpgradeAudit(ctx context.Context, id int64) (UpgradeAudit, error)
-	ListUpgradeAudits(ctx context.Context, userID string, limit int) ([]UpgradeAudit, error)
-	ListUpgradeSteps(ctx context.Context, auditID int64, limit int) ([]UpgradeStep, error)
-	CreateRegisterTask(ctx context.Context, item RegisterTask) (RegisterTask, error)
-	AppendRegisterTaskStep(ctx context.Context, step RegisterTaskStep) (RegisterTaskStep, error)
-	FinishRegisterTask(ctx context.Context, id int64, status, userID, userName, repoFullName, image, errorText string, finishedAt time.Time) (RegisterTask, error)
-	GetRegisterTask(ctx context.Context, id int64) (RegisterTask, error)
-	ListRegisterTasks(ctx context.Context, limit int) ([]RegisterTask, error)
-	ListRegisterTaskSteps(ctx context.Context, taskID int64, limit int) ([]RegisterTaskStep, error)
-	AppendChatMessage(ctx context.Context, msg ChatMessage) (ChatMessage, error)
-	ListChatMessages(ctx context.Context, userID string, limit int) ([]ChatMessage, error)
-	ListPromptTemplates(ctx context.Context) ([]PromptTemplate, error)
-	UpsertPromptTemplate(ctx context.Context, item PromptTemplate) (PromptTemplate, error)
 	CreateCollabSession(ctx context.Context, item CollabSession) (CollabSession, error)
 	GetCollabSession(ctx context.Context, collabID string) (CollabSession, error)
 	ListCollabSessions(ctx context.Context, phase, proposerUserID string, limit int) ([]CollabSession, error)

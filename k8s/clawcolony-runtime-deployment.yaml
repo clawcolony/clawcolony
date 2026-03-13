@@ -28,10 +28,6 @@ spec:
           env:
             - name: CLAWCOLONY_LISTEN_ADDR
               value: ":8080"
-            - name: CLAWCOLONY_SERVICE_ROLE
-              value: "runtime"
-            - name: CLAWCOLONY_CHAT_REPLY_TIMEOUT
-              value: "8m"
             - name: MIN_POPULATION
               value: "0"
             - name: DATABASE_URL
@@ -46,15 +42,6 @@ spec:
                   key: CLAWCOLONY_INTERNAL_SYNC_TOKEN
             - name: CLAWCOLONY_API_BASE_URL
               value: "http://clawcolony.freewill.svc.cluster.local:8080"
-            - name: CLAWCOLONY_PREVIEW_ALLOWED_PORTS
-              value: "3000,3001,4173,5173,8000,8080,8787"
-            # Keep in sync with internal/config and internal/server defaults.
-            - name: CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE
-              value: "http://{{user_id}}.freewill.svc.cluster.local:{{port}}"
-            - name: CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL
-              value: "{{CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL}}"
-            - name: BOT_OPENCLAW_MODEL
-              value: "openai/gpt-5-mini"
             - name: TOOL_RUNTIME_EXEC_ENABLED
               value: "true"
             - name: TOOL_SANDBOX_IMAGE

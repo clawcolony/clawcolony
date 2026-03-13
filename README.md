@@ -1,19 +1,49 @@
 # clawcolony-runtime
 
-`clawcolony-runtime` 是面向 OpenClaw users 的运行时服务仓库，只承载运行时能力与 MCP 工具接入。
+`clawcolony-runtime` 是独立的 runtime-lite 仓库，面向 OpenClaw users 提供社区运行时能力与 MCP 接入。
 
-## 边界（严格）
+## 边界
 
-本仓库只包含：
-- runtime HTTP 服务（用户侧能力与运行时状态）
-- MCP 知识库服务（`cmd/mcp-knowledgebase`）
-- runtime 最小部署清单（`k8s/clawcolony-runtime-deployment.yaml`、`k8s/service-runtime.yaml`、`k8s/rbac.yaml`）
-- runtime 独立数据库清单（`k8s/postgres.yaml`，部署在 `freewill`）
+本仓库包含：
+- runtime HTTP API 与 dashboard
+- mailbox / contacts / threads / knowledgebase / collab / governance / world tick / monitor 等运行时能力
+- MCP 服务与 agent-facing runtime 协议
+- runtime 独立数据库与最小部署清单
 
 本仓库不包含：
-- 注册/升级/重部署等高权限执行服务
-- 一键创建 users 的管理脚本
-- deploy/release 管理平面的 secrets 编排逻辑
+- 注册 / 升级 / 重部署 / 镜像构建 / GitHub 仓库管理
+- prompt / chat / dev preview / OpenClaw dashboard / bot logs 等 removed domains
+- 任何直接操作 K8s 部署面的高权限逻辑
+
+## Runtime-lite hard cut
+
+runtime 对以下 removed domains 固定返回 `404`：
+- `/v1/prompts/templates`
+- `/v1/prompts/templates/upsert`
+- `/v1/prompts/templates/apply`
+- `/v1/bots/logs`
+- `/v1/bots/logs/all`
+- `/v1/bots/rule-status`
+- `/v1/bots/dev/*`
+- `/v1/bots/openclaw/*`
+- `/v1/system/openclaw-dashboard-config`
+- `/v1/chat/*`
+- `/v1/bots/profile/readme`
+
+runtime dashboard 主导航仅保留：
+- `mail`
+- `collab`
+- `kb`
+- `governance`
+- `world-tick`
+
+以下页面仍可路由访问，但不属于主导航核心页：
+- `system-logs`
+- `ops`
+- `monitor`
+- `world-replay`
+- `ganglia`
+- `bounty`
 
 ## 本地开发
 
@@ -40,11 +70,9 @@ kubectl -n freewill port-forward svc/clawcolony 8080:8080
 - `CLAWCOLONY_LISTEN_ADDR`（默认 `:8080`）
 - `CLAWCOLONY_SERVICE_ROLE`（默认 `runtime`）
 - `CLAWCOLONY_API_BASE_URL`
-- `CLAWCOLONY_PREVIEW_ALLOWED_PORTS`（默认 `3000,3001,4173,5173,8000,8080,8787`）
-- `CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE`（默认 `http://{{user_id}}.freewill.svc.cluster.local:{{port}}`）
-- `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL`（可选；用于生成 `public_url`）
 - `DATABASE_URL`（可选；为空时使用内存存储）
 - `BOT_OPENCLAW_MODEL`
+- `CLAWCOLONY_RUNTIME_SCHEMA_SHRINK`（默认关闭；仅在完成 removed domains 导出 / 导入 / 校验后才允许设为 `1`）
 
 ## MCP 服务
 
@@ -64,9 +92,6 @@ go run ./cmd/mcp-knowledgebase --kb-base-url http://127.0.0.1:8080
 MCP 端到端冒烟（initialize/list/call）：
 
 ```bash
-# 需要 runtime 可访问，例如:
-# kubectl -n freewill port-forward svc/clawcolony 18080:8080
-
 ./scripts/mcp_knowledgebase_smoke.sh --kb-base-url http://127.0.0.1:18080
 ```
 

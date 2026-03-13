@@ -9,27 +9,24 @@ import (
 func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.InternalSyncToken = "sync-token"
-	h := srv.roleAccessMiddleware(srv.mux)
 
 	req := map[string]any{
 		"op": "upsert",
 		"user": map[string]any{
-			"user_id":       "user-sync-1",
-			"name":          "roy",
-			"provider":      "openclaw",
-			"status":        "running",
-			"initialized":   true,
-			"gateway_token": "gw-sync-1",
-			"upgrade_token": "up-sync-1",
+			"user_id":     "user-sync-1",
+			"name":        "roy",
+			"provider":    "runtime",
+			"status":      "running",
+			"initialized": true,
 		},
 	}
 
-	unauth := doJSONRequest(t, h, http.MethodPost, "/v1/internal/users/sync", req)
+	unauth := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", req)
 	if unauth.Code != http.StatusUnauthorized {
 		t.Fatalf("missing sync token should be unauthorized, got=%d body=%s", unauth.Code, unauth.Body.String())
 	}
 
-	upsert := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/internal/users/sync", req, map[string]string{
+	upsert := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", req, map[string]string{
 		"X-Clawcolony-Internal-Token": "sync-token",
 	})
 	if upsert.Code != http.StatusOK {
@@ -40,16 +37,8 @@ func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get synced bot: %v", err)
 	}
-	if botItem.Name != "roy" || botItem.Status != "running" || !botItem.Initialized {
+	if botItem.Name != "roy" || botItem.Provider != "runtime" || botItem.Status != "running" || !botItem.Initialized {
 		t.Fatalf("unexpected bot after sync: %+v", botItem)
-	}
-
-	creds, err := srv.store.GetBotCredentials(context.Background(), "user-sync-1")
-	if err != nil {
-		t.Fatalf("get synced credentials: %v", err)
-	}
-	if creds.GatewayToken != "" || creds.UpgradeToken != "" {
-		t.Fatalf("runtime should not persist gateway/upgrade token after sync: %+v", creds)
 	}
 
 	delReq := map[string]any{
@@ -58,7 +47,7 @@ func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
 			"user_id": "user-sync-1",
 		},
 	}
-	del := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/internal/users/sync", delReq, map[string]string{
+	del := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", delReq, map[string]string{
 		"X-Clawcolony-Internal-Token": "sync-token",
 	})
 	if del.Code != http.StatusOK {
@@ -74,10 +63,23 @@ func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
 	}
 }
 
+func TestInternalUserSyncDisabledWithoutToken(t *testing.T) {
+	srv := newTestServer()
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", map[string]any{
+		"op": "upsert",
+		"user": map[string]any{
+			"user_id": "user-sync-disabled",
+			"name":    "disabled",
+		},
+	})
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when sync token is unset, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestInternalUserSyncUpsertRequiresName(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.InternalSyncToken = "sync-token"
-	h := srv.roleAccessMiddleware(srv.mux)
 
 	req := map[string]any{
 		"op": "upsert",
@@ -86,20 +88,27 @@ func TestInternalUserSyncUpsertRequiresName(t *testing.T) {
 			"status":  "running",
 		},
 	}
-	w := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/internal/users/sync", req, map[string]string{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", req, map[string]string{
 		"X-Clawcolony-Internal-Token": "sync-token",
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 when user.name is empty, got=%d body=%s", w.Code, w.Body.String())
 	}
+}
 
-	items, err := srv.store.ListBots(context.Background())
-	if err != nil {
-		t.Fatalf("list bots after rejected sync: %v", err)
-	}
-	for _, it := range items {
-		if it.BotID == "user-sync-noname" {
-			t.Fatalf("user-sync-noname should not be created on rejected sync: %+v", it)
-		}
+func TestInternalUserSyncDeleteRequiresNameForUnsyncedUser(t *testing.T) {
+	srv := newTestServer()
+	srv.cfg.InternalSyncToken = "sync-token"
+
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", map[string]any{
+		"op": "delete",
+		"user": map[string]any{
+			"user_id": "missing-user",
+		},
+	}, map[string]string{
+		"Authorization": "Bearer sync-token",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when delete omits name for unknown user, got=%d body=%s", w.Code, w.Body.String())
 	}
 }

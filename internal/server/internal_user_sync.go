@@ -9,13 +9,11 @@ import (
 )
 
 type internalUserSyncUser struct {
-	UserID       string `json:"user_id"`
-	Name         string `json:"name"`
-	Provider     string `json:"provider"`
-	Status       string `json:"status"`
-	Initialized  *bool  `json:"initialized,omitempty"`
-	GatewayToken string `json:"gateway_token,omitempty"`
-	UpgradeToken string `json:"upgrade_token,omitempty"`
+	UserID      string `json:"user_id"`
+	Name        string `json:"name"`
+	Provider    string `json:"provider"`
+	Status      string `json:"status"`
+	Initialized *bool  `json:"initialized,omitempty"`
 }
 
 type internalUserSyncRequest struct {
