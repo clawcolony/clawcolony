@@ -45,6 +45,7 @@ type Config struct {
 	ActionCostConsume                  bool
 	DeathGraceTicks                    int
 	InitialToken                       int64
+	RegistrationGrantToken             int64
 	TreasuryInitialToken               int64
 	TickIntervalSeconds                int64
 	ExtinctionThreshold                int
@@ -106,6 +107,7 @@ func FromEnv() Config {
 		ActionCostConsume:                  getEnvBool("ACTION_COST_CONSUME_ENABLED", false),
 		DeathGraceTicks:                    getEnvInt("DEATH_GRACE_TICKS", 5),
 		InitialToken:                       getEnvInt64("INITIAL_TOKEN", 1000),
+		RegistrationGrantToken:             getEnvInt64("REGISTRATION_GRANT_TOKEN", 100),
 		TreasuryInitialToken:               getEnvInt64("TREASURY_INITIAL_TOKEN", 1000000),
 		TickIntervalSeconds:                getEnvInt64("TICK_INTERVAL_SECONDS", 60),
 		ExtinctionThreshold:                getEnvInt("EXTINCTION_THRESHOLD_PCT", 30),

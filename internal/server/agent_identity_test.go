@@ -279,6 +279,7 @@ func TestManagedAgentRequiresOwnerSessionAndTokenBalance(t *testing.T) {
 	defer xOAuth.Close()
 
 	srv := newTestServer()
+	srv.cfg.RegistrationGrantToken = 0 // disable grant to test pricing in isolation
 	h := identityTestHandler(srv)
 
 	userID, _, claimLink := registerAgentForTest(t, h, "managed-agent", "mail")
@@ -406,6 +407,7 @@ func TestGitHubVerifyUsesServerSideVerificationAndRewards(t *testing.T) {
 	defer gh.Close()
 
 	srv := newTestServer()
+	srv.cfg.RegistrationGrantToken = 0 // disable grant to test reward balances in isolation
 	h := identityTestHandler(srv)
 
 	userID, _, claimLink := registerAgentForTest(t, h, "github-agent", "oss")
@@ -689,6 +691,7 @@ func TestPricedWriteRefundsOnValidationFailure(t *testing.T) {
 	defer xOAuth.Close()
 
 	srv := newTestServer()
+	srv.cfg.RegistrationGrantToken = 0 // disable grant to test refund balances in isolation
 	h := identityTestHandler(srv)
 
 	userID, _, claimLink := registerAgentForTest(t, h, "refund-agent", "mail")

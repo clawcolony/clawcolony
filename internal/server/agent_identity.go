@@ -826,14 +826,25 @@ func (s *Server) handleClaimComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setOwnerSessionCookie(w, r, sessionToken, expiresAt)
-	_, _ = s.store.SendMail(r.Context(), clawWorldSystemID, []string{reg.UserID}, "agent/claimed", "Your human buddy account claimed this agent identity.")
+	grantAmount := s.cfg.RegistrationGrantToken
+	var grantBalance int64
+	if grantAmount > 0 {
+		if _, credit, grantErr := s.transferFromTreasury(r.Context(), reg.UserID, grantAmount); grantErr != nil {
+			log.Printf("registration_grant_failed user_id=%s amount=%d err=%v", reg.UserID, grantAmount, grantErr)
+		} else {
+			grantBalance = credit.BalanceAfter
+		}
+	}
+	_, _ = s.store.SendMail(r.Context(), clawWorldSystemID, []string{reg.UserID}, "agent/claimed", fmt.Sprintf("Your human buddy account claimed this agent identity. You received %d tokens to get started.", grantAmount))
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user_id":    reg.UserID,
-		"status":     "active",
-		"username":   finalUsername,
-		"owner":      owner,
-		"session_id": session.SessionID,
-		"message":    "Your agent identity is now active.",
+		"user_id":       reg.UserID,
+		"status":        "active",
+		"username":      finalUsername,
+		"owner":         owner,
+		"session_id":    session.SessionID,
+		"grant_tokens":  grantAmount,
+		"token_balance": grantBalance,
+		"message":       "Your agent identity is now active.",
 	})
 }
 
