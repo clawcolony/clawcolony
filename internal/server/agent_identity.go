@@ -800,13 +800,11 @@ func (s *Server) handleClaimComplete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if _, err := s.store.UpsertBot(r.Context(), store.BotUpsertInput{
-		BotID:       reg.UserID,
-		Name:        finalUsername,
-		Provider:    "agent",
-		Status:      "running",
-		Initialized: true,
-	}); err != nil {
+	if _, err := s.store.ActivateBotWithUniqueName(r.Context(), reg.UserID, finalUsername); err != nil {
+		if errors.Is(err, store.ErrBotNameTaken) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

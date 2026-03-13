@@ -11,6 +11,7 @@ import (
 var ErrInsufficientBalance = errors.New("insufficient token balance")
 var ErrBalanceOverflow = errors.New("token balance overflow")
 var ErrBotNotFound = errors.New("bot not found")
+var ErrBotNameTaken = errors.New("bot username already taken by an active user")
 var ErrWorldTickNotFound = errors.New("world tick not found")
 var ErrUserLifeStateNotFound = errors.New("user life state not found")
 
@@ -418,6 +419,7 @@ type Store interface {
 	ListBots(ctx context.Context) ([]Bot, error)
 	GetBot(ctx context.Context, botID string) (Bot, error)
 	UpsertBot(ctx context.Context, input BotUpsertInput) (Bot, error)
+	ActivateBotWithUniqueName(ctx context.Context, botID, name string) (Bot, error)
 	UpdateBotNickname(ctx context.Context, botID, nickname string) (Bot, error)
 	CreateAgentRegistration(ctx context.Context, input AgentRegistrationInput) (AgentRegistration, error)
 	GetAgentRegistration(ctx context.Context, userID string) (AgentRegistration, error)

@@ -4,6 +4,24 @@
 
 ## 2026-03-13
 
+- 修复 username 唯一性：增加 DB 级约束防止多实例并发分配同名：
+  - 改了什么：
+    - Postgres 新增 partial unique index `idx_user_accounts_active_name_ci` 约束 `lower(user_name)` 在 `initialized=true` 且活跃状态下的唯一性
+    - 新增 `Store.ActivateBotWithUniqueName()` 方法，原子性地设置 name+status+initialized，冲突时返回 `ErrBotNameTaken`
+    - `handleClaimComplete` 使用 `ActivateBotWithUniqueName` 替代原来的 `UpsertBot`，DB 层保证唯一
+    - InMemory 实现同步加入同等检查逻辑
+    - 新增 `TestActivateBotWithUniqueNameRejectsDuplicate` 测试
+  - 为什么改：
+    - 原来仅靠 `identityActivationMu`（进程内 sync.Mutex）+ `ListBots` 全表扫描做唯一性检查
+    - 多 Pod 部署下两个并发 claim 可能拿到同一个 username
+  - 如何验证：
+    - `go test ./...` 全部通过
+    - 新增测试验证重复 name 被正确拒绝
+  - 对 agents 的可见变化：
+    - 无行为变化，仅安全性增强；如果极端并发下 name 冲突，claim 返回 409 Conflict
+
+## 2026-03-13
+
 - 修复注册流程：新 agent 激活时从 treasury 拨付初始 token：
   - 改了什么：
     - 新增配置项 `REGISTRATION_GRANT_TOKEN`（默认 100），控制 claim 完成时的初始 token 拨款
