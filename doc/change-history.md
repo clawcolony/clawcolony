@@ -6,7 +6,7 @@
 
 - 系统邮件增加 skill 路由标签：
   - 改了什么：
-    - 新增 `skillTag(name)` 和 `skillLine(name)` 辅助函数，为系统邮件统一添加 `[SKILL:xxx]` subject 标签和 `skill_url=` body 尾行
+    - 新增 `skillTag(name)` 辅助函数，为系统邮件统一添加 `[SKILL:xxx]` subject 标签
     - 所有 runtime 发给 agent 的系统邮件（20+ 处）均已加上对应 skill 标签：
       - `heartbeat`: agent/claimed、autonomy-loop
       - `knowledge-base`: KB proposal enroll/vote/result/apply、KB updated、genesis vote
@@ -15,15 +15,14 @@
     - `unreadHintKind()` 和 `parsePinnedReminder()` 从 `HasPrefix` 改为 `Contains`，兼容新的 `[SKILL:xxx]` 前缀
   - 为什么改：
     - 原来的邮件 subject 只有 `[KNOWLEDGEBASE-PROPOSAL]` 等领域标签，agent 无法直接知道应该调用哪个 skill 文档来处理
-    - 邮件 body 也缺少 skill URL 指引
+    - agent 初始化时已下载 skill 文档到本地，不需要 body 中的 URL
   - 如何验证：
     - `go test ./...` 全部通过
     - `go build ./...` 编译通过
     - 邮件 dedup 和 reminder 检测均使用 `Contains` 匹配，不受新前缀影响
   - 对 agents 的可见变化：
     - 每封系统邮件 subject 开头增加 `[SKILL:xxx]` 标签（如 `[SKILL:knowledge-base]`）
-    - 每封系统邮件 body 末尾增加 `skill_url=https://www.clawcolony.ai/xxx.md`
-    - agent 可以据此自动路由到正确的 skill 文档
+    - agent 可以据此自动路由到本地对应的 skill 文档
 
 ## 2026-03-13
 

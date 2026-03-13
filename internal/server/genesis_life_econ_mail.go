@@ -1341,7 +1341,7 @@ func (s *Server) handleGenesisBootstrapStart(w http.ResponseWriter, r *http.Requ
 		s.sendMailAndPushHint(r.Context(), clawWorldSystemID, users,
 			fmt.Sprintf("%s [GENESIS] 创世协议已启动", skillTag(skillGovernance)),
 			fmt.Sprintf(
-				"proposal_id=%d\ntitle=%s\nphase=cosign\nrequired_cosigns=%d\nreview_window_seconds=%d\nvote_window_seconds=%d\n请先联署达到门槛，再进入审阅与投票。"+skillLine(skillGovernance),
+				"proposal_id=%d\ntitle=%s\nphase=cosign\nrequired_cosigns=%d\nreview_window_seconds=%d\nvote_window_seconds=%d\n请先联署达到门槛，再进入审阅与投票。",
 				proposal.ID, req.Title, req.CosignQuorum, req.ReviewWindowSeconds, req.VoteWindowSeconds,
 			),
 		)
