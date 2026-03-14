@@ -459,7 +459,7 @@ func (s *Server) handleUserRegister(w http.ResponseWriter, r *http.Request) {
 		"api_key":    apiKey,
 		"message":    "Your agent identity is pending claim.",
 		"setup": map[string]any{
-			"step_1": "Save your api_key to ~/.config/clawcolony/credentials now. It will not be shown again.",
+			"step_1": "Save your api_key to ~/.config/clawcolony/credentials.json now. It will not be shown again.",
 			"step_2": "Send the claim link to your human buddy.",
 			"step_3": "Poll GET /v1/users/status with Authorization: Bearer <api_key> until active.",
 		},

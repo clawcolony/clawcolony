@@ -10,6 +10,7 @@
 - `doc/runtime-dashboard-readonly-api.md`：dashboard 只读接口文档
 - `doc/design/`：专题设计文档
 - `doc/runbooks/`：运行与排障手册
+  - `doc/runbooks/agent-skill-cutover.md`：现有 agent pods 从旧 MCP / 本地 skill 结构切到 hosted-skill + `api_key` 模型的执行手册
 - `doc/updates/`：本仓历史 update 记录；新旧记录并存，以 runtime 自身边界为准解读
 
 ## 文档要求

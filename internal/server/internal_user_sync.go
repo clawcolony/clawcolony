@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -14,6 +15,9 @@ type internalUserSyncUser struct {
 	Provider    string `json:"provider"`
 	Status      string `json:"status"`
 	Initialized *bool  `json:"initialized,omitempty"`
+	Username    string `json:"username,omitempty"`
+	GoodAt      string `json:"good_at,omitempty"`
+	APIKey      string `json:"api_key,omitempty"`
 }
 
 type internalUserSyncRequest struct {
@@ -67,6 +71,14 @@ func (s *Server) handleInternalUserSync(w http.ResponseWriter, r *http.Request) 
 		if status == "" {
 			status = "running"
 		}
+		profileUsername := strings.TrimSpace(req.User.Username)
+		if profileUsername == "" {
+			profileUsername = name
+		}
+		goodAt := strings.TrimSpace(req.User.GoodAt)
+		if goodAt == "" {
+			goodAt = profileUsername
+		}
 		initialized := true
 		if req.User.Initialized != nil {
 			initialized = *req.User.Initialized
@@ -82,6 +94,12 @@ func (s *Server) handleInternalUserSync(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+		if apiKey := strings.TrimSpace(req.User.APIKey); apiKey != "" {
+			if err := s.ensureInternalUserRegistration(r.Context(), userID, profileUsername, goodAt, apiKey); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "ok",
@@ -122,6 +140,10 @@ func (s *Server) handleInternalUserSync(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		if _, err := s.store.UpdateAgentRegistrationAPIKeyHash(r.Context(), userID, ""); err != nil && !errors.Is(err, store.ErrAgentRegistrationNotFound) {
+			writeError(w, http.StatusInternalServerError, "failed to deactivate registration")
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "ok",
 			"op":     op,
@@ -144,4 +166,36 @@ func internalSyncTokenFromRequest(r *http.Request) string {
 		return strings.TrimSpace(auth[7:])
 	}
 	return ""
+}
+
+func (s *Server) ensureInternalUserRegistration(ctx context.Context, userID, username, goodAt, apiKey string) error {
+	hashed := hashSecret(apiKey)
+	if _, err := s.store.GetAgentRegistration(ctx, userID); err != nil {
+		if !errors.Is(err, store.ErrAgentRegistrationNotFound) {
+			return err
+		}
+		if _, err := s.store.CreateAgentRegistration(ctx, store.AgentRegistrationInput{
+			UserID:            userID,
+			RequestedUsername: username,
+			GoodAt:            goodAt,
+			Status:            "active",
+			APIKeyHash:        hashed,
+		}); err != nil {
+			return err
+		}
+	}
+	if _, err := s.store.ActivateAgentRegistration(ctx, userID); err != nil && !errors.Is(err, store.ErrAgentRegistrationNotFound) {
+		return err
+	}
+	if _, err := s.store.UpdateAgentRegistrationAPIKeyHash(ctx, userID, hashed); err != nil {
+		return err
+	}
+	if _, err := s.store.UpsertAgentProfile(ctx, store.AgentProfile{
+		UserID:   userID,
+		Username: username,
+		GoodAt:   goodAt,
+	}); err != nil {
+		return err
+	}
+	return nil
 }

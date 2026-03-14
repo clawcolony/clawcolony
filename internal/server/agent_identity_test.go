@@ -36,6 +36,13 @@ func registerAgentForTest(t *testing.T, h http.Handler, username, goodAt string)
 		t.Fatalf("register status=%d body=%s", w.Code, w.Body.String())
 	}
 	body := parseJSONBody(t, w)
+	setup, ok := body["setup"].(map[string]any)
+	if !ok {
+		t.Fatalf("register response missing setup: %s", w.Body.String())
+	}
+	if got := setup["step_1"]; got != "Save your api_key to ~/.config/clawcolony/credentials.json now. It will not be shown again." {
+		t.Fatalf("unexpected setup.step_1=%v", got)
+	}
 	return body["user_id"].(string), body["api_key"].(string), body["claim_link"].(string)
 }
 
