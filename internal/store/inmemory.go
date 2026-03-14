@@ -169,6 +169,45 @@ func (s *InMemoryStore) UpsertBot(_ context.Context, input BotUpsertInput) (Bot,
 	return current, nil
 }
 
+func (s *InMemoryStore) ActivateBotWithUniqueName(_ context.Context, botID, name string) (Bot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uid := strings.TrimSpace(botID)
+	if uid == "" {
+		return Bot{}, fmt.Errorf("user_id is required")
+	}
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" {
+		return Bot{}, fmt.Errorf("name is required")
+	}
+	current, ok := s.bots[uid]
+	if !ok {
+		return Bot{}, fmt.Errorf("%w: %s", ErrBotNotFound, uid)
+	}
+	for _, other := range s.bots {
+		if other.BotID == uid {
+			continue
+		}
+		if !other.Initialized || !isActiveStatus(other.Status) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(other.Name), n) {
+			return Bot{}, fmt.Errorf("%w: %s", ErrBotNameTaken, n)
+		}
+	}
+	current.Name = n
+	current.Status = "running"
+	current.Initialized = true
+	current.UpdatedAt = time.Now().UTC()
+	s.bots[uid] = current
+	return current, nil
+}
+
+func isActiveStatus(status string) bool {
+	s := strings.ToLower(strings.TrimSpace(status))
+	return s != "deleted" && s != "inactive" && s != "system"
+}
+
 func (s *InMemoryStore) UpdateBotNickname(_ context.Context, botID, nickname string) (Bot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

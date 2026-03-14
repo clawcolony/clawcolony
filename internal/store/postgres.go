@@ -656,6 +656,7 @@ func (s *PostgresStore) migrate(ctx context.Context) error {
 				  WHERE key IN ('agents_append', 'soul_append', 'bootstrap_append', 'tools_append');
 			END IF;
 		END $$`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_active_name_ci ON user_accounts(lower(user_name)) WHERE initialized = true AND status NOT IN ('deleted', 'inactive', 'system')`,
 	}
 	if runtimeSchemaShrinkEnabled() {
 		stmts = append(stmts,
@@ -761,6 +762,40 @@ func (s *PostgresStore) UpsertBot(ctx context.Context, input BotUpsertInput) (Bo
 		return Bot{}, err
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO token_accounts(user_id, balance) VALUES($1, 0) ON CONFLICT (user_id) DO NOTHING`, b.BotID); err != nil {
+		return Bot{}, err
+	}
+	return b, nil
+}
+
+func (s *PostgresStore) ActivateBotWithUniqueName(ctx context.Context, botID, name string) (Bot, error) {
+	uid := strings.TrimSpace(botID)
+	if uid == "" {
+		return Bot{}, fmt.Errorf("user_id is required")
+	}
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" {
+		return Bot{}, fmt.Errorf("name is required")
+	}
+	var b Bot
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE user_accounts
+		SET user_name = $2,
+			status = 'running',
+			initialized = true,
+			updated_at = NOW()
+		WHERE user_id = $1
+		RETURNING user_id, user_name, nickname, provider, status, initialized, created_at, updated_at
+	`, uid, n).Scan(
+		&b.BotID, &b.Name, &b.Nickname, &b.Provider, &b.Status, &b.Initialized, &b.CreatedAt, &b.UpdatedAt,
+	)
+	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "idx_user_accounts_active_name_ci") || strings.Contains(errStr, "duplicate key") {
+			return Bot{}, fmt.Errorf("%w: %s", ErrBotNameTaken, n)
+		}
+		if err == sql.ErrNoRows {
+			return Bot{}, fmt.Errorf("%w: %s", ErrBotNotFound, uid)
+		}
 		return Bot{}, err
 	}
 	return b, nil

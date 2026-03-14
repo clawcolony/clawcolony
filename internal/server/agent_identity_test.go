@@ -279,6 +279,7 @@ func TestManagedAgentRequiresOwnerSessionAndTokenBalance(t *testing.T) {
 	defer xOAuth.Close()
 
 	srv := newTestServer()
+	srv.cfg.RegistrationGrantToken = 0 // disable grant to test pricing in isolation
 	h := identityTestHandler(srv)
 
 	userID, _, claimLink := registerAgentForTest(t, h, "managed-agent", "mail")
@@ -406,6 +407,7 @@ func TestGitHubVerifyUsesServerSideVerificationAndRewards(t *testing.T) {
 	defer gh.Close()
 
 	srv := newTestServer()
+	srv.cfg.RegistrationGrantToken = 0 // disable grant to test reward balances in isolation
 	h := identityTestHandler(srv)
 
 	userID, _, claimLink := registerAgentForTest(t, h, "github-agent", "oss")
@@ -689,6 +691,7 @@ func TestPricedWriteRefundsOnValidationFailure(t *testing.T) {
 	defer xOAuth.Close()
 
 	srv := newTestServer()
+	srv.cfg.RegistrationGrantToken = 0 // disable grant to test refund balances in isolation
 	h := identityTestHandler(srv)
 
 	userID, _, claimLink := registerAgentForTest(t, h, "refund-agent", "mail")
@@ -809,5 +812,43 @@ func TestPricedBusinessActionsCoverage(t *testing.T) {
 	sort.Strings(got)
 	if strings.Join(expected, "\n") != strings.Join(got, "\n") {
 		t.Fatalf("priced action coverage drift\nexpected=%v\ngot=%v", expected, got)
+	}
+}
+
+func TestActivateBotWithUniqueNameRejectsDuplicate(t *testing.T) {
+	srv := newTestServer()
+
+	// Seed an active bot with name "taken-name".
+	if _, err := srv.store.ActivateBotWithUniqueName(t.Context(), "", "taken-name"); err == nil {
+		// expected error for empty botID — just checking interface works
+	}
+	_, _ = srv.store.UpsertBot(t.Context(), store.BotUpsertInput{
+		BotID:    "existing-bot",
+		Name:     "placeholder",
+		Provider: "agent",
+		Status:   "inactive",
+	})
+	if _, err := srv.store.ActivateBotWithUniqueName(t.Context(), "existing-bot", "taken-name"); err != nil {
+		t.Fatalf("first activation should succeed: %v", err)
+	}
+
+	// Now try to activate another bot with the same name.
+	_, _ = srv.store.UpsertBot(t.Context(), store.BotUpsertInput{
+		BotID:    "new-bot",
+		Name:     "placeholder2",
+		Provider: "agent",
+		Status:   "inactive",
+	})
+	_, err := srv.store.ActivateBotWithUniqueName(t.Context(), "new-bot", "taken-name")
+	if err == nil {
+		t.Fatalf("expected ErrBotNameTaken for duplicate active name")
+	}
+	if !strings.Contains(err.Error(), "already taken") {
+		t.Fatalf("expected name-taken error, got: %v", err)
+	}
+
+	// Different name should succeed.
+	if _, err := srv.store.ActivateBotWithUniqueName(t.Context(), "new-bot", "different-name"); err != nil {
+		t.Fatalf("activation with different name should succeed: %v", err)
 	}
 }

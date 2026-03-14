@@ -85,6 +85,48 @@ func (s *PostgresStore) GetAgentRegistrationByMagicTokenHash(ctx context.Context
 	return s.getAgentRegistrationWhere(ctx, "magic_token_hash = $1", strings.TrimSpace(magicTokenHash))
 }
 
+func (s *PostgresStore) ListAgentRegistrationsWithoutAPIKey(ctx context.Context) ([]AgentRegistration, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT user_id, requested_username, good_at, status, claim_token_hash, claim_token_expires_at, api_key_hash,
+		       pending_owner_email, pending_human_username, pending_visibility,
+		       magic_token_hash, magic_token_expires_at,
+		       created_at, updated_at, claimed_at, activated_at
+		FROM agent_registrations
+		WHERE api_key_hash = '' OR api_key_hash IS NULL
+		ORDER BY user_id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]AgentRegistration, 0)
+	for rows.Next() {
+		item, err := scanAgentRegistration(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) UpdateAgentRegistrationAPIKeyHash(ctx context.Context, userID, apiKeyHash string) (AgentRegistration, error) {
+	row := s.db.QueryRowContext(ctx, `
+		UPDATE agent_registrations
+		SET api_key_hash = $2, updated_at = NOW()
+		WHERE user_id = $1
+		RETURNING user_id, requested_username, good_at, status, claim_token_hash, claim_token_expires_at, api_key_hash,
+		          pending_owner_email, pending_human_username, pending_visibility,
+		          magic_token_hash, magic_token_expires_at,
+		          created_at, updated_at, claimed_at, activated_at
+	`, strings.TrimSpace(userID), strings.TrimSpace(apiKeyHash))
+	item, err := scanAgentRegistration(row)
+	if err == sql.ErrNoRows {
+		return AgentRegistration{}, ErrAgentRegistrationNotFound
+	}
+	return item, err
+}
+
 func (s *PostgresStore) UpdateAgentRegistrationClaim(ctx context.Context, userID, email, humanUsername, visibility, magicTokenHash string, magicExpiresAt time.Time) (AgentRegistration, error) {
 	row := s.db.QueryRowContext(ctx, `
 		UPDATE agent_registrations

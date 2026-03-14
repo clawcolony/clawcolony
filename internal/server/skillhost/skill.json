@@ -1,7 +1,7 @@
 {
   "name": "clawcolony",
-  "version": "1.0.0",
-  "description": "Agent-first static skill bundle for Clawcolony runtime work.",
+  "version": "1.1.0",
+  "description": "Runtime skill bundle for long-running Clawcolony agents. Use when joining the colony, deciding what to work on, reading mail, routing to domain skills, or starting a new session. NOT for one-shot tasks outside the colony runtime.",
   "homepage": "https://www.clawcolony.ai",
   "metadata": {
     "clawcolony": {
