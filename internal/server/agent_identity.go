@@ -193,6 +193,80 @@ var pricedBusinessActions = map[string]pricedBusinessAction{
 	"/v1/metabolism/dispute":          {Path: "/v1/metabolism/dispute", ActorKey: "user_id", Tokens: 2, Label: "dispute metabolism"},
 }
 
+// contextKey is a private type for context keys in this package.
+type contextKey string
+
+const ctxKeyAuthUserID contextKey = "auth_user_id"
+
+// AuthenticatedUserID returns the user_id set by the apiKeyAuthMiddleware, or "".
+func AuthenticatedUserID(r *http.Request) string {
+	v, _ := r.Context().Value(ctxKeyAuthUserID).(string)
+	return v
+}
+
+// apiKeyAuthExemptPrefixes are path prefixes exempt from api_key auth.
+var apiKeyAuthExemptPrefixes = []string{
+	"/v1/users/register",
+	"/v1/users/status",
+	"/v1/claims/",
+	"/v1/internal/",
+	"/v1/events",
+	"/v1/meta",
+	"/auth/",
+	"/v1/owner/",
+	"/v1/social/",
+	"/v1/genesis/bootstrap/",
+	"/v1/clawcolony/bootstrap/",
+}
+
+func isAPIKeyAuthExempt(reqPath string) bool {
+	for _, prefix := range apiKeyAuthExemptPrefixes {
+		if strings.HasPrefix(reqPath, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// apiKeyAuthMiddleware enforces api_key authentication on all write requests
+// (POST/PUT/DELETE) to /v1/... paths, except exempt paths.
+func (s *Server) apiKeyAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
+			next.ServeHTTP(w, r)
+			return
+		}
+		reqPath := normalizeRequestPath(r.URL.Path)
+		if !strings.HasPrefix(reqPath, "/v1/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if isAPIKeyAuthExempt(reqPath) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		apiKey := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(r.Header.Get("X-API-Key"))
+		}
+		if apiKey == "" {
+			writeError(w, http.StatusUnauthorized, "api_key is required (Authorization: Bearer <key> or X-API-Key header)")
+			return
+		}
+		reg, err := s.store.GetAgentRegistrationByAPIKeyHash(r.Context(), hashSecret(apiKey))
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid api_key")
+			return
+		}
+		if reg.Status != "active" && reg.Status != "pending_claim" {
+			writeError(w, http.StatusForbidden, "agent registration is not active (status: "+reg.Status+")")
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxKeyAuthUserID, reg.UserID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func (s *Server) ownerAndPricingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodPut {

@@ -425,6 +425,8 @@ type Store interface {
 	GetAgentRegistration(ctx context.Context, userID string) (AgentRegistration, error)
 	GetAgentRegistrationByClaimTokenHash(ctx context.Context, claimTokenHash string) (AgentRegistration, error)
 	GetAgentRegistrationByAPIKeyHash(ctx context.Context, apiKeyHash string) (AgentRegistration, error)
+	ListAgentRegistrationsWithoutAPIKey(ctx context.Context) ([]AgentRegistration, error)
+	UpdateAgentRegistrationAPIKeyHash(ctx context.Context, userID, apiKeyHash string) (AgentRegistration, error)
 	GetAgentRegistrationByMagicTokenHash(ctx context.Context, magicTokenHash string) (AgentRegistration, error)
 	UpdateAgentRegistrationClaim(ctx context.Context, userID, email, humanUsername, visibility, magicTokenHash string, magicExpiresAt time.Time) (AgentRegistration, error)
 	ActivateAgentRegistration(ctx context.Context, userID string) (AgentRegistration, error)

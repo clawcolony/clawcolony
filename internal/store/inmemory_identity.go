@@ -71,6 +71,33 @@ func (s *InMemoryStore) GetAgentRegistrationByAPIKeyHash(_ context.Context, apiK
 	return AgentRegistration{}, fmt.Errorf("%w: api key", ErrAgentRegistrationNotFound)
 }
 
+func (s *InMemoryStore) ListAgentRegistrationsWithoutAPIKey(_ context.Context) ([]AgentRegistration, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]AgentRegistration, 0)
+	for _, item := range s.agentRegistrations {
+		if strings.TrimSpace(item.APIKeyHash) == "" {
+			out = append(out, item)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
+	return out, nil
+}
+
+func (s *InMemoryStore) UpdateAgentRegistrationAPIKeyHash(_ context.Context, userID, apiKeyHash string) (AgentRegistration, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uid := strings.TrimSpace(userID)
+	item, ok := s.agentRegistrations[uid]
+	if !ok {
+		return AgentRegistration{}, fmt.Errorf("%w: %s", ErrAgentRegistrationNotFound, uid)
+	}
+	item.APIKeyHash = strings.TrimSpace(apiKeyHash)
+	item.UpdatedAt = time.Now().UTC()
+	s.agentRegistrations[uid] = item
+	return item, nil
+}
+
 func (s *InMemoryStore) GetAgentRegistrationByMagicTokenHash(_ context.Context, magicTokenHash string) (AgentRegistration, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

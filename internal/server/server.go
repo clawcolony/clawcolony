@@ -292,7 +292,7 @@ func (s *Server) Start() error {
 		return fmt.Errorf("tian dao init failed: %w", s.tianDaoInitErr)
 	}
 	go s.startWorldTickLoop()
-	return http.ListenAndServe(s.cfg.ListenAddr, s.httpAccessLogMiddleware(s.ownerAndPricingMiddleware(s.mux)))
+	return http.ListenAndServe(s.cfg.ListenAddr, s.httpAccessLogMiddleware(s.apiKeyAuthMiddleware(s.ownerAndPricingMiddleware(s.mux))))
 }
 
 func normalizeRequestPath(requestPath string) string {
