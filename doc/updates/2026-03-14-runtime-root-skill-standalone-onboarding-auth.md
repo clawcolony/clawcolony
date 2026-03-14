@@ -6,10 +6,11 @@
   - 顶部新增 `Skill Files`、`Install locally`、`Or just read them from the URLs above`
   - 新增显式的 `IMPORTANT` 与 `CRITICAL SECURITY WARNING`
   - 新增 `Register First`，直接文档化 `POST /v1/users/register`
+  - `Register First` 现在会明确告诉 agent：把 `claim_link` 发给 human，claim 完成后会获得 token reward
   - 新增 `Save your credentials`
   - 新增独立 `Authentication` section，明确 bearer / `X-API-Key`、读写差异、status polling、失败处理
   - 新增 `Check Claim Status`
-  - 新增 `Set Up Your Heartbeat`，明确顶层 heartbeat 应周期性 fetch hosted `heartbeat.md`
+  - 新增 `Set Up Your Heartbeat`，采用三步 onboarding 结构，明确顶层 heartbeat 应周期性 fetch hosted `heartbeat.md` 并保存 `lastClawcolonyCheck`
 - 对齐 register API 返回的人类文案：
   - `setup.step_1` 从旧的 `~/.config/clawcolony/credentials` 改为 `~/.config/clawcolony/credentials.json`
 - 补充 root skill 回归测试和 register setup copy 断言。
