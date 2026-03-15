@@ -599,7 +599,94 @@ func (s *Server) handleAPIColonyStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "colony token total overflow")
 		return
 	}
+
+	// --- Dashboard enrichment: bounties, ganglia, tools, governance ---
+
+	// Active bounties count
+	activeBountyCount := 0
+	genesisStateMu.Lock()
+	bountyState, bountyErr := s.getBountyState(r.Context())
+	toolState, toolErr := s.getToolRegistryState(r.Context())
+	genesisStateMu.Unlock()
+	if bountyErr == nil {
+		for _, b := range bountyState.Items {
+			if strings.EqualFold(strings.TrimSpace(b.Status), "open") {
+				activeBountyCount++
+			}
+		}
+	}
+
+	// Tools by tier
+	toolsByTier := map[string]int{"T0": 0, "T1": 0, "T2": 0, "T3": 0}
+	totalTools := 0
+	if toolErr == nil {
+		for _, t := range toolState.Items {
+			if !strings.EqualFold(strings.TrimSpace(t.Status), "active") {
+				continue
+			}
+			tier := strings.ToUpper(strings.TrimSpace(t.Tier))
+			if tier == "" {
+				tier = "T0"
+			}
+			toolsByTier[tier]++
+			totalTools++
+		}
+	}
+
+	// Ganglia stack aggregated by life_state
+	gangliaStack := map[string]any{}
+	allGanglia, gangliaErr := s.store.ListGanglia(r.Context(), "", "", "", 2000)
+	if gangliaErr == nil {
+		counts := map[string]int{}
+		for _, g := range allGanglia {
+			state := classifyGanglionLifeState(g)
+			counts[state]++
+		}
+		for state, count := range counts {
+			scarcity := "sufficient"
+			switch {
+			case count == 0:
+				scarcity = "empty"
+			case count <= 1:
+				scarcity = "critical"
+			case count <= 2:
+				scarcity = "scarce"
+			case count >= 10:
+				scarcity = "saturated"
+			case count >= 5:
+				scarcity = "abundant"
+			}
+			gangliaStack[state] = map[string]any{
+				"count":    count,
+				"scarcity": scarcity,
+			}
+		}
+	}
+
+	// Governance: constitution status + pending proposals
+	constitutionStatus := "not_drafted"
+	govEntries, _ := s.store.ListKBEntries(r.Context(), "governance", "", 500)
+	for _, e := range govEntries {
+		if e.Deleted {
+			continue
+		}
+		hay := strings.ToLower(e.Section + " " + e.Title)
+		if strings.Contains(hay, "constitution") || strings.Contains(hay, "宪") {
+			constitutionStatus = "active"
+			break
+		}
+	}
+	pendingProposalCount := 0
+	allProposals, _ := s.store.ListKBProposals(r.Context(), "", 500)
+	for _, p := range allProposals {
+		st := strings.ToLower(strings.TrimSpace(p.Status))
+		if st == "discussing" || st == "voting" {
+			pendingProposalCount++
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
+		// Existing fields (backward compat)
 		"population":              len(active),
 		"active_user_total_token": activeUserTotalToken,
 		"treasury_token":          treasuryAccount.Balance,
@@ -609,6 +696,20 @@ func (s *Server) handleAPIColonyStatus(w http.ResponseWriter, r *http.Request) {
 		"uptime_seconds":          uptimeSeconds,
 		"state_count":             stateCount,
 		"min_population":          s.cfg.MinPopulation,
+		// New fields for frontend dashboard
+		"alive_population": stateCount["alive"],
+		"total_population": len(active),
+		"active_bounties":  activeBountyCount,
+		"initial_token":    s.cfg.InitialToken,
+		"ganglia_stack":    gangliaStack,
+		"tools": map[string]any{
+			"total":   totalTools,
+			"by_tier": toolsByTier,
+		},
+		"governance": map[string]any{
+			"constitution_status": constitutionStatus,
+			"pending_proposals":   pendingProposalCount,
+		},
 	})
 }
 
