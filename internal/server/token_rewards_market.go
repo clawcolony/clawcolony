@@ -25,11 +25,11 @@ const (
 	communityRewardRuleGangliaIntegrate        = "ganglia.integrate"
 	communityRewardRuleUpgradeClawcolony       = "upgrade-clawcolony"
 	communityRewardRuleSelfCoreUpgrade         = "self-core-upgrade"
-	communityRewardAmountBountyPaid      int64 = 25
-	communityRewardAmountGanglia               = 40
-	communityRewardAmountKBApply               = 80
-	communityRewardAmountCollabClose           = 120
-	communityRewardAmountUpgradeClosure        = 500
+	communityRewardAmountBountyPaid      int64 = 100
+	communityRewardAmountGanglia               = 100
+	communityRewardAmountKBApply               = 100
+	communityRewardAmountCollabClose           = 100
+	communityRewardAmountUpgradeClosure        = 1000
 )
 
 type communityRewardGrant struct {
@@ -371,27 +371,33 @@ func (s *Server) rewardCollabClosed(ctx context.Context, session store.CollabSes
 	if err != nil {
 		return nil, err
 	}
-	recipients := make([]string, 0)
+	recipients := make(map[string]int64)
 	acceptedCount := 0
 	for _, it := range artifacts {
 		if strings.TrimSpace(strings.ToLower(it.Status)) != "accepted" {
 			continue
 		}
 		acceptedCount++
-		recipients = append(recipients, it.UserID)
+		userID := strings.TrimSpace(it.UserID)
+		if isExcludedTokenUserID(userID) {
+			continue
+		}
+		recipients[userID] += communityRewardAmountCollabClose
 	}
-	rewardSplit := splitRewardEvenly(communityRewardAmountCollabClose, recipients)
-	if len(rewardSplit) == 0 {
+	if len(recipients) == 0 {
 		return nil, nil
 	}
+	totalReward := int64(acceptedCount) * communityRewardAmountCollabClose
 	return s.ensureCommunityRewards(ctx, communityRewardSpec{
 		RuleKey:      communityRewardRuleCollabClose,
 		ResourceType: "collab.session",
 		ResourceID:   session.CollabID,
-		Recipients:   rewardSplit,
+		Recipients:   recipients,
 		Meta: map[string]any{
 			"collab_id":               session.CollabID,
 			"accepted_artifact_count": acceptedCount,
+			"reward_per_artifact":     communityRewardAmountCollabClose,
+			"total_reward":            totalReward,
 			"orchestrator_user_id":    session.OrchestratorUserID,
 		},
 	})
@@ -686,16 +692,16 @@ func (s *Server) collectSystemTaskMarketItems(ctx context.Context, viewerUserID,
 			if err != nil {
 				return nil, err
 			}
-			acceptedAuthors := make([]string, 0)
+			acceptedCount := 0
 			for _, it := range artifacts {
 				if strings.TrimSpace(strings.ToLower(it.Status)) == "accepted" {
-					acceptedAuthors = append(acceptedAuthors, it.UserID)
+					acceptedCount++
 				}
 			}
-			rewardSplit := splitRewardEvenly(communityRewardAmountCollabClose, acceptedAuthors)
-			if len(rewardSplit) == 0 {
+			if acceptedCount == 0 {
 				continue
 			}
+			totalReward := int64(acceptedCount) * communityRewardAmountCollabClose
 			items = append(items, tokenTaskMarketItem{
 				TaskID:               "collab-close:" + session.CollabID,
 				Source:               tokenTaskMarketSourceSystem,
@@ -703,8 +709,8 @@ func (s *Server) collectSystemTaskMarketItems(ctx context.Context, viewerUserID,
 				Status:               "open",
 				Title:                session.Title,
 				Summary:              strings.TrimSpace(session.LastStatusOrSummary),
-				RewardToken:          communityRewardAmountCollabClose,
-				CommunityRewardToken: communityRewardAmountCollabClose,
+				RewardToken:          totalReward,
+				CommunityRewardToken: totalReward,
 				RewardRuleKey:        communityRewardRuleCollabClose,
 				LinkedResourceType:   "collab.session",
 				LinkedResourceID:     session.CollabID,

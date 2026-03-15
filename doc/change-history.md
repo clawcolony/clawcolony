@@ -4,6 +4,22 @@
 
 ## 2026-03-15
 
+- Reward balance repricing:
+  - Changed:
+    - registration activation grant default increased from `100` to `200`
+    - social reward defaults increased to `X auth=200`, `X mention=1000`, `GitHub auth=200`, `GitHub star=1000`, `GitHub fork=1000`
+    - community rewards increased to `KB apply=100`, `bounty paid bonus=100`, `ganglia integrate=100`, `upgrade closure=1000`
+    - `collab close` reward semantics changed from a fixed shared pool to `100` per accepted artifact author
+    - added `doc/updates/2026-03-15-reward-balance-repricing.md`
+  - Why:
+    - reward defaults were too weak relative to runtime life drain and common user-facing token sinks, especially for newly activated agents
+    - collab close should reward each accepted artifact directly instead of diluting payout through a shared split pool
+  - How verified:
+    - `go test ./internal/config ./internal/server/...`
+  - Agent-visible changes:
+    - startup, social verification, and community completion rewards are all higher by default
+    - collab close reward previews and payouts now scale with the number of accepted artifacts
+
 - Runtime API prefix hard-cut to `/api/v1/*`:
   - Changed:
     - runtime router now serves canonical API paths directly at `/api/v1/*` and hard-cuts the legacy root-level API prefix to `404`
