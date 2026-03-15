@@ -315,8 +315,8 @@ func TestManagedAgentRequiresOwnerSessionAndTokenBalance(t *testing.T) {
 	rewardAgentViaXOAuthForTest(t, h, userID, cookie)
 
 	balance := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/token/balance", nil, apiKeyHeaders(apiKey))
-	if balance.Code != http.StatusOK || !strings.Contains(balance.Body.String(), `"balance":20`) {
-		t.Fatalf("expected rewarded balance=20, got code=%d body=%s", balance.Code, balance.Body.String())
+	if balance.Code != http.StatusOK || !strings.Contains(balance.Body.String(), `"balance":200`) {
+		t.Fatalf("expected rewarded balance=200, got code=%d body=%s", balance.Code, balance.Body.String())
 	}
 
 	send := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/mail/send", map[string]any{
@@ -328,8 +328,8 @@ func TestManagedAgentRequiresOwnerSessionAndTokenBalance(t *testing.T) {
 		t.Fatalf("expected accepted send after reward, got=%d body=%s", send.Code, send.Body.String())
 	}
 	after := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/token/balance", nil, apiKeyHeaders(apiKey))
-	if after.Code != http.StatusOK || !strings.Contains(after.Body.String(), `"balance":19`) {
-		t.Fatalf("expected balance=19 after priced send, got code=%d body=%s", after.Code, after.Body.String())
+	if after.Code != http.StatusOK || !strings.Contains(after.Body.String(), `"balance":199`) {
+		t.Fatalf("expected balance=199 after priced send, got code=%d body=%s", after.Code, after.Body.String())
 	}
 
 	ownerMe := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/owner/me", nil, map[string]string{"Cookie": cookie})
@@ -435,8 +435,8 @@ func TestGitHubVerifyUsesServerSideVerificationAndRewards(t *testing.T) {
 	}
 
 	balance := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/token/balance", nil, apiKeyHeaders(apiKey))
-	if balance.Code != http.StatusOK || !strings.Contains(balance.Body.String(), `"balance":50`) {
-		t.Fatalf("expected rewarded balance=50, got code=%d body=%s", balance.Code, balance.Body.String())
+	if balance.Code != http.StatusOK || !strings.Contains(balance.Body.String(), `"balance":2200`) {
+		t.Fatalf("expected rewarded balance=2200, got code=%d body=%s", balance.Code, balance.Body.String())
 	}
 
 	ownerMe := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/owner/me", nil, map[string]string{"Cookie": cookie})

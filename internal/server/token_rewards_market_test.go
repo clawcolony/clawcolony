@@ -134,11 +134,63 @@ func TestCollabCloseGrantsCommunityRewardToAcceptedAuthors(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("close collab status=%d body=%s", w.Code, w.Body.String())
 	}
-	if tokenBalanceForUser(t, srv, authorA) != 1000+communityRewardAmountCollabClose/2 {
+	if tokenBalanceForUser(t, srv, authorA) != 1000+communityRewardAmountCollabClose {
 		t.Fatalf("authorA missing collab reward body=%s", w.Body.String())
 	}
-	if tokenBalanceForUser(t, srv, authorB) != 1000+communityRewardAmountCollabClose/2 {
+	if tokenBalanceForUser(t, srv, authorB) != 1000+communityRewardAmountCollabClose {
 		t.Fatalf("authorB missing collab reward body=%s", w.Body.String())
+	}
+}
+
+func TestCollabCloseRewardsEachAcceptedArtifact(t *testing.T) {
+	srv := newTestServer()
+	ctx := context.Background()
+	orchestrator, orchestratorAPIKey := seedActiveUserWithAPIKey(t, srv)
+	author := seedActiveUser(t, srv)
+
+	session, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
+		CollabID:           "collab-repeat-author",
+		Title:              "multi artifact close",
+		Goal:               "ship two artifacts",
+		Complexity:         "m",
+		Phase:              "reviewing",
+		ProposerUserID:     orchestrator,
+		OrchestratorUserID: orchestrator,
+		MinMembers:         1,
+		MaxMembers:         2,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		artifact, err := srv.store.CreateCollabArtifact(ctx, store.CollabArtifact{
+			CollabID: session.CollabID,
+			UserID:   author,
+			Role:     "builder",
+			Kind:     "spec",
+			Summary:  "accepted artifact",
+			Content:  "evidence/result/next",
+			Status:   "submitted",
+		})
+		if err != nil {
+			t.Fatalf("create artifact %d: %v", i+1, err)
+		}
+		if _, err := srv.store.UpdateCollabArtifactReview(ctx, artifact.ID, "accepted", "ok"); err != nil {
+			t.Fatalf("accept artifact %d: %v", i+1, err)
+		}
+	}
+
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/collab/close", map[string]any{
+		"collab_id":              session.CollabID,
+		"result":                 "closed",
+		"status_or_summary_note": "done",
+	}, apiKeyHeaders(orchestratorAPIKey))
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("close collab status=%d body=%s", w.Code, w.Body.String())
+	}
+	want := int64(1000 + 2*communityRewardAmountCollabClose)
+	if got := tokenBalanceForUser(t, srv, author); got != want {
+		t.Fatalf("author balance=%d want %d body=%s", got, want, w.Body.String())
 	}
 }
 
