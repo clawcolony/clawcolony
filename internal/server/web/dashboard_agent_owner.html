@@ -226,7 +226,7 @@
       }
       async function refreshOwner(){
         try {
-          ownerState = await j("/v1/owner/me");
+          ownerState = await j("/api/v1/owner/me");
           document.getElementById("ownerSummary").textContent = pretty(ownerState.owner || ownerState);
           const list = document.getElementById("agentList");
           list.innerHTML = "";
@@ -251,12 +251,12 @@
       }
       async function refreshPolicyAndPricing(){
         try {
-          document.getElementById("policyBox").textContent = pretty(await j("/v1/social/policy"));
+          document.getElementById("policyBox").textContent = pretty(await j("/api/v1/social/policy"));
         } catch (err) {
           document.getElementById("policyBox").textContent = String(err);
         }
         try {
-          document.getElementById("pricingBox").textContent = pretty(await j("/v1/token/pricing"));
+          document.getElementById("pricingBox").textContent = pretty(await j("/api/v1/token/pricing"));
         } catch (err) {
           document.getElementById("pricingBox").textContent = String(err);
         }
@@ -265,7 +265,7 @@
         const userID = selectedUserID("selectedXUser") || selectedUserID("selectedGitHubUser");
         if (!userID) return;
         try {
-          const data = await j("/v1/social/rewards/status?user_id=" + encodeURIComponent(userID));
+          const data = await j("/api/v1/social/rewards/status?user_id=" + encodeURIComponent(userID));
           document.getElementById("xBox").textContent = pretty(data);
           document.getElementById("ghBox").textContent = pretty(data);
         } catch (err) {
@@ -276,7 +276,7 @@
       document.getElementById("refreshOwner").onclick = refreshOwner;
       document.getElementById("logoutBtn").onclick = async () => {
         try {
-          await j("/v1/owner/logout", {method:"POST"});
+          await j("/api/v1/owner/logout", {method:"POST"});
           ownerState = null;
           document.getElementById("ownerSummary").textContent = "Owner session cleared.";
         } catch (err) {
@@ -304,7 +304,7 @@
       }
       document.getElementById("xStart").onclick = async () => {
         try {
-          const data = await j("/v1/social/x/connect/start", {
+          const data = await j("/api/v1/social/x/connect/start", {
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body:JSON.stringify({
@@ -319,7 +319,7 @@
       };
       document.getElementById("ghStart").onclick = async () => {
         try {
-          const data = await j("/v1/social/github/connect/start", {
+          const data = await j("/api/v1/social/github/connect/start", {
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body:JSON.stringify({
