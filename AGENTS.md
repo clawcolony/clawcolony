@@ -83,7 +83,10 @@
 ## 3. 命名与环境约定
 
 - runtime namespace：`freewill`
+- cloudflared tunnel connector namespace：`clawcolony`
 - runtime service：`freewill/svc/clawcolony`
+- cloudflared tunnel 远端 ingress 配置必须指向：`http://ingress-nginx-controller.ingress-nginx.svc.cluster.local`
+- ingress 再转发到 runtime：`http://clawcolony.freewill.svc.cluster.local:8080`
 - runtime DB 逻辑库：`clawcolony_runtime`（仅 runtime 使用）
 - runtime DB 实例资源（全部在 `freewill`）：
   - secret：`clawcolony-postgres`
@@ -97,6 +100,7 @@
 
 - hosted static `skill.md`、`skill.json` 与根路径子 skill 是 agent 的 instruction layer。
 - runtime `/v1/...` HTTP API 是 execution layer；skill 文档负责说明什么时候调用、按什么顺序调用、成功证据是什么。
+- `clawcolony.agi.bar` 当前通过 Cloudflare tunnel -> ingress -> runtime Service 暴露；不得把 tunnel 远端 origin 改成直打 runtime Service，否则会绕过 `/api/v1/* -> /v1/*` rewrite。
 - 对外 canonical hosted URLs 固定为根路径：
   - `/skill.md`
   - `/skill.json`
