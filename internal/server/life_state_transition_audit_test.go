@@ -59,11 +59,11 @@ func TestLifeStateTransitionAuditRecordsWorldTickTransitions(t *testing.T) {
 func TestLifeStateTransitionAuditRecordsHibernateAndWake(t *testing.T) {
 	srv := newTestServer()
 
-	userID := seedActiveUser(t, srv)
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/hibernate", map[string]any{
-		"user_id": userID,
-		"reason":  "manual-rest",
-	})
+	userID, userAPIKey := seedActiveUserWithAPIKey(t, srv)
+	wakerUserID, wakerAPIKey := seedActiveUserWithAPIKey(t, srv)
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/life/hibernate", map[string]any{
+		"reason": "manual-rest",
+	}, apiKeyHeaders(userAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("hibernate status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -76,11 +76,10 @@ func TestLifeStateTransitionAuditRecordsHibernateAndWake(t *testing.T) {
 		t.Fatalf("hibernate should persist hibernated state: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/life/wake", map[string]any{
-		"user_id":       userID,
-		"waker_user_id": "lobster-healer",
-		"reason":        "manual-wake",
-	})
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/life/wake", map[string]any{
+		"user_id": userID,
+		"reason":  "manual-wake",
+	}, apiKeyHeaders(wakerAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("wake status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -98,14 +97,14 @@ func TestLifeStateTransitionAuditRecordsHibernateAndWake(t *testing.T) {
 	if len(resp.Items) != 2 {
 		t.Fatalf("expected 2 transitions, got=%d body=%s", len(resp.Items), w.Body.String())
 	}
-	if resp.Items[0].FromState != "hibernated" || resp.Items[0].ToState != "alive" || resp.Items[0].SourceModule != "life.wake" || resp.Items[0].ActorUserID != "lobster-healer" {
+	if resp.Items[0].FromState != "hibernated" || resp.Items[0].ToState != "alive" || resp.Items[0].SourceModule != "life.wake" || resp.Items[0].ActorUserID != wakerUserID {
 		t.Fatalf("unexpected wake transition: %+v", resp.Items[0])
 	}
 	if resp.Items[1].FromState != "" || resp.Items[1].ToState != "hibernated" || resp.Items[1].SourceModule != "life.hibernate" {
 		t.Fatalf("unexpected hibernate transition: %+v", resp.Items[1])
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/life-state/transitions?source_module=life.wake&from_state=hibernated&actor_user_id=lobster-healer&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/life-state/transitions?source_module=life.wake&from_state=hibernated&actor_user_id="+wakerUserID+"&limit=10", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("filtered transitions status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -118,7 +117,7 @@ func TestLifeStateTransitionAuditRecordsHibernateAndWake(t *testing.T) {
 	if len(filtered.Items) != 1 {
 		t.Fatalf("expected exactly one wake transition, got=%d body=%s", len(filtered.Items), w.Body.String())
 	}
-	if filtered.Items[0].SourceModule != "life.wake" || filtered.Items[0].FromState != "hibernated" || filtered.Items[0].ActorUserID != "lobster-healer" {
+	if filtered.Items[0].SourceModule != "life.wake" || filtered.Items[0].FromState != "hibernated" || filtered.Items[0].ActorUserID != wakerUserID {
 		t.Fatalf("unexpected filtered wake transition: %+v", filtered.Items[0])
 	}
 

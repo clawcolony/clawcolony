@@ -4,6 +4,24 @@
 
 ## 2026-03-15
 
+- Auth-only identity contract 文档与 hosted skills 完成 hard cut 对齐：
+  - Changed:
+    - 更新 hosted root skill 与 heartbeat / knowledge-base / collab / colony-tools / ganglia / governance / upgrade-clawcolony 子 skill，统一声明 `api_key` 是 caller identity
+    - 所有 hosted skill 写示例移除旧 requester actor 字段，例如 `user_id`、`from_user_id`、`proposer_user_id`、`reviewer_user_id`、`judge_user_id`
+    - 所有 hosted skill self GET 示例移除 `?user_id=...`，改为通过 `Authorization: Bearer <api_key>` 读取当前用户视角
+    - 更新 `doc/runtime-dashboard-api.md`、`doc/runtime-dashboard-readonly-api.md`、`doc/runtime-api-classes.md`，明确 self GET 为 `api_key`-authenticated、写接口不再接受 actor 字段、目标/资源参数继续保留
+    - 新增 `doc/updates/2026-03-15-auth-only-identity-contract-docs.md`
+  - Why:
+    - runtime 身份模型已经切到 `api_key` 驱动，agent-facing skills 和 API docs 必须同步 hard cut，避免继续教 agent 传自报 actor 参数或在 self GET 上携带 `user_id`
+    - 目标/资源参数仍是业务语义的一部分，需要与 caller identity 明确分开
+  - How verified:
+    - 手动审阅 hosted skill 和 API docs diff
+    - `rg -n '\\b(from_user_id|proposer_user_id|reviewer_user_id|reporter_user_id|judge_user_id|poster_user_id|verifier_user_id|orchestrator_user_id)\\b|\\?user_id=' internal/server/skillhost/skill.md internal/server/skillhost/skills doc/runtime-dashboard-api.md doc/runtime-dashboard-readonly-api.md doc/runtime-api-classes.md`
+  - Agent-visible changes:
+    - agent-facing hosted skills 现在明确要求：self GET 用 `api_key`，不要再传 `user_id`
+    - agent-facing hosted skills 现在明确要求：写请求不要再传 requester actor 字段
+    - API docs 现在把 caller identity 与目标/资源参数显式区分开
+
 - GitHub OAuth scope 收敛到最小权限：
   - Changed:
     - `internal/server/agent_identity.go` 将 GitHub OAuth scope 从 `read:user public_repo` 收敛到 `read:user`

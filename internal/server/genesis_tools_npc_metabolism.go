@@ -13,7 +13,6 @@ import (
 )
 
 type toolRegisterRequest struct {
-	UserID      string `json:"user_id"`
 	ToolID      string `json:"tool_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -24,14 +23,12 @@ type toolRegisterRequest struct {
 }
 
 type toolReviewRequest struct {
-	ReviewerUserID string `json:"reviewer_user_id"`
-	ToolID         string `json:"tool_id"`
-	Decision       string `json:"decision"` // approve|reject
-	ReviewNote     string `json:"review_note"`
+	ToolID     string `json:"tool_id"`
+	Decision   string `json:"decision"` // approve|reject
+	ReviewNote string `json:"review_note"`
 }
 
 type toolInvokeRequest struct {
-	UserID string         `json:"user_id"`
 	ToolID string         `json:"tool_id"`
 	Params map[string]any `json:"params"`
 }
@@ -43,7 +40,6 @@ type npcTaskCreateRequest struct {
 }
 
 type metabolismSupersedeRequest struct {
-	UserID       string   `json:"user_id"`
 	NewID        string   `json:"new_id"`
 	OldID        string   `json:"old_id"`
 	Relationship string   `json:"relationship"`
@@ -51,7 +47,6 @@ type metabolismSupersedeRequest struct {
 }
 
 type metabolismDisputeRequest struct {
-	UserID         string `json:"user_id"`
 	SupersessionID int64  `json:"supersession_id"`
 	Reason         string `json:"reason"`
 }
@@ -194,12 +189,16 @@ func (s *Server) handleToolRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req toolRegisterRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.ToolID = strings.TrimSpace(strings.ToLower(req.ToolID))
 	req.Name = strings.TrimSpace(req.Name)
 	req.Description = strings.TrimSpace(req.Description)
@@ -207,11 +206,11 @@ func (s *Server) handleToolRegister(w http.ResponseWriter, r *http.Request) {
 	req.Manifest = strings.TrimSpace(req.Manifest)
 	req.Code = strings.TrimSpace(req.Code)
 	req.Temporality = strings.TrimSpace(req.Temporality)
-	if req.UserID == "" || req.ToolID == "" || req.Name == "" {
-		writeError(w, http.StatusBadRequest, "user_id, tool_id, name are required")
+	if req.ToolID == "" || req.Name == "" {
+		writeError(w, http.StatusBadRequest, "tool_id and name are required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -237,7 +236,7 @@ func (s *Server) handleToolRegister(w http.ResponseWriter, r *http.Request) {
 		state.Items[i].Manifest = req.Manifest
 		state.Items[i].Code = req.Code
 		state.Items[i].Temporality = req.Temporality
-		state.Items[i].AuthorUserID = req.UserID
+		state.Items[i].AuthorUserID = userID
 		state.Items[i].Status = "pending"
 		state.Items[i].ReviewNote = ""
 		state.Items[i].ReviewedBy = ""
@@ -257,7 +256,7 @@ func (s *Server) handleToolRegister(w http.ResponseWriter, r *http.Request) {
 		Manifest:     req.Manifest,
 		Code:         req.Code,
 		Temporality:  req.Temporality,
-		AuthorUserID: req.UserID,
+		AuthorUserID: userID,
 		Status:       "pending",
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -275,12 +274,16 @@ func (s *Server) handleToolReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	reviewerUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req toolReviewRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.ReviewerUserID = strings.TrimSpace(req.ReviewerUserID)
 	req.ToolID = strings.TrimSpace(strings.ToLower(req.ToolID))
 	req.Decision = strings.TrimSpace(strings.ToLower(req.Decision))
 	req.ReviewNote = strings.TrimSpace(req.ReviewNote)
@@ -300,7 +303,7 @@ func (s *Server) handleToolReview(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		now := time.Now().UTC()
-		state.Items[i].ReviewedBy = req.ReviewerUserID
+		state.Items[i].ReviewedBy = reviewerUserID
 		state.Items[i].ReviewNote = req.ReviewNote
 		state.Items[i].UpdatedAt = now
 		if req.Decision == "approve" {
@@ -368,18 +371,22 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req toolInvokeRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.ToolID = strings.TrimSpace(strings.ToLower(req.ToolID))
-	if req.UserID == "" || req.ToolID == "" {
-		writeError(w, http.StatusBadRequest, "user_id and tool_id are required")
+	if req.ToolID == "" {
+		writeError(w, http.StatusBadRequest, "tool_id is required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -409,7 +416,7 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	costType := toolCostTypeForTier(item.Tier)
-	if err := s.ensureToolTierAllowed(r.Context(), req.UserID, costType); err != nil {
+	if err := s.ensureToolTierAllowed(r.Context(), userID, costType); err != nil {
 		genesisStateMu.Unlock()
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -446,7 +453,7 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 		}
 		var err error
 		result, err = runner(r.Context(), toolSandboxInput{
-			UserID:     req.UserID,
+			UserID:     userID,
 			ToolID:     req.ToolID,
 			Tier:       item.Tier,
 			Code:       item.Code,
@@ -467,7 +474,7 @@ func (s *Server) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 	if result.Message != "" {
 		meta["message"] = result.Message
 	}
-	s.appendToolCostEvent(r.Context(), req.UserID, costType, 1, meta)
+	s.appendToolCostEvent(r.Context(), userID, costType, 1, meta)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"tool_id": req.ToolID,
 		"tier":    item.Tier,
@@ -1218,18 +1225,22 @@ func (s *Server) handleMetabolismSupersede(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req metabolismSupersedeRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.NewID = strings.TrimSpace(req.NewID)
 	req.OldID = strings.TrimSpace(req.OldID)
 	req.Relationship = strings.TrimSpace(strings.ToLower(req.Relationship))
-	validators := normalizeValidatorIDs(req.Validators, req.UserID)
-	if req.UserID == "" || req.NewID == "" || req.OldID == "" || req.Relationship == "" {
-		writeError(w, http.StatusBadRequest, "user_id,new_id,old_id,relationship are required")
+	validators := normalizeValidatorIDs(req.Validators, userID)
+	if req.NewID == "" || req.OldID == "" || req.Relationship == "" {
+		writeError(w, http.StatusBadRequest, "new_id, old_id, relationship are required")
 		return
 	}
 	minValidators := s.cfg.MetabolismMinValidators
@@ -1254,7 +1265,7 @@ func (s *Server) handleMetabolismSupersede(w http.ResponseWriter, r *http.Reques
 		OldID:          req.OldID,
 		Relationship:   req.Relationship,
 		Status:         status,
-		CreatedBy:      req.UserID,
+		CreatedBy:      userID,
 		Validators:     validators,
 		ValidatorCount: len(validators),
 		CreatedAt:      now,
@@ -1274,15 +1285,19 @@ func (s *Server) handleMetabolismDispute(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req metabolismDisputeRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Reason = strings.TrimSpace(req.Reason)
-	if req.UserID == "" || req.SupersessionID <= 0 || req.Reason == "" {
-		writeError(w, http.StatusBadRequest, "user_id,supersession_id,reason are required")
+	if req.SupersessionID <= 0 || req.Reason == "" {
+		writeError(w, http.StatusBadRequest, "supersession_id and reason are required")
 		return
 	}
 	genesisStateMu.Lock()
@@ -1298,7 +1313,7 @@ func (s *Server) handleMetabolismDispute(w http.ResponseWriter, r *http.Request)
 		}
 		now := time.Now().UTC()
 		state.Items[i].Status = "disputed"
-		state.Items[i].DisputedBy = req.UserID
+		state.Items[i].DisputedBy = userID
 		state.Items[i].DisputeReason = req.Reason
 		state.Items[i].DisputedAt = &now
 		state.Items[i].UpdatedAt = now

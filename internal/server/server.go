@@ -292,7 +292,11 @@ func (s *Server) Start() error {
 		return fmt.Errorf("tian dao init failed: %w", s.tianDaoInitErr)
 	}
 	go s.startWorldTickLoop()
-	return http.ListenAndServe(s.cfg.ListenAddr, s.httpAccessLogMiddleware(s.apiKeyAuthMiddleware(s.ownerAndPricingMiddleware(s.mux))))
+	return http.ListenAndServe(s.cfg.ListenAddr, s.wrappedHTTPHandler())
+}
+
+func (s *Server) wrappedHTTPHandler() http.Handler {
+	return s.httpAccessLogMiddleware(s.apiKeyAuthMiddleware(s.authIdentityContractMiddleware(s.ownerAndPricingMiddleware(s.mux))))
 }
 
 func normalizeRequestPath(requestPath string) string {
@@ -3060,7 +3064,6 @@ func (s *Server) handleBots(w http.ResponseWriter, r *http.Request) {
 }
 
 type botNicknameUpsertRequest struct {
-	UserID   string `json:"user_id"`
 	Nickname string `json:"nickname"`
 }
 
@@ -3090,9 +3093,9 @@ func (s *Server) handleBotNicknameUpsert(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
+	userID := strings.TrimSpace(AuthenticatedUserID(r))
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "api_key is required")
 		return
 	}
 	nickname, err := normalizeBotNickname(req.Nickname)
@@ -3100,7 +3103,7 @@ func (s *Server) handleBotNicknameUpsert(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	item, err := s.store.UpdateBotNickname(r.Context(), req.UserID, nickname)
+	item, err := s.store.UpdateBotNickname(r.Context(), userID, nickname)
 	if err != nil {
 		if errors.Is(err, store.ErrBotNotFound) {
 			writeError(w, http.StatusNotFound, "user_id not found")
@@ -3232,9 +3235,8 @@ func (s *Server) handleTokenBalance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	userID := queryUserID(r)
-	if userID == "" {
-		writeError(w, http.StatusBadRequest, "请提供你的USERID")
+	userID, ok := s.requireAPIKeyUserID(w, r)
+	if !ok {
 		return
 	}
 	if isSystemTokenUserID(userID) {
@@ -3489,26 +3491,22 @@ func (s *Server) handleTokenHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 type mailSendRequest struct {
-	FromUserID string   `json:"from_user_id"`
 	ToUserIDs  []string `json:"to_user_ids"`
 	Subject    string   `json:"subject"`
 	Body       string   `json:"body"`
 }
 
 type mailMarkReadRequest struct {
-	UserID     string  `json:"user_id"`
 	MailboxIDs []int64 `json:"mailbox_ids"`
 }
 
 type mailMarkReadQueryRequest struct {
-	UserID        string `json:"user_id"`
 	SubjectPrefix string `json:"subject_prefix"`
 	Keyword       string `json:"keyword"`
 	Limit         int    `json:"limit"`
 }
 
 type mailContactUpsertRequest struct {
-	UserID         string   `json:"user_id"`
 	ContactUserID  string   `json:"contact_user_id"`
 	DisplayName    string   `json:"display_name"`
 	Tags           []string `json:"tags"`
@@ -3532,7 +3530,6 @@ type mailReminderItem struct {
 }
 
 type mailRemindersResolveRequest struct {
-	UserID      string  `json:"user_id"`
 	Kind        string  `json:"kind"`
 	Action      string  `json:"action"`
 	MailboxIDs  []int64 `json:"mailbox_ids"`
@@ -3573,17 +3570,15 @@ var reminderProposalPattern = regexp.MustCompile(`(?i)#(\d+)`)
 var reminderActionPattern = regexp.MustCompile(`(?i)\[ACTION:([A-Z0-9_+\-]+)\]`)
 
 type collabProposeRequest struct {
-	ProposerUserID string `json:"proposer_user_id"`
-	Title          string `json:"title"`
-	Goal           string `json:"goal"`
-	Complexity     string `json:"complexity"`
-	MinMembers     int    `json:"min_members"`
-	MaxMembers     int    `json:"max_members"`
+	Title      string `json:"title"`
+	Goal       string `json:"goal"`
+	Complexity string `json:"complexity"`
+	MinMembers int    `json:"min_members"`
+	MaxMembers int    `json:"max_members"`
 }
 
 type collabApplyRequest struct {
 	CollabID string `json:"collab_id"`
-	UserID   string `json:"user_id"`
 	Pitch    string `json:"pitch"`
 }
 
@@ -3594,7 +3589,6 @@ type collabAssignment struct {
 
 type collabAssignRequest struct {
 	CollabID            string             `json:"collab_id"`
-	OrchestratorUserID  string             `json:"orchestrator_user_id"`
 	Assignments         []collabAssignment `json:"assignments"`
 	RejectedUserIDs     []string           `json:"rejected_user_ids"`
 	StatusOrSummaryNote string             `json:"status_or_summary_note"`
@@ -3602,13 +3596,11 @@ type collabAssignRequest struct {
 
 type collabStartRequest struct {
 	CollabID            string `json:"collab_id"`
-	OrchestratorUserID  string `json:"orchestrator_user_id"`
 	StatusOrSummaryNote string `json:"status_or_summary_note"`
 }
 
 type collabSubmitRequest struct {
 	CollabID string `json:"collab_id"`
-	UserID   string `json:"user_id"`
 	Role     string `json:"role"`
 	Kind     string `json:"kind"`
 	Summary  string `json:"summary"`
@@ -3616,16 +3608,14 @@ type collabSubmitRequest struct {
 }
 
 type collabReviewRequest struct {
-	CollabID       string `json:"collab_id"`
-	ReviewerUserID string `json:"reviewer_user_id"`
-	ArtifactID     int64  `json:"artifact_id"`
-	Status         string `json:"status"`
-	ReviewNote     string `json:"review_note"`
+	CollabID   string `json:"collab_id"`
+	ArtifactID int64  `json:"artifact_id"`
+	Status     string `json:"status"`
+	ReviewNote string `json:"review_note"`
 }
 
 type collabCloseRequest struct {
 	CollabID            string `json:"collab_id"`
-	OrchestratorUserID  string `json:"orchestrator_user_id"`
 	Result              string `json:"result"`
 	StatusOrSummaryNote string `json:"status_or_summary_note"`
 }
@@ -3641,7 +3631,6 @@ type kbProposalChangePayload struct {
 }
 
 type kbProposalCreateRequest struct {
-	ProposerUserID          string                  `json:"proposer_user_id"`
 	Title                   string                  `json:"title"`
 	Reason                  string                  `json:"reason"`
 	VoteThresholdPct        int                     `json:"vote_threshold_pct"`
@@ -3651,47 +3640,40 @@ type kbProposalCreateRequest struct {
 }
 
 type kbProposalEnrollRequest struct {
-	ProposalID int64  `json:"proposal_id"`
-	UserID     string `json:"user_id"`
+	ProposalID int64 `json:"proposal_id"`
 }
 
 type kbProposalCommentRequest struct {
 	ProposalID int64  `json:"proposal_id"`
 	RevisionID int64  `json:"revision_id"`
-	UserID     string `json:"user_id"`
 	Content    string `json:"content"`
 }
 
 type kbProposalReviseRequest struct {
 	ProposalID          int64                   `json:"proposal_id"`
 	BaseRevisionID      int64                   `json:"base_revision_id"`
-	UserID              string                  `json:"user_id"`
 	DiscussionWindowSec int                     `json:"discussion_window_seconds"`
 	Change              kbProposalChangePayload `json:"change"`
 }
 
 type kbProposalAckRequest struct {
-	ProposalID int64  `json:"proposal_id"`
-	RevisionID int64  `json:"revision_id"`
-	UserID     string `json:"user_id"`
+	ProposalID int64 `json:"proposal_id"`
+	RevisionID int64 `json:"revision_id"`
 }
 
 type kbProposalStartVoteRequest struct {
-	ProposalID int64  `json:"proposal_id"`
-	UserID     string `json:"user_id"`
+	ProposalID int64 `json:"proposal_id"`
 }
 
 type kbProposalVoteRequest struct {
 	ProposalID int64  `json:"proposal_id"`
 	RevisionID int64  `json:"revision_id"`
-	UserID     string `json:"user_id"`
 	Vote       string `json:"vote"`
 	Reason     string `json:"reason"`
 }
 
 type kbProposalApplyRequest struct {
-	ProposalID int64  `json:"proposal_id"`
-	UserID     string `json:"user_id"`
+	ProposalID int64 `json:"proposal_id"`
 }
 
 func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
@@ -3699,18 +3681,18 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	fromUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req mailSendRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.FromUserID = strings.TrimSpace(req.FromUserID)
 	req.Subject = strings.TrimSpace(req.Subject)
 	req.Body = strings.TrimSpace(req.Body)
-	if req.FromUserID == "" {
-		writeError(w, http.StatusBadRequest, "from_user_id is required")
-		return
-	}
 	if len(req.ToUserIDs) == 0 {
 		writeError(w, http.StatusBadRequest, "to_user_ids is required")
 		return
@@ -3719,26 +3701,26 @@ func (s *Server) handleMailSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "subject or body is required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.FromUserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), fromUserID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	for i := range req.ToUserIDs {
 		req.ToUserIDs[i] = strings.TrimSpace(req.ToUserIDs[i])
 	}
-	item, err := s.store.SendMail(r.Context(), req.FromUserID, req.ToUserIDs, req.Subject, req.Body)
+	item, err := s.store.SendMail(r.Context(), fromUserID, req.ToUserIDs, req.Subject, req.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	units := int64(utf8.RuneCountInString(req.Subject) + utf8.RuneCountInString(req.Body))
-	s.appendCommCostEvent(r.Context(), req.FromUserID, "comm.mail.send", units, map[string]any{
+	s.appendCommCostEvent(r.Context(), fromUserID, "comm.mail.send", units, map[string]any{
 		"to_count":    len(req.ToUserIDs),
 		"subject_len": utf8.RuneCountInString(req.Subject),
 		"body_len":    utf8.RuneCountInString(req.Body),
 	})
-	s.pushUnreadMailHint(r.Context(), req.FromUserID, req.ToUserIDs, req.Subject)
-	resolvedReminders := s.autoResolvePinnedRemindersOnProgressMail(r.Context(), req.FromUserID, req.ToUserIDs, req.Subject, req.Body)
+	s.pushUnreadMailHint(r.Context(), fromUserID, req.ToUserIDs, req.Subject)
+	resolvedReminders := s.autoResolvePinnedRemindersOnProgressMail(r.Context(), fromUserID, req.ToUserIDs, req.Subject, req.Body)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"item":                    item,
 		"resolved_pinned_reminds": resolvedReminders,
@@ -3935,9 +3917,8 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request, folder s
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	userID := queryUserID(r)
-	if userID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
+	userID, ok := s.requireAPIKeyUserID(w, r)
+	if !ok {
 		return
 	}
 	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
@@ -3976,21 +3957,21 @@ func (s *Server) handleMailMarkRead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req mailMarkReadRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
 	if len(req.MailboxIDs) == 0 {
 		writeError(w, http.StatusBadRequest, "mailbox_ids is required")
 		return
 	}
-	if err := s.store.MarkMailboxRead(r.Context(), req.UserID, req.MailboxIDs); err != nil {
+	if err := s.store.MarkMailboxRead(r.Context(), userID, req.MailboxIDs); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -4002,18 +3983,18 @@ func (s *Server) handleMailMarkReadQuery(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req mailMarkReadQueryRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.SubjectPrefix = strings.TrimSpace(req.SubjectPrefix)
 	req.Keyword = strings.TrimSpace(req.Keyword)
-	if req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
-		return
-	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 200
@@ -4026,7 +4007,7 @@ func (s *Server) handleMailMarkReadQuery(w http.ResponseWriter, r *http.Request)
 			keyword = req.SubjectPrefix + " " + keyword
 		}
 	}
-	items, err := s.store.ListMailbox(r.Context(), req.UserID, "inbox", "unread", keyword, nil, nil, limit)
+	items, err := s.store.ListMailbox(r.Context(), userID, "inbox", "unread", keyword, nil, nil, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -4039,14 +4020,14 @@ func (s *Server) handleMailMarkReadQuery(w http.ResponseWriter, r *http.Request)
 		ids = append(ids, it.MailboxID)
 	}
 	if len(ids) > 0 {
-		if err := s.store.MarkMailboxRead(r.Context(), req.UserID, ids); err != nil {
+		if err := s.store.MarkMailboxRead(r.Context(), userID, ids); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":           true,
-		"user_id":      req.UserID,
+		"user_id":      userID,
 		"resolved_ids": ids,
 		"resolved":     len(ids),
 	})
@@ -4091,9 +4072,8 @@ func (s *Server) handleMailReminders(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	userID := queryUserID(r)
-	if userID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
+	userID, ok := s.requireAPIKeyUserID(w, r)
+	if !ok {
 		return
 	}
 	limit := parseLimit(r.URL.Query().Get("limit"), 200)
@@ -4141,24 +4121,24 @@ func (s *Server) handleMailRemindersResolve(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req mailRemindersResolveRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Kind = strings.TrimSpace(strings.ToLower(req.Kind))
 	req.Action = strings.TrimSpace(strings.ToUpper(req.Action))
 	req.SubjectLike = strings.TrimSpace(req.SubjectLike)
-	if req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
-		return
-	}
 	resolveIDs := make([]int64, 0, len(req.MailboxIDs))
 	if len(req.MailboxIDs) > 0 {
 		resolveIDs = append(resolveIDs, req.MailboxIDs...)
 	} else {
-		items, err := s.listUnreadPinnedReminders(r.Context(), req.UserID, 500)
+		items, err := s.listUnreadPinnedReminders(r.Context(), userID, 500)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -4177,14 +4157,14 @@ func (s *Server) handleMailRemindersResolve(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if len(resolveIDs) > 0 {
-		if err := s.store.MarkMailboxRead(r.Context(), req.UserID, resolveIDs); err != nil {
+		if err := s.store.MarkMailboxRead(r.Context(), userID, resolveIDs); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":           true,
-		"user_id":      req.UserID,
+		"user_id":      userID,
 		"resolved":     len(resolveIDs),
 		"resolved_ids": resolveIDs,
 	})
@@ -4195,9 +4175,8 @@ func (s *Server) handleMailContacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	userID := queryUserID(r)
-	if userID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
+	userID, ok := s.requireAPIKeyUserID(w, r)
+	if !ok {
 		return
 	}
 	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
@@ -4318,23 +4297,27 @@ func (s *Server) handleMailContactsUpsert(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req mailContactUpsertRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.ContactUserID = strings.TrimSpace(req.ContactUserID)
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
 	req.Role = strings.TrimSpace(req.Role)
 	req.CurrentProject = strings.TrimSpace(req.CurrentProject)
 	req.Availability = strings.TrimSpace(req.Availability)
-	if req.UserID == "" || req.ContactUserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id and contact_user_id are required")
+	if req.ContactUserID == "" {
+		writeError(w, http.StatusBadRequest, "contact_user_id is required")
 		return
 	}
 	item, err := s.store.UpsertMailContact(r.Context(), store.MailContact{
-		OwnerAddress:   req.UserID,
+		OwnerAddress:   userID,
 		ContactAddress: req.ContactUserID,
 		DisplayName:    req.DisplayName,
 		Tags:           req.Tags,
@@ -4355,8 +4338,10 @@ func (s *Server) handleMailOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	userID := queryUserID(r)
-	includeInactive := parseBoolFlag(r.URL.Query().Get("include_inactive"))
+	userID, ok := s.requireAPIKeyUserID(w, r)
+	if !ok {
+		return
+	}
 	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
 	if folder == "" {
 		folder = "all"
@@ -4389,25 +4374,6 @@ func (s *Server) handleMailOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	users := []string{}
-	if userID != "" {
-		users = append(users, userID)
-	} else {
-		users = append(users, clawWorldSystemID)
-		bots, err := s.store.ListBots(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if !includeInactive {
-			bots = s.filterActiveBots(r.Context(), bots)
-		}
-		sort.Slice(bots, func(i, j int) bool { return bots[i].BotID < bots[j].BotID })
-		for _, b := range bots {
-			users = append(users, b.BotID)
-		}
-	}
-
 	out := make([]store.MailItem, 0)
 	folders := []string{}
 	if folder == "all" {
@@ -4415,15 +4381,13 @@ func (s *Server) handleMailOverview(w http.ResponseWriter, r *http.Request) {
 	} else {
 		folders = []string{folder}
 	}
-	for _, uid := range users {
-		for _, f := range folders {
-			items, err := s.store.ListMailbox(r.Context(), uid, f, scope, keyword, fromTime, toTime, limit)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			out = append(out, items...)
+	for _, f := range folders {
+		items, err := s.store.ListMailbox(r.Context(), userID, f, scope, keyword, fromTime, toTime, limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
+		out = append(out, items...)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].SentAt.Equal(out[j].SentAt) {
@@ -4503,20 +4467,24 @@ func (s *Server) handleCollabPropose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	proposerUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req collabProposeRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.ProposerUserID = strings.TrimSpace(req.ProposerUserID)
 	req.Title = strings.TrimSpace(req.Title)
 	req.Goal = strings.TrimSpace(req.Goal)
 	req.Complexity = strings.TrimSpace(strings.ToLower(req.Complexity))
 	if req.Complexity == "" {
 		req.Complexity = "normal"
 	}
-	if req.ProposerUserID == "" || req.Title == "" || req.Goal == "" {
-		writeError(w, http.StatusBadRequest, "proposer_user_id, title, goal are required")
+	if req.Title == "" || req.Goal == "" {
+		writeError(w, http.StatusBadRequest, "title and goal are required")
 		return
 	}
 	if req.MinMembers <= 0 {
@@ -4535,7 +4503,7 @@ func (s *Server) handleCollabPropose(w http.ResponseWriter, r *http.Request) {
 		Goal:           req.Goal,
 		Complexity:     req.Complexity,
 		Phase:          "recruiting",
-		ProposerUserID: req.ProposerUserID,
+		ProposerUserID: proposerUserID,
 		MinMembers:     req.MinMembers,
 		MaxMembers:     req.MaxMembers,
 	})
@@ -4545,11 +4513,11 @@ func (s *Server) handleCollabPropose(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = s.store.UpsertCollabParticipant(r.Context(), store.CollabParticipant{
 		CollabID: item.CollabID,
-		UserID:   req.ProposerUserID,
+		UserID:   proposerUserID,
 		Role:     "orchestrator",
 		Status:   "selected",
 	})
-	s.appendCollabEvent(r.Context(), item.CollabID, req.ProposerUserID, "proposal.created", map[string]any{
+	s.appendCollabEvent(r.Context(), item.CollabID, proposerUserID, "proposal.created", map[string]any{
 		"title":      item.Title,
 		"goal":       item.Goal,
 		"complexity": item.Complexity,
@@ -4650,16 +4618,20 @@ func (s *Server) handleCollabApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req collabApplyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.CollabID = strings.TrimSpace(req.CollabID)
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Pitch = strings.TrimSpace(req.Pitch)
-	if req.CollabID == "" || req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "collab_id and user_id are required")
+	if req.CollabID == "" {
+		writeError(w, http.StatusBadRequest, "collab_id is required")
 		return
 	}
 	session, err := s.store.GetCollabSession(r.Context(), req.CollabID)
@@ -4673,7 +4645,7 @@ func (s *Server) handleCollabApply(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.store.UpsertCollabParticipant(r.Context(), store.CollabParticipant{
 		CollabID: req.CollabID,
-		UserID:   req.UserID,
+		UserID:   userID,
 		Status:   "applied",
 		Pitch:    req.Pitch,
 	})
@@ -4681,7 +4653,7 @@ func (s *Server) handleCollabApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.appendCollabEvent(r.Context(), req.CollabID, req.UserID, "participant.applied", map[string]any{"pitch": req.Pitch})
+	s.appendCollabEvent(r.Context(), req.CollabID, userID, "participant.applied", map[string]any{"pitch": req.Pitch})
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
 }
 
@@ -4690,15 +4662,19 @@ func (s *Server) handleCollabAssign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	orchestratorUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req collabAssignRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.CollabID = strings.TrimSpace(req.CollabID)
-	req.OrchestratorUserID = strings.TrimSpace(req.OrchestratorUserID)
-	if req.CollabID == "" || req.OrchestratorUserID == "" {
-		writeError(w, http.StatusBadRequest, "collab_id and orchestrator_user_id are required")
+	if req.CollabID == "" {
+		writeError(w, http.StatusBadRequest, "collab_id is required")
 		return
 	}
 	if len(req.Assignments) == 0 {
@@ -4749,12 +4725,12 @@ func (s *Server) handleCollabAssign(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	updated, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, "assigned", req.OrchestratorUserID, req.StatusOrSummaryNote, nil)
+	updated, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, "assigned", orchestratorUserID, req.StatusOrSummaryNote, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.appendCollabEvent(r.Context(), req.CollabID, req.OrchestratorUserID, "participant.assigned", map[string]any{
+	s.appendCollabEvent(r.Context(), req.CollabID, orchestratorUserID, "participant.assigned", map[string]any{
 		"assignments":       req.Assignments,
 		"rejected_user_ids": req.RejectedUserIDs,
 		"note":              req.StatusOrSummaryNote,
@@ -4767,15 +4743,19 @@ func (s *Server) handleCollabStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	orchestratorUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req collabStartRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.CollabID = strings.TrimSpace(req.CollabID)
-	req.OrchestratorUserID = strings.TrimSpace(req.OrchestratorUserID)
-	if req.CollabID == "" || req.OrchestratorUserID == "" {
-		writeError(w, http.StatusBadRequest, "collab_id and orchestrator_user_id are required")
+	if req.CollabID == "" {
+		writeError(w, http.StatusBadRequest, "collab_id is required")
 		return
 	}
 	session, err := s.store.GetCollabSession(r.Context(), req.CollabID)
@@ -4787,12 +4767,12 @@ func (s *Server) handleCollabStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "phase transition not allowed")
 		return
 	}
-	item, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, "executing", req.OrchestratorUserID, req.StatusOrSummaryNote, nil)
+	item, err := s.store.UpdateCollabPhase(r.Context(), req.CollabID, "executing", orchestratorUserID, req.StatusOrSummaryNote, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.appendCollabEvent(r.Context(), req.CollabID, req.OrchestratorUserID, "collab.executing", map[string]any{"note": req.StatusOrSummaryNote})
+	s.appendCollabEvent(r.Context(), req.CollabID, orchestratorUserID, "collab.executing", map[string]any{"note": req.StatusOrSummaryNote})
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
 }
 
@@ -4801,19 +4781,23 @@ func (s *Server) handleCollabSubmit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req collabSubmitRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.CollabID = strings.TrimSpace(req.CollabID)
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Role = strings.TrimSpace(strings.ToLower(req.Role))
 	req.Kind = strings.TrimSpace(strings.ToLower(req.Kind))
 	req.Summary = strings.TrimSpace(req.Summary)
 	req.Content = strings.TrimSpace(req.Content)
-	if req.CollabID == "" || req.UserID == "" || req.Summary == "" {
-		writeError(w, http.StatusBadRequest, "collab_id, user_id, summary are required")
+	if req.CollabID == "" || req.Summary == "" {
+		writeError(w, http.StatusBadRequest, "collab_id and summary are required")
 		return
 	}
 	if utf8.RuneCountInString(req.Summary) < 8 {
@@ -4839,7 +4823,7 @@ func (s *Server) handleCollabSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.store.CreateCollabArtifact(r.Context(), store.CollabArtifact{
 		CollabID: req.CollabID,
-		UserID:   req.UserID,
+		UserID:   userID,
 		Role:     req.Role,
 		Kind:     req.Kind,
 		Summary:  req.Summary,
@@ -4850,7 +4834,7 @@ func (s *Server) handleCollabSubmit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.appendCollabEvent(r.Context(), req.CollabID, req.UserID, "artifact.submitted", map[string]any{
+	s.appendCollabEvent(r.Context(), req.CollabID, userID, "artifact.submitted", map[string]any{
 		"artifact_id": item.ID,
 		"role":        item.Role,
 		"kind":        item.Kind,
@@ -4863,17 +4847,21 @@ func (s *Server) handleCollabReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	reviewerUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req collabReviewRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.CollabID = strings.TrimSpace(req.CollabID)
-	req.ReviewerUserID = strings.TrimSpace(req.ReviewerUserID)
 	req.Status = strings.TrimSpace(strings.ToLower(req.Status))
 	req.ReviewNote = strings.TrimSpace(req.ReviewNote)
-	if req.CollabID == "" || req.ReviewerUserID == "" || req.ArtifactID <= 0 {
-		writeError(w, http.StatusBadRequest, "collab_id, reviewer_user_id, artifact_id are required")
+	if req.CollabID == "" || req.ArtifactID <= 0 {
+		writeError(w, http.StatusBadRequest, "collab_id and artifact_id are required")
 		return
 	}
 	if req.Status != "accepted" && req.Status != "rejected" {
@@ -4898,7 +4886,7 @@ func (s *Server) handleCollabReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.appendCollabEvent(r.Context(), req.CollabID, req.ReviewerUserID, "artifact.reviewed", map[string]any{
+	s.appendCollabEvent(r.Context(), req.CollabID, reviewerUserID, "artifact.reviewed", map[string]any{
 		"artifact_id": req.ArtifactID,
 		"status":      req.Status,
 		"review_note": req.ReviewNote,
@@ -4911,16 +4899,20 @@ func (s *Server) handleCollabClose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	orchestratorUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req collabCloseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.CollabID = strings.TrimSpace(req.CollabID)
-	req.OrchestratorUserID = strings.TrimSpace(req.OrchestratorUserID)
 	req.Result = strings.TrimSpace(strings.ToLower(req.Result))
-	if req.CollabID == "" || req.OrchestratorUserID == "" {
-		writeError(w, http.StatusBadRequest, "collab_id and orchestrator_user_id are required")
+	if req.CollabID == "" {
+		writeError(w, http.StatusBadRequest, "collab_id is required")
 		return
 	}
 	target := "closed"
@@ -4933,7 +4925,7 @@ func (s *Server) handleCollabClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ownerUserID := collabActionOwnerUserID(session)
-	if ownerUserID != "" && req.OrchestratorUserID != ownerUserID {
+	if ownerUserID != "" && orchestratorUserID != ownerUserID {
 		writeError(w, http.StatusForbidden, "only current orchestrator can close collab")
 		return
 	}
@@ -4947,7 +4939,7 @@ func (s *Server) handleCollabClose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.appendCollabEvent(r.Context(), req.CollabID, req.OrchestratorUserID, "collab.closed", map[string]any{
+	s.appendCollabEvent(r.Context(), req.CollabID, orchestratorUserID, "collab.closed", map[string]any{
 		"result": req.Result,
 		"note":   req.StatusOrSummaryNote,
 	})
@@ -5339,12 +5331,16 @@ func (s *Server) handleKBProposals(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleKBProposalCreate(w http.ResponseWriter, r *http.Request) {
+	proposerUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req kbProposalCreateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.ProposerUserID = strings.TrimSpace(req.ProposerUserID)
 	req.Title = strings.TrimSpace(req.Title)
 	req.Reason = strings.TrimSpace(req.Reason)
 	req.Change.OpType = strings.TrimSpace(strings.ToLower(req.Change.OpType))
@@ -5353,8 +5349,8 @@ func (s *Server) handleKBProposalCreate(w http.ResponseWriter, r *http.Request) 
 	req.Change.OldContent = strings.TrimSpace(req.Change.OldContent)
 	req.Change.NewContent = strings.TrimSpace(req.Change.NewContent)
 	req.Change.DiffText = strings.TrimSpace(req.Change.DiffText)
-	if req.ProposerUserID == "" || req.Title == "" || req.Reason == "" {
-		writeError(w, http.StatusBadRequest, "proposer_user_id, title, reason are required")
+	if req.Title == "" || req.Reason == "" {
+		writeError(w, http.StatusBadRequest, "title and reason are required")
 		return
 	}
 	if req.VoteThresholdPct <= 0 {
@@ -5437,7 +5433,7 @@ func (s *Server) handleKBProposalCreate(w http.ResponseWriter, r *http.Request) 
 	}
 	discussDeadline := time.Now().UTC().Add(time.Duration(req.DiscussionWindowSeconds) * time.Second)
 	proposal, change, err := s.store.CreateKBProposal(r.Context(), store.KBProposal{
-		ProposerUserID:       req.ProposerUserID,
+		ProposerUserID:       proposerUserID,
 		Title:                req.Title,
 		Reason:               req.Reason,
 		Status:               "discussing",
@@ -5459,14 +5455,14 @@ func (s *Server) handleKBProposalCreate(w http.ResponseWriter, r *http.Request) 
 	}
 	_, _ = s.store.CreateKBThreadMessage(r.Context(), store.KBThreadMessage{
 		ProposalID:  proposal.ID,
-		AuthorID:    req.ProposerUserID,
+		AuthorID:    proposerUserID,
 		MessageType: "system",
 		Content:     fmt.Sprintf("proposal created: %s", proposal.Title),
 	})
 	active := s.activeUserIDs(r.Context())
 	recipients := make([]string, 0, len(active))
 	for _, uid := range active {
-		if uid == req.ProposerUserID {
+		if uid == proposerUserID {
 			continue
 		}
 		recipients = append(recipients, uid)
@@ -5541,14 +5537,18 @@ func (s *Server) handleKBProposalEnroll(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req kbProposalEnrollRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.ProposalID <= 0 || req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "proposal_id and user_id are required")
+	if req.ProposalID <= 0 {
+		writeError(w, http.StatusBadRequest, "proposal_id is required")
 		return
 	}
 	proposal, err := s.store.GetKBProposal(r.Context(), req.ProposalID)
@@ -5560,14 +5560,14 @@ func (s *Server) handleKBProposalEnroll(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "proposal is not open for enrollment")
 		return
 	}
-	item, err := s.store.EnrollKBProposal(r.Context(), req.ProposalID, req.UserID)
+	item, err := s.store.EnrollKBProposal(r.Context(), req.ProposalID, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	_, _ = s.store.CreateKBThreadMessage(r.Context(), store.KBThreadMessage{
 		ProposalID:  req.ProposalID,
-		AuthorID:    req.UserID,
+		AuthorID:    userID,
 		MessageType: "system",
 		Content:     "user enrolled",
 	})
@@ -5609,20 +5609,24 @@ func (s *Server) handleKBProposalRevise(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req kbProposalReviseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Change.OpType = strings.TrimSpace(strings.ToLower(req.Change.OpType))
 	req.Change.Section = strings.TrimSpace(req.Change.Section)
 	req.Change.Title = strings.TrimSpace(req.Change.Title)
 	req.Change.OldContent = strings.TrimSpace(req.Change.OldContent)
 	req.Change.NewContent = strings.TrimSpace(req.Change.NewContent)
 	req.Change.DiffText = strings.TrimSpace(req.Change.DiffText)
-	if req.ProposalID <= 0 || req.BaseRevisionID <= 0 || req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "proposal_id, base_revision_id, user_id are required")
+	if req.ProposalID <= 0 || req.BaseRevisionID <= 0 {
+		writeError(w, http.StatusBadRequest, "proposal_id and base_revision_id are required")
 		return
 	}
 	if req.Change.OpType != "add" && req.Change.OpType != "update" && req.Change.OpType != "delete" {
@@ -5650,7 +5654,7 @@ func (s *Server) handleKBProposalRevise(w http.ResponseWriter, r *http.Request) 
 	if req.DiscussionWindowSec > 0 {
 		discussionDeadline = time.Now().UTC().Add(time.Duration(req.DiscussionWindowSec) * time.Second)
 	}
-	rev, updatedProposal, updatedChange, err := s.store.CreateKBRevision(r.Context(), req.ProposalID, req.BaseRevisionID, req.UserID, store.KBProposalChange{
+	rev, updatedProposal, updatedChange, err := s.store.CreateKBRevision(r.Context(), req.ProposalID, req.BaseRevisionID, userID, store.KBProposalChange{
 		OpType:        req.Change.OpType,
 		TargetEntryID: req.Change.TargetEntryID,
 		Section:       req.Change.Section,
@@ -5669,7 +5673,7 @@ func (s *Server) handleKBProposalRevise(w http.ResponseWriter, r *http.Request) 
 	}
 	_, _ = s.store.CreateKBThreadMessage(r.Context(), store.KBThreadMessage{
 		ProposalID:  req.ProposalID,
-		AuthorID:    req.UserID,
+		AuthorID:    userID,
 		MessageType: "revision",
 		Content:     fmt.Sprintf("revision=%d base=%d diff=%s", rev.ID, req.BaseRevisionID, req.Change.DiffText),
 	})
@@ -5685,14 +5689,18 @@ func (s *Server) handleKBProposalAck(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req kbProposalAckRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.ProposalID <= 0 || req.RevisionID <= 0 || req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "proposal_id, revision_id, user_id are required")
+	if req.ProposalID <= 0 || req.RevisionID <= 0 {
+		writeError(w, http.StatusBadRequest, "proposal_id and revision_id are required")
 		return
 	}
 	proposal, err := s.store.GetKBProposal(r.Context(), req.ProposalID)
@@ -5708,14 +5716,14 @@ func (s *Server) handleKBProposalAck(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "revision_id is not current active revision")
 		return
 	}
-	item, err := s.store.AckKBProposal(r.Context(), req.ProposalID, req.RevisionID, req.UserID)
+	item, err := s.store.AckKBProposal(r.Context(), req.ProposalID, req.RevisionID, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	_, _ = s.store.CreateKBThreadMessage(r.Context(), store.KBThreadMessage{
 		ProposalID:  req.ProposalID,
-		AuthorID:    req.UserID,
+		AuthorID:    userID,
 		MessageType: "ack",
 		Content:     fmt.Sprintf("ack revision=%d", req.RevisionID),
 	})
@@ -5727,15 +5735,19 @@ func (s *Server) handleKBProposalComment(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req kbProposalCommentRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Content = strings.TrimSpace(req.Content)
-	if req.ProposalID <= 0 || req.RevisionID <= 0 || req.UserID == "" || req.Content == "" {
-		writeError(w, http.StatusBadRequest, "proposal_id, revision_id, user_id, content are required")
+	if req.ProposalID <= 0 || req.RevisionID <= 0 || req.Content == "" {
+		writeError(w, http.StatusBadRequest, "proposal_id, revision_id, content are required")
 		return
 	}
 	if utf8.RuneCountInString(req.Content) < 12 {
@@ -5757,7 +5769,7 @@ func (s *Server) handleKBProposalComment(w http.ResponseWriter, r *http.Request)
 	}
 	item, err := s.store.CreateKBThreadMessage(r.Context(), store.KBThreadMessage{
 		ProposalID:  req.ProposalID,
-		AuthorID:    req.UserID,
+		AuthorID:    userID,
 		MessageType: "comment",
 		Content:     fmt.Sprintf("[revision=%d] %s", req.RevisionID, req.Content),
 	})
@@ -5792,14 +5804,18 @@ func (s *Server) handleKBProposalStartVote(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req kbProposalStartVoteRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.ProposalID <= 0 || req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "proposal_id and user_id are required")
+	if req.ProposalID <= 0 {
+		writeError(w, http.StatusBadRequest, "proposal_id is required")
 		return
 	}
 	proposal, err := s.store.GetKBProposal(r.Context(), req.ProposalID)
@@ -5815,7 +5831,7 @@ func (s *Server) handleKBProposalStartVote(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusConflict, "proposal has no active revision")
 		return
 	}
-	if proposal.ProposerUserID != req.UserID {
+	if proposal.ProposerUserID != userID {
 		writeError(w, http.StatusForbidden, "only proposer can start vote")
 		return
 	}
@@ -5852,16 +5868,20 @@ func (s *Server) handleKBProposalVote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req kbProposalVoteRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Vote = normalizeKBVote(req.Vote)
 	req.Reason = strings.TrimSpace(req.Reason)
-	if req.ProposalID <= 0 || req.RevisionID <= 0 || req.UserID == "" || req.Vote == "" {
-		writeError(w, http.StatusBadRequest, "proposal_id, revision_id, user_id, vote are required")
+	if req.ProposalID <= 0 || req.RevisionID <= 0 || req.Vote == "" {
+		writeError(w, http.StatusBadRequest, "proposal_id, revision_id, vote are required")
 		return
 	}
 	if req.Vote == "abstain" && req.Reason == "" {
@@ -5896,7 +5916,7 @@ func (s *Server) handleKBProposalVote(w http.ResponseWriter, r *http.Request) {
 	}
 	enrolled := false
 	for _, it := range enrollments {
-		if it.UserID == req.UserID {
+		if it.UserID == userID {
 			enrolled = true
 			break
 		}
@@ -5912,7 +5932,7 @@ func (s *Server) handleKBProposalVote(w http.ResponseWriter, r *http.Request) {
 	}
 	acked := false
 	for _, a := range acks {
-		if a.UserID == req.UserID {
+		if a.UserID == userID {
 			acked = true
 			break
 		}
@@ -5923,7 +5943,7 @@ func (s *Server) handleKBProposalVote(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.store.CastKBVote(r.Context(), store.KBVote{
 		ProposalID: req.ProposalID,
-		UserID:     req.UserID,
+		UserID:     userID,
 		Vote:       req.Vote,
 		Reason:     req.Reason,
 	})
@@ -5934,7 +5954,7 @@ func (s *Server) handleKBProposalVote(w http.ResponseWriter, r *http.Request) {
 	if req.Reason != "" {
 		_, _ = s.store.CreateKBThreadMessage(r.Context(), store.KBThreadMessage{
 			ProposalID:  req.ProposalID,
-			AuthorID:    req.UserID,
+			AuthorID:    userID,
 			MessageType: "vote_reason",
 			Content:     fmt.Sprintf("revision=%d vote=%s reason=%s", req.RevisionID, req.Vote, req.Reason),
 		})
@@ -5954,14 +5974,18 @@ func (s *Server) handleKBProposalApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req kbProposalApplyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.ProposalID <= 0 || req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "proposal_id and user_id are required")
+	if req.ProposalID <= 0 {
+		writeError(w, http.StatusBadRequest, "proposal_id is required")
 		return
 	}
 	proposal, err := s.store.GetKBProposal(r.Context(), req.ProposalID)
@@ -5986,7 +6010,7 @@ func (s *Server) handleKBProposalApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "proposal is not approved")
 		return
 	}
-	entry, updated, err := s.applyKBProposalAndBroadcast(r.Context(), req.ProposalID, req.UserID)
+	entry, updated, err := s.applyKBProposalAndBroadcast(r.Context(), req.ProposalID, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -7924,7 +7948,15 @@ func (s *Server) httpAccessLogMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 
 		reqBody := reqCapture.String()
-		userID := extractUserIDFromRequest(queryUserID(r), reqBody)
+		userID := strings.TrimSpace(AuthenticatedUserID(r))
+		if userID == "" {
+			if authUserID, err := s.authenticatedUserIDOrAPIKey(r); err == nil {
+				userID = strings.TrimSpace(authUserID)
+			}
+		}
+		if userID == "" {
+			userID = extractUserIDFromRequest(queryUserID(r), reqBody)
+		}
 		duration := time.Since(start).Milliseconds()
 		statusCode := rec.status
 		if statusCode == 0 {
@@ -8041,6 +8073,30 @@ func parseBoolFlag(v string) bool {
 
 func queryUserID(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("user_id"))
+}
+
+func rejectLegacyUserIDQuery(w http.ResponseWriter, r *http.Request) bool {
+	if queryUserID(r) != "" {
+		writeError(w, http.StatusBadRequest, "user_id query is no longer accepted on this endpoint; use api_key identity")
+		return true
+	}
+	return false
+}
+
+func (s *Server) requireAPIKeyUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if rejectLegacyUserIDQuery(w, r) {
+		return "", false
+	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		status := http.StatusUnauthorized
+		if strings.HasPrefix(err.Error(), "agent registration is not active") {
+			status = http.StatusForbidden
+		}
+		writeError(w, status, err.Error())
+		return "", false
+	}
+	return userID, true
 }
 
 type missionUpdateRequest struct {

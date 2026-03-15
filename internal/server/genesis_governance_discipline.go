@@ -14,22 +14,19 @@ import (
 )
 
 type governanceReportCreateRequest struct {
-	ReporterUserID string `json:"reporter_user_id"`
-	TargetUserID   string `json:"target_user_id"`
-	Reason         string `json:"reason"`
-	Evidence       string `json:"evidence"`
+	TargetUserID string `json:"target_user_id"`
+	Reason       string `json:"reason"`
+	Evidence     string `json:"evidence"`
 }
 
 type governanceCaseOpenRequest struct {
-	ReportID int64  `json:"report_id"`
-	OpenedBy string `json:"opened_by"`
+	ReportID int64 `json:"report_id"`
 }
 
 type governanceCaseVerdictRequest struct {
-	CaseID      int64  `json:"case_id"`
-	JudgeUserID string `json:"judge_user_id"`
-	Verdict     string `json:"verdict"` // banish|warn|clear
-	Note        string `json:"note"`
+	CaseID   int64  `json:"case_id"`
+	Verdict  string `json:"verdict"` // banish|warn|clear
+	Note     string `json:"note"`
 }
 
 func (s *Server) adjustReputationLocked(state *reputationState, userID string, delta int64, reason, refType, refID, actor string, now time.Time) {
@@ -64,24 +61,28 @@ func (s *Server) handleGovernanceReportCreate(w http.ResponseWriter, r *http.Req
 		writeError(w, 405, "method not allowed")
 		return
 	}
+	reporterUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req governanceReportCreateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}
-	req.ReporterUserID = strings.TrimSpace(req.ReporterUserID)
 	req.TargetUserID = strings.TrimSpace(req.TargetUserID)
 	req.Reason = strings.TrimSpace(req.Reason)
 	req.Evidence = strings.TrimSpace(req.Evidence)
-	if req.ReporterUserID == "" || req.TargetUserID == "" || req.Reason == "" {
-		writeError(w, 400, "reporter_user_id, target_user_id, reason are required")
+	if req.TargetUserID == "" || req.Reason == "" {
+		writeError(w, 400, "target_user_id and reason are required")
 		return
 	}
-	if req.ReporterUserID == req.TargetUserID {
+	if reporterUserID == req.TargetUserID {
 		writeError(w, 400, "self report is not allowed")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.ReporterUserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), reporterUserID); err != nil {
 		writeError(w, 409, err.Error())
 		return
 	}
@@ -95,7 +96,7 @@ func (s *Server) handleGovernanceReportCreate(w http.ResponseWriter, r *http.Req
 	}
 	item := governanceReportItem{
 		ReportID:       state.NextReportID,
-		ReporterUserID: req.ReporterUserID,
+		ReporterUserID: reporterUserID,
 		TargetUserID:   req.TargetUserID,
 		Reason:         req.Reason,
 		Evidence:       req.Evidence,
@@ -159,14 +160,15 @@ func (s *Server) handleGovernanceCaseOpen(w http.ResponseWriter, r *http.Request
 		writeError(w, 405, "method not allowed")
 		return
 	}
+	openedBy, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req governanceCaseOpenRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, 400, err.Error())
 		return
-	}
-	req.OpenedBy = strings.TrimSpace(req.OpenedBy)
-	if req.OpenedBy == "" {
-		req.OpenedBy = clawWorldSystemID
 	}
 	if req.ReportID <= 0 {
 		writeError(w, 400, "report_id is required")
@@ -207,7 +209,7 @@ func (s *Server) handleGovernanceCaseOpen(w http.ResponseWriter, r *http.Request
 	item := disciplineCaseItem{
 		CaseID:       state.NextCaseID,
 		ReportID:     req.ReportID,
-		OpenedBy:     req.OpenedBy,
+		OpenedBy:     openedBy,
 		TargetUserID: state.Reports[reportIdx].TargetUserID,
 		Status:       "open",
 		CreatedAt:    now,
@@ -264,16 +266,20 @@ func (s *Server) handleGovernanceCaseVerdict(w http.ResponseWriter, r *http.Requ
 		writeError(w, 405, "method not allowed")
 		return
 	}
+	judgeUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req governanceCaseVerdictRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}
-	req.JudgeUserID = strings.TrimSpace(req.JudgeUserID)
 	req.Verdict = strings.TrimSpace(strings.ToLower(req.Verdict))
 	req.Note = strings.TrimSpace(req.Note)
-	if req.CaseID <= 0 || req.JudgeUserID == "" || req.Verdict == "" {
-		writeError(w, 400, "case_id, judge_user_id, verdict are required")
+	if req.CaseID <= 0 || req.Verdict == "" {
+		writeError(w, 400, "case_id and verdict are required")
 		return
 	}
 	if req.Verdict != "banish" && req.Verdict != "warn" && req.Verdict != "clear" {
@@ -340,36 +346,36 @@ func (s *Server) handleGovernanceCaseVerdict(w http.ResponseWriter, r *http.Requ
 			TickID:       currentTick,
 			SourceModule: "governance.case.verdict",
 			SourceRef:    fmt.Sprintf("governance_case:%d", req.CaseID),
-			ActorUserID:  req.JudgeUserID,
+			ActorUserID:  judgeUserID,
 		}); err != nil {
 			genesisStateMu.Unlock()
 			writeError(w, http.StatusInternalServerError, "failed to apply banish verdict")
 			return
 		}
 		zeroBalanceAfterUnlock = true
-		s.adjustReputationLocked(&rep, state.Reports[reportIdx].ReporterUserID, 3, "report accepted (banish)", "discipline_case", strconv.FormatInt(req.CaseID, 10), req.JudgeUserID, now)
-		s.adjustReputationLocked(&rep, targetUserID, -20, "banished", "discipline_case", strconv.FormatInt(req.CaseID, 10), req.JudgeUserID, now)
+		s.adjustReputationLocked(&rep, state.Reports[reportIdx].ReporterUserID, 3, "report accepted (banish)", "discipline_case", strconv.FormatInt(req.CaseID, 10), judgeUserID, now)
+		s.adjustReputationLocked(&rep, targetUserID, -20, "banished", "discipline_case", strconv.FormatInt(req.CaseID, 10), judgeUserID, now)
 		state.Reports[reportIdx].Status = "resolved_accepted"
 	} else if req.Verdict == "warn" {
-		s.adjustReputationLocked(&rep, state.Reports[reportIdx].ReporterUserID, 1, "report accepted (warn)", "discipline_case", strconv.FormatInt(req.CaseID, 10), req.JudgeUserID, now)
-		s.adjustReputationLocked(&rep, targetUserID, -5, "warned", "discipline_case", strconv.FormatInt(req.CaseID, 10), req.JudgeUserID, now)
+		s.adjustReputationLocked(&rep, state.Reports[reportIdx].ReporterUserID, 1, "report accepted (warn)", "discipline_case", strconv.FormatInt(req.CaseID, 10), judgeUserID, now)
+		s.adjustReputationLocked(&rep, targetUserID, -5, "warned", "discipline_case", strconv.FormatInt(req.CaseID, 10), judgeUserID, now)
 		state.Reports[reportIdx].Status = "resolved_accepted"
 	} else {
-		s.adjustReputationLocked(&rep, state.Reports[reportIdx].ReporterUserID, -2, "report rejected", "discipline_case", strconv.FormatInt(req.CaseID, 10), req.JudgeUserID, now)
-		s.adjustReputationLocked(&rep, targetUserID, 2, "case cleared", "discipline_case", strconv.FormatInt(req.CaseID, 10), req.JudgeUserID, now)
+		s.adjustReputationLocked(&rep, state.Reports[reportIdx].ReporterUserID, -2, "report rejected", "discipline_case", strconv.FormatInt(req.CaseID, 10), judgeUserID, now)
+		s.adjustReputationLocked(&rep, targetUserID, 2, "case cleared", "discipline_case", strconv.FormatInt(req.CaseID, 10), judgeUserID, now)
 		state.Reports[reportIdx].Status = "resolved_rejected"
 	}
 
 	closedAt := now
 	state.Cases[caseIdx].Status = "closed"
 	state.Cases[caseIdx].Verdict = req.Verdict
-	state.Cases[caseIdx].JudgeUserID = req.JudgeUserID
+	state.Cases[caseIdx].JudgeUserID = judgeUserID
 	state.Cases[caseIdx].VerdictNote = req.Note
 	state.Cases[caseIdx].ClosedAt = &closedAt
 	state.Cases[caseIdx].UpdatedAt = now
 
 	state.Reports[reportIdx].ResolvedAt = &closedAt
-	state.Reports[reportIdx].ResolvedBy = req.JudgeUserID
+	state.Reports[reportIdx].ResolvedBy = judgeUserID
 	state.Reports[reportIdx].ResolutionNote = req.Note
 	state.Reports[reportIdx].UpdatedAt = now
 
@@ -391,7 +397,7 @@ func (s *Server) handleGovernanceCaseVerdict(w http.ResponseWriter, r *http.Requ
 	}
 
 	subject := "[DISCIPLINE VERDICT] case closed" + refTag(skillGovernance)
-	body := fmt.Sprintf("case_id=%d\nverdict=%s\ntarget=%s\njudge=%s\nnote=%s", req.CaseID, req.Verdict, targetUserID, req.JudgeUserID, req.Note)
+	body := fmt.Sprintf("case_id=%d\nverdict=%s\ntarget=%s\njudge=%s\nnote=%s", req.CaseID, req.Verdict, targetUserID, judgeUserID, req.Note)
 	receivers := []string{targetUserID, state.Reports[reportIdx].ReporterUserID}
 	s.sendMailAndPushHint(r.Context(), clawWorldSystemID, receivers, subject, body)
 

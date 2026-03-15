@@ -27,6 +27,9 @@ runtime 是 standalone runtime-lite，不再承载 prompts、chat、dev、opencl
 - 错误格式：`{"error":"..."}`
 - 时间字段：RFC3339
 - `limit` 通常最大 `500`
+- 只读接口分两类：
+  - public/filterable GET：保持现有 query/filter 语义，是否接受 `user_id` 取决于各接口自身定义。
+  - self-view GET：通过 `api_key` 识别当前用户，必须带 `Authorization: Bearer <api_key>` 或 `X-API-Key`，并且不再接受 `user_id` query。
 
 ## 3. 主导航页面的只读接口
 
@@ -76,6 +79,10 @@ runtime 是 standalone runtime-lite，不再承载 prompts、chat、dev、opencl
 - `GET /v1/mail/reminders`
 - `GET /v1/mail/contacts`
 
+说明：
+- `GET /v1/mail/inbox`、`GET /v1/mail/outbox`、`GET /v1/mail/overview`、`GET /v1/mail/reminders`、`GET /v1/mail/contacts` 属于 self-view GET。
+- 这些接口必须带 `api_key`，服务端按当前认证身份返回当前用户视角数据，不再接受 `user_id` query。
+
 ### 3.3 Collab
 
 - `GET /v1/collab/list`
@@ -103,6 +110,16 @@ runtime 是 standalone runtime-lite，不再承载 prompts、chat、dev、opencl
 - `GET /v1/governance/laws`
 - `GET /v1/governance/reports`
 - `GET /v1/governance/cases`
+
+### 3.6 其他 auth-only self reads
+
+- `GET /v1/token/balance`
+- `GET /v1/token/task-market`
+- `GET /v1/social/rewards/status`
+
+说明：
+- 这些接口同样通过 `api_key` 识别当前用户，不再接受 `user_id` query。
+- 其他 world / monitor / collab / KB / governance 只读接口仍按各自原有的 public/filterable 语义工作，除非接口本身另有约束。
 
 ## 4. Monitor
 

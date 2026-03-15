@@ -204,6 +204,96 @@ func AuthenticatedUserID(r *http.Request) string {
 	return v
 }
 
+func apiKeyFromRequest(r *http.Request) string {
+	apiKey := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(r.Header.Get("X-API-Key"))
+	}
+	return apiKey
+}
+
+func (s *Server) authenticateAPIKey(r *http.Request) (store.AgentRegistration, error) {
+	apiKey := apiKeyFromRequest(r)
+	if apiKey == "" {
+		return store.AgentRegistration{}, fmt.Errorf("api_key is required (Authorization: Bearer <key> or X-API-Key header)")
+	}
+	reg, err := s.store.GetAgentRegistrationByAPIKeyHash(r.Context(), hashSecret(apiKey))
+	if err != nil {
+		return store.AgentRegistration{}, fmt.Errorf("invalid api_key")
+	}
+	if reg.Status != "active" && reg.Status != "pending_claim" {
+		return store.AgentRegistration{}, fmt.Errorf("agent registration is not active (status: %s)", reg.Status)
+	}
+	return reg, nil
+}
+
+func (s *Server) authenticatedUserIDOrAPIKey(r *http.Request) (string, error) {
+	if userID := strings.TrimSpace(AuthenticatedUserID(r)); userID != "" {
+		return userID, nil
+	}
+	reg, err := s.authenticateAPIKey(r)
+	if err != nil {
+		return "", err
+	}
+	return reg.UserID, nil
+}
+
+func writeAPIKeyAuthError(w http.ResponseWriter, err error) {
+	status := http.StatusUnauthorized
+	if strings.HasPrefix(err.Error(), "agent registration is not active") {
+		status = http.StatusForbidden
+	}
+	writeError(w, status, err.Error())
+}
+
+func (s *Server) requireAuthOnlyCurrentUser(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if queryUserID(r) != "" {
+		writeError(w, http.StatusBadRequest, "user_id query is no longer accepted on this endpoint; use api_key to identify the current user")
+		return "", false
+	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeAPIKeyAuthError(w, err)
+		return "", false
+	}
+	return userID, true
+}
+
+var authOnlySelfReadRouteSet = map[string]struct{}{
+	"/v1/mail/inbox":            {},
+	"/v1/mail/outbox":           {},
+	"/v1/mail/overview":         {},
+	"/v1/mail/reminders":        {},
+	"/v1/mail/contacts":         {},
+	"/v1/token/balance":         {},
+	"/v1/social/rewards/status": {},
+}
+
+var deprecatedActorFieldByPath = func() map[string]string {
+	fields := map[string]string{
+		"/v1/mail/mark-read":         "user_id",
+		"/v1/mail/mark-read-query":   "user_id",
+		"/v1/mail/reminders/resolve": "user_id",
+		"/v1/governance/cases/open":  "opened_by",
+	}
+	for path, rule := range pricedBusinessActions {
+		fields[path] = rule.ActorKey
+	}
+	return fields
+}()
+
+func hasDeprecatedTopLevelField(body []byte, field string) bool {
+	if strings.TrimSpace(field) == "" || len(body) == 0 {
+		return false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	_, ok := payload[field]
+	return ok
+}
+
 // apiKeyAuthExemptPrefixes are path prefixes exempt from api_key auth.
 var apiKeyAuthExemptPrefixes = []string{
 	"/v1/users/register",
@@ -245,25 +335,60 @@ func (s *Server) apiKeyAuthMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		apiKey := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-		if apiKey == "" {
-			apiKey = strings.TrimSpace(r.Header.Get("X-API-Key"))
-		}
-		if apiKey == "" {
-			writeError(w, http.StatusUnauthorized, "api_key is required (Authorization: Bearer <key> or X-API-Key header)")
-			return
-		}
-		reg, err := s.store.GetAgentRegistrationByAPIKeyHash(r.Context(), hashSecret(apiKey))
+		reg, err := s.authenticateAPIKey(r)
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid api_key")
-			return
-		}
-		if reg.Status != "active" && reg.Status != "pending_claim" {
-			writeError(w, http.StatusForbidden, "agent registration is not active (status: "+reg.Status+")")
+			writeAPIKeyAuthError(w, err)
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxKeyAuthUserID, reg.UserID)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) authIdentityContractMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqPath := normalizeRequestPath(r.URL.Path)
+		if r.Method == http.MethodGet {
+			if _, ok := authOnlySelfReadRouteSet[reqPath]; ok {
+				userID, ok := s.requireAuthOnlyCurrentUser(w, r)
+				if !ok {
+					return
+				}
+				ctx := context.WithValue(r.Context(), ctxKeyAuthUserID, userID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
+			next.ServeHTTP(w, r)
+			return
+		}
+		actorKey, ok := deprecatedActorFieldByPath[reqPath]
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if actorKey == "user_id" && queryUserID(r) != "" {
+			writeError(w, http.StatusBadRequest, "user_id query is no longer accepted on this endpoint; use api_key to identify the current user")
+			return
+		}
+		bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPricedRequestBodyBytes))
+		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "http: request body too large") {
+				writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+				return
+			}
+			writeError(w, http.StatusBadRequest, "failed to read request body")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		if hasDeprecatedTopLevelField(bodyBytes, actorKey) {
+			writeError(w, http.StatusBadRequest, actorKey+" is no longer accepted on this endpoint; use api_key to identify the current user")
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -289,7 +414,10 @@ func (s *Server) ownerAndPricingMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		actorUserID := extractActorUserIDForPath(path, queryUserID(r), bodyBytes, rule.ActorKey)
+		actorUserID := strings.TrimSpace(AuthenticatedUserID(r))
+		if actorUserID == "" {
+			actorUserID, _ = s.authenticatedUserIDOrAPIKey(r)
+		}
 		if strings.TrimSpace(actorUserID) == "" {
 			next.ServeHTTP(w, r)
 			return
@@ -471,17 +599,13 @@ func (s *Server) handleUserStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	apiKey := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(r.Header.Get("X-API-Key"))
-	}
-	if apiKey == "" {
-		writeError(w, http.StatusUnauthorized, "api_key is required")
-		return
-	}
-	reg, err := s.store.GetAgentRegistrationByAPIKeyHash(r.Context(), hashSecret(apiKey))
+	reg, err := s.authenticateAPIKey(r)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid api_key")
+		status := http.StatusUnauthorized
+		if strings.HasPrefix(err.Error(), "agent registration is not active") {
+			status = http.StatusForbidden
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	resp := map[string]any{
@@ -1266,12 +1390,11 @@ func (s *Server) handleSocialRewardsStatus(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	userID := queryUserID(r)
-	if strings.TrimSpace(userID) == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
+	if rejectLegacyUserIDQuery(w, r) {
 		return
 	}
-	if err := s.requireOwnerSessionForUser(r, userID); err != nil {
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}

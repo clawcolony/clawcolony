@@ -47,12 +47,12 @@ func TestNormalizeBotNickname(t *testing.T) {
 
 func TestBotNicknameUpsertLifecycle(t *testing.T) {
 	srv := newTestServer()
-	userID := seedActiveUser(t, srv)
+	h := identityTestHandler(srv)
+	userID, apiKey := seedActiveUserWithAPIKey(t, srv)
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
-		"user_id":  userID,
+	w := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
 		"nickname": "  星火  ",
-	})
+	}, apiKeyHeaders(apiKey))
 	if w.Code != http.StatusOK {
 		t.Fatalf("upsert nickname failed: code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -66,7 +66,7 @@ func TestBotNicknameUpsertLifecycle(t *testing.T) {
 		t.Fatalf("unexpected nickname after upsert: %q", got)
 	}
 
-	list := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots?include_inactive=1", nil)
+	list := doJSONRequest(t, h, http.MethodGet, "/v1/bots?include_inactive=1", nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("list bots failed: code=%d body=%s", list.Code, list.Body.String())
 	}
@@ -93,10 +93,9 @@ func TestBotNicknameUpsertLifecycle(t *testing.T) {
 		t.Fatalf("target user %s not found in /v1/bots response", userID)
 	}
 
-	clear := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
-		"user_id":  userID,
+	clear := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
 		"nickname": "   ",
-	})
+	}, apiKeyHeaders(apiKey))
 	if clear.Code != http.StatusOK {
 		t.Fatalf("clear nickname failed: code=%d body=%s", clear.Code, clear.Body.String())
 	}
@@ -112,58 +111,75 @@ func TestBotNicknameUpsertLifecycle(t *testing.T) {
 
 func TestBotNicknameUpsertValidation(t *testing.T) {
 	srv := newTestServer()
-	_ = seedActiveUser(t, srv)
+	h := identityTestHandler(srv)
+	_, apiKey := seedActiveUserWithAPIKey(t, srv)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots/nickname/upsert", nil)
+	w := doJSONRequest(t, h, http.MethodGet, "/v1/bots/nickname/upsert", nil)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected method not allowed, got=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
+	w = doJSONRequest(t, h, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
 		"nickname": "合法",
 	})
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected bad request without user_id, got=%d body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized without api_key, got=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
-		"user_id":  "u-over-limit",
+	w = doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
 		"nickname": strings.Repeat("中", maxBotNicknameRunes+1),
-	})
+	}, apiKeyHeaders(apiKey))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected bad request for long nickname, got=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
-		"user_id":  "u-with-newline",
+	w = doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
 		"nickname": "abc\nxyz",
-	})
+	}, apiKeyHeaders(apiKey))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected bad request for multiline nickname, got=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
-		"user_id":  "u-not-found",
+	unknownAPIKey := apiKeyPrefix + "u-not-found-test"
+	if _, err := srv.store.CreateAgentRegistration(context.Background(), store.AgentRegistrationInput{
+		UserID:            "u-not-found",
+		RequestedUsername: "u-not-found",
+		GoodAt:            "test",
+		Status:            "active",
+		APIKeyHash:        hashSecret(unknownAPIKey),
+	}); err != nil {
+		t.Fatalf("seed unknown nickname registration failed: %v", err)
+	}
+	w = doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
 		"nickname": "正常",
-	})
+	}, apiKeyHeaders(unknownAPIKey))
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected not found for unknown user_id, got=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("expected not found for unknown api_key user, got=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
 func TestBotNicknameUpsertUnknownUserDoesNotCreateRuntimeUser(t *testing.T) {
 	srv := newTestServer()
-	userID := "user-unknown-no-create"
+	h := identityTestHandler(srv)
+	apiKey := apiKeyPrefix + "user-unknown-no-create-test"
+	if _, err := srv.store.CreateAgentRegistration(context.Background(), store.AgentRegistrationInput{
+		UserID:            "user-unknown-no-create",
+		RequestedUsername: "user-unknown-no-create",
+		GoodAt:            "test",
+		Status:            "active",
+		APIKeyHash:        hashSecret(apiKey),
+	}); err != nil {
+		t.Fatalf("seed unknown nickname registration failed: %v", err)
+	}
 
 	before, err := srv.store.ListBots(context.Background())
 	if err != nil {
 		t.Fatalf("list bots before nickname upsert: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
-		"user_id":  userID,
+	w := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
 		"nickname": "不存在",
-	})
+	}, apiKeyHeaders(apiKey))
 	// newTestServer has no kube client, so unknown user follows the not-found path.
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected not found for unknown user, got=%d body=%s", w.Code, w.Body.String())

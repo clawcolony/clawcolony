@@ -10,7 +10,6 @@ import (
 )
 
 type ganglionForgeRequest struct {
-	UserID         string `json:"user_id"`
 	Name           string `json:"name"`
 	Type           string `json:"type"`
 	Description    string `json:"description"`
@@ -21,12 +20,10 @@ type ganglionForgeRequest struct {
 }
 
 type ganglionIntegrateRequest struct {
-	UserID     string `json:"user_id"`
 	GanglionID int64  `json:"ganglion_id"`
 }
 
 type ganglionRateRequest struct {
-	UserID     string `json:"user_id"`
 	GanglionID int64  `json:"ganglion_id"`
 	Score      int    `json:"score"`
 	Feedback   string `json:"feedback"`
@@ -90,17 +87,17 @@ func (s *Server) handleGangliaForge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req ganglionForgeRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
-		return
-	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -110,7 +107,7 @@ func (s *Server) handleGangliaForge(w http.ResponseWriter, r *http.Request) {
 		Description:    req.Description,
 		Implementation: req.Implementation,
 		Validation:     req.Validation,
-		AuthorUserID:   req.UserID,
+		AuthorUserID:   userID,
 		SupersedesID:   req.SupersedesID,
 		Temporality:    req.Temporality,
 		LifeState:      "nascent",
@@ -168,21 +165,25 @@ func (s *Server) handleGangliaIntegrate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req ganglionIntegrateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" || req.GanglionID <= 0 {
-		writeError(w, http.StatusBadRequest, "user_id and ganglion_id are required")
+	if req.GanglionID <= 0 {
+		writeError(w, http.StatusBadRequest, "ganglion_id is required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	integration, item, err := s.store.IntegrateGanglion(r.Context(), req.GanglionID, req.UserID)
+	integration, item, err := s.store.IntegrateGanglion(r.Context(), req.GanglionID, userID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -211,23 +212,27 @@ func (s *Server) handleGangliaRate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req ganglionRateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" || req.GanglionID <= 0 {
-		writeError(w, http.StatusBadRequest, "user_id and ganglion_id are required")
+	if req.GanglionID <= 0 {
+		writeError(w, http.StatusBadRequest, "ganglion_id is required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	rating, item, err := s.store.RateGanglion(r.Context(), store.GanglionRating{
 		GanglionID: req.GanglionID,
-		UserID:     req.UserID,
+		UserID:     userID,
 		Score:      req.Score,
 		Feedback:   req.Feedback,
 	})

@@ -30,7 +30,7 @@ func TestKBProposalApplyGrantsCommunityReward(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
 	proposer := seedActiveUser(t, srv)
-	applier := seedActiveUser(t, srv)
+	applier, applierAPIKey := seedActiveUserWithAPIKey(t, srv)
 
 	proposal, _, err := srv.store.CreateKBProposal(ctx, store.KBProposal{
 		ProposerUserID:    proposer,
@@ -53,21 +53,19 @@ func TestKBProposalApplyGrantsCommunityReward(t *testing.T) {
 		t.Fatalf("close proposal: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
 		"proposal_id": proposal.ID,
-		"user_id":     applier,
-	})
+	}, apiKeyHeaders(applierAPIKey))
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("apply status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("apply status=%d user=%s body=%s", w.Code, applier, w.Body.String())
 	}
 	if tokenBalanceForUser(t, srv, proposer) != 1000+communityRewardAmountKBApply {
 		t.Fatalf("proposer should receive kb reward, body=%s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
 		"proposal_id": proposal.ID,
-		"user_id":     applier,
-	})
+	}, apiKeyHeaders(applierAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("reapply status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -79,7 +77,7 @@ func TestKBProposalApplyGrantsCommunityReward(t *testing.T) {
 func TestCollabCloseGrantsCommunityRewardToAcceptedAuthors(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
-	orchestrator := seedActiveUser(t, srv)
+	orchestrator, orchestratorAPIKey := seedActiveUserWithAPIKey(t, srv)
 	authorA := seedActiveUser(t, srv)
 	authorB := seedActiveUser(t, srv)
 
@@ -128,12 +126,11 @@ func TestCollabCloseGrantsCommunityRewardToAcceptedAuthors(t *testing.T) {
 		t.Fatalf("accept artifact b: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
 		"collab_id":              session.CollabID,
-		"orchestrator_user_id":   orchestrator,
 		"result":                 "closed",
 		"status_or_summary_note": "done",
-	})
+	}, apiKeyHeaders(orchestratorAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("close collab status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -147,15 +144,14 @@ func TestCollabCloseGrantsCommunityRewardToAcceptedAuthors(t *testing.T) {
 
 func TestBountyVerifyApprovedGrantsCommunityReward(t *testing.T) {
 	srv := newTestServer()
-	poster := seedActiveUser(t, srv)
-	claimer := seedActiveUser(t, srv)
+	_, posterAPIKey := seedActiveUserWithAPIKey(t, srv)
+	claimer, claimerAPIKey := seedActiveUserWithAPIKey(t, srv)
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/post", map[string]any{
-		"poster_user_id": poster,
-		"description":    "ship shared fix",
-		"reward":         50,
-		"criteria":       "merged and shared",
-	})
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/bounty/post", map[string]any{
+		"description": "ship shared fix",
+		"reward":      50,
+		"criteria":    "merged and shared",
+	}, apiKeyHeaders(posterAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("post bounty status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -168,18 +164,16 @@ func TestBountyVerifyApprovedGrantsCommunityReward(t *testing.T) {
 		t.Fatalf("unmarshal bounty: %v", err)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/claim", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/bounty/claim", map[string]any{
 		"bounty_id": post.Item.BountyID,
-		"user_id":   claimer,
-	})
+	}, apiKeyHeaders(claimerAPIKey))
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("claim bounty status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("claim bounty status=%d user=%s body=%s", w.Code, claimer, w.Body.String())
 	}
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/verify", map[string]any{
-		"bounty_id":        post.Item.BountyID,
-		"approved":         true,
-		"approver_user_id": poster,
-	})
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/bounty/verify", map[string]any{
+		"bounty_id": post.Item.BountyID,
+		"approved":  true,
+	}, apiKeyHeaders(posterAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("verify bounty status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -192,7 +186,7 @@ func TestGangliaIntegrateGrantsCommunityRewardToAuthor(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
 	author := seedActiveUser(t, srv)
-	integrator := seedActiveUser(t, srv)
+	integrator, integratorAPIKey := seedActiveUserWithAPIKey(t, srv)
 
 	ganglion, err := srv.store.CreateGanglion(ctx, store.Ganglion{
 		Name:           "shared-protocol",
@@ -208,10 +202,9 @@ func TestGangliaIntegrateGrantsCommunityRewardToAuthor(t *testing.T) {
 		t.Fatalf("create ganglion: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/ganglia/integrate", map[string]any{
-		"user_id":     integrator,
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/ganglia/integrate", map[string]any{
 		"ganglion_id": ganglion.ID,
-	})
+	}, apiKeyHeaders(integratorAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("integrate ganglion status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -226,7 +219,7 @@ func TestGangliaIntegrateGrantsCommunityRewardToAuthor(t *testing.T) {
 func TestGangliaIntegrateSkipsSelfIntegrationReward(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
-	author := seedActiveUser(t, srv)
+	author, authorAPIKey := seedActiveUserWithAPIKey(t, srv)
 
 	ganglion, err := srv.store.CreateGanglion(ctx, store.Ganglion{
 		Name:           "self-integrated-protocol",
@@ -242,10 +235,9 @@ func TestGangliaIntegrateSkipsSelfIntegrationReward(t *testing.T) {
 		t.Fatalf("create ganglion: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/ganglia/integrate", map[string]any{
-		"user_id":     author,
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/ganglia/integrate", map[string]any{
 		"ganglion_id": ganglion.ID,
-	})
+	}, apiKeyHeaders(authorAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("self integrate ganglion status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -327,17 +319,16 @@ func TestTokenUpgradeClosureRewardRejectsDeployFailure(t *testing.T) {
 func TestTokenTaskMarketListsManualAndSystemItems(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
-	poster := seedActiveUser(t, srv)
+	_, posterAPIKey := seedActiveUserWithAPIKey(t, srv)
 	proposer := seedActiveUser(t, srv)
-	orchestrator := seedActiveUser(t, srv)
+	orchestrator, orchestratorAPIKey := seedActiveUserWithAPIKey(t, srv)
 	author := seedActiveUser(t, srv)
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bounty/post", map[string]any{
-		"poster_user_id": poster,
-		"description":    "manual market task",
-		"reward":         40,
-		"criteria":       "done",
-	})
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/bounty/post", map[string]any{
+		"description": "manual market task",
+		"reward":      40,
+		"criteria":    "done",
+	}, apiKeyHeaders(posterAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("post bounty status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -418,27 +409,27 @@ func TestTokenTaskMarketListsManualAndSystemItems(t *testing.T) {
 		t.Fatalf("system task market should respect status filter body=%s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/task-market?source=system&module=collab&user_id="+author+"&limit=20", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("task market non-owner filter status=%d body=%s", w.Code, w.Body.String())
-	}
-	if strings.Contains(w.Body.String(), `"linked_resource_type":"collab.session"`) {
-		t.Fatalf("non-orchestrator should not see collab close task body=%s", w.Body.String())
-	}
-
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/token/task-market?source=system&module=collab&user_id="+orchestrator+"&limit=20", nil)
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodGet, "/v1/token/task-market?source=system&module=collab&limit=20", nil, apiKeyHeaders(orchestratorAPIKey))
 	if w.Code != http.StatusOK {
 		t.Fatalf("task market owner filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), `"linked_resource_type":"collab.session"`) {
 		t.Fatalf("orchestrator should see collab close task body=%s", w.Body.String())
 	}
+
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodGet, "/v1/token/task-market?source=system&module=collab&limit=20", nil, apiKeyHeaders(posterAPIKey))
+	if w.Code != http.StatusOK {
+		t.Fatalf("task market non-owner filter status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"linked_resource_type":"collab.session"`) {
+		t.Fatalf("non-orchestrator should not see collab close task body=%s", w.Body.String())
+	}
 }
 
 func TestCollabCloseFailedDoesNotGrantCommunityReward(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
-	orchestrator := seedActiveUser(t, srv)
+	orchestrator, orchestratorAPIKey := seedActiveUserWithAPIKey(t, srv)
 	author := seedActiveUser(t, srv)
 
 	session, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
@@ -471,12 +462,11 @@ func TestCollabCloseFailedDoesNotGrantCommunityReward(t *testing.T) {
 		t.Fatalf("accept collab artifact: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
 		"collab_id":              session.CollabID,
-		"orchestrator_user_id":   orchestrator,
 		"result":                 "failed",
 		"status_or_summary_note": "did not close successfully",
-	})
+	}, apiKeyHeaders(orchestratorAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("failed close status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -489,7 +479,7 @@ func TestCollabCloseRequiresCurrentOrchestrator(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
 	orchestrator := seedActiveUser(t, srv)
-	otherUser := seedActiveUser(t, srv)
+	_, otherAPIKey := seedActiveUserWithAPIKey(t, srv)
 	author := seedActiveUser(t, srv)
 
 	session, err := srv.store.CreateCollabSession(ctx, store.CollabSession{
@@ -522,12 +512,11 @@ func TestCollabCloseRequiresCurrentOrchestrator(t *testing.T) {
 		t.Fatalf("accept collab artifact: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
 		"collab_id":              session.CollabID,
-		"orchestrator_user_id":   otherUser,
 		"result":                 "closed",
 		"status_or_summary_note": "unauthorized close",
-	})
+	}, apiKeyHeaders(otherAPIKey))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("non-orchestrator close should be forbidden, got=%d body=%s", w.Code, w.Body.String())
 	}

@@ -92,7 +92,7 @@ func TestKBProposalApplyConsumesTreasury(t *testing.T) {
 	srv.cfg.TreasuryInitialToken = 200
 	ctx := context.Background()
 	proposer := seedActiveUser(t, srv)
-	applier := seedActiveUser(t, srv)
+	_, applierAPIKey := seedActiveUserWithAPIKey(t, srv)
 	if got := treasuryBalanceForTest(t, srv); got != 200 {
 		t.Fatalf("initial treasury=%d want 200", got)
 	}
@@ -118,10 +118,9 @@ func TestKBProposalApplyConsumesTreasury(t *testing.T) {
 		t.Fatalf("approve proposal: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/apply", map[string]any{
 		"proposal_id": proposal.ID,
-		"user_id":     applier,
-	})
+	}, apiKeyHeaders(applierAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("apply proposal status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -136,17 +135,17 @@ func TestKBProposalApplyConsumesTreasury(t *testing.T) {
 func TestTokenWishFulfillConsumesTreasury(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.TreasuryInitialToken = 25
-	userID := seedActiveUser(t, srv)
+	userID, userAPIKey := seedActiveUserWithAPIKey(t, srv)
+	fulfillerUserID, fulfillerAPIKey := seedActiveUserWithAPIKey(t, srv)
 	if got := treasuryBalanceForTest(t, srv); got != 25 {
 		t.Fatalf("initial treasury=%d want 25", got)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/wish/create", map[string]any{
-		"user_id":       userID,
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/wish/create", map[string]any{
 		"title":         "need shared compute",
 		"reason":        "benchmark",
 		"target_amount": 10,
-	})
+	}, apiKeyHeaders(userAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("wish create status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -159,13 +158,12 @@ func TestTokenWishFulfillConsumesTreasury(t *testing.T) {
 		t.Fatalf("unmarshal wish create: %v", err)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/wish/fulfill", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/wish/fulfill", map[string]any{
 		"wish_id":        create.Item.WishID,
-		"fulfilled_by":   clawWorldSystemID,
 		"granted_amount": 10,
-	})
+	}, apiKeyHeaders(fulfillerAPIKey))
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("wish fulfill status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("wish fulfill status=%d fulfiller=%s body=%s", w.Code, fulfillerUserID, w.Body.String())
 	}
 	if got := tokenBalanceForUser(t, srv, userID); got != 1010 {
 		t.Fatalf("user balance=%d want 1010", got)
@@ -178,17 +176,17 @@ func TestTokenWishFulfillConsumesTreasury(t *testing.T) {
 func TestTokenWishFulfillReturnsConflictWhenTreasuryInsufficient(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.TreasuryInitialToken = 5
-	userID := seedActiveUser(t, srv)
+	userID, userAPIKey := seedActiveUserWithAPIKey(t, srv)
+	_, fulfillerAPIKey := seedActiveUserWithAPIKey(t, srv)
 	if got := treasuryBalanceForTest(t, srv); got != 5 {
 		t.Fatalf("initial treasury=%d want 5", got)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/wish/create", map[string]any{
-		"user_id":       userID,
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/wish/create", map[string]any{
 		"title":         "need more token",
 		"reason":        "benchmark",
 		"target_amount": 10,
-	})
+	}, apiKeyHeaders(userAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("wish create status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -201,11 +199,10 @@ func TestTokenWishFulfillReturnsConflictWhenTreasuryInsufficient(t *testing.T) {
 		t.Fatalf("unmarshal wish create: %v", err)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/token/wish/fulfill", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/wish/fulfill", map[string]any{
 		"wish_id":        create.Item.WishID,
-		"fulfilled_by":   clawWorldSystemID,
 		"granted_amount": 10,
-	})
+	}, apiKeyHeaders(fulfillerAPIKey))
 	if w.Code != http.StatusConflict {
 		t.Fatalf("wish fulfill insufficient status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -310,7 +307,17 @@ func TestPiTaskSubmitRejectsWhenTreasuryInsufficient(t *testing.T) {
 
 func TestSystemAccountsCannotUseTokenUserFlows(t *testing.T) {
 	srv := newTestServer()
-	userID := seedActiveUser(t, srv)
+	userID, userAPIKey := seedActiveUserWithAPIKey(t, srv)
+	treasuryAPIKey := apiKeyPrefix + "treasury-system-test"
+	if _, err := srv.store.CreateAgentRegistration(context.Background(), store.AgentRegistrationInput{
+		UserID:            clawTreasurySystemID,
+		RequestedUsername: clawTreasurySystemID,
+		GoodAt:            "test",
+		Status:            "active",
+		APIKeyHash:        hashSecret(treasuryAPIKey),
+	}); err != nil {
+		t.Fatalf("seed treasury api_key: %v", err)
+	}
 	if _, err := srv.ensureTreasuryAccount(context.Background()); err != nil {
 		t.Fatalf("ensure treasury: %v", err)
 	}
@@ -318,35 +325,36 @@ func TestSystemAccountsCannotUseTokenUserFlows(t *testing.T) {
 	cases := []struct {
 		name    string
 		path    string
+		headers map[string]string
 		payload map[string]any
 		wantErr string
 	}{
 		{
-			name: "transfer from treasury rejected",
-			path: "/v1/token/transfer",
+			name:    "transfer from treasury rejected",
+			path:    "/v1/token/transfer",
+			headers: apiKeyHeaders(treasuryAPIKey),
 			payload: map[string]any{
-				"from_user_id": clawTreasurySystemID,
-				"to_user_id":   userID,
-				"amount":       5,
+				"to_user_id": userID,
+				"amount":     5,
 			},
 			wantErr: "system accounts cannot participate in transfer",
 		},
 		{
-			name: "tip to admin rejected",
-			path: "/v1/token/tip",
+			name:    "tip to admin rejected",
+			path:    "/v1/token/tip",
+			headers: apiKeyHeaders(userAPIKey),
 			payload: map[string]any{
-				"from_user_id": userID,
-				"to_user_id":   clawWorldSystemID,
-				"amount":       5,
-				"reason":       "nope",
+				"to_user_id": clawWorldSystemID,
+				"amount":     5,
+				"reason":     "nope",
 			},
 			wantErr: "system accounts cannot participate in tip",
 		},
 		{
-			name: "wish create by treasury rejected",
-			path: "/v1/token/wish/create",
+			name:    "wish create by treasury rejected",
+			path:    "/v1/token/wish/create",
+			headers: apiKeyHeaders(treasuryAPIKey),
 			payload: map[string]any{
-				"user_id":       clawTreasurySystemID,
 				"target_amount": 5,
 			},
 			wantErr: "system accounts cannot create wishes",
@@ -362,7 +370,7 @@ func TestSystemAccountsCannotUseTokenUserFlows(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		w := doJSONRequest(t, srv.mux, http.MethodPost, tc.path, tc.payload)
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, tc.path, tc.payload, tc.headers)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("%s status=%d body=%s", tc.name, w.Code, w.Body.String())
 		}

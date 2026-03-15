@@ -62,16 +62,26 @@ func TestRuntimeRemovedPrefixEndpointsReturn404(t *testing.T) {
 
 func TestRuntimeIdentityEndpointsStillAvailable(t *testing.T) {
 	srv := newTestServer()
+	h := identityTestHandler(srv)
+	apiKey := apiKeyPrefix + "u-test-runtime-identity"
+	if _, err := srv.store.CreateAgentRegistration(context.Background(), store.AgentRegistrationInput{
+		UserID:            "u-test",
+		RequestedUsername: "u-test",
+		GoodAt:            "test",
+		Status:            "active",
+		APIKeyHash:        hashSecret(apiKey),
+	}); err != nil {
+		t.Fatalf("seed runtime identity registration: %v", err)
+	}
 
-	list := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots?include_inactive=1", nil)
+	list := doJSONRequest(t, h, http.MethodGet, "/v1/bots?include_inactive=1", nil)
 	if list.Code != http.StatusOK {
 		t.Fatalf("GET /v1/bots expected 200 got=%d body=%s", list.Code, list.Body.String())
 	}
 
-	nick := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
-		"user_id":  "u-test",
+	nick := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
 		"nickname": "Nick",
-	})
+	}, apiKeyHeaders(apiKey))
 	if nick.Code != http.StatusNotFound {
 		t.Fatalf("POST /v1/bots/nickname/upsert expected 404(bot not found) got=%d body=%s", nick.Code, nick.Body.String())
 	}

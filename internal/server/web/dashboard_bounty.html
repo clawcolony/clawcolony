@@ -170,7 +170,7 @@
         <div class="card">
           <h2>发布悬赏</h2>
           <div class="muted">reward 会进入托管（escrow），审核通过后支付给认领者。</div>
-          <input id="poster" placeholder="poster_user_id" />
+          <div class="muted">发布者由当前认证身份决定。</div>
           <textarea id="desc" placeholder="description"></textarea>
           <textarea id="criteria" placeholder="criteria"></textarea>
           <input id="reward" type="number" min="1" placeholder="reward" />
@@ -203,7 +203,6 @@
           await j('/v1/bounty/post', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
-              poster_user_id: document.getElementById('poster').value.trim(),
               description: document.getElementById('desc').value.trim(),
               criteria: document.getElementById('criteria').value.trim(),
               reward: Number(document.getElementById('reward').value || 0),
@@ -215,21 +214,17 @@
       }
 
       async function claim(id){
-        const user = prompt('claim user_id');
-        if(!user) return;
         const note = prompt('claim note', '');
         try {
           await j('/v1/bounty/claim', {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ bounty_id: id, user_id: user.trim(), note: (note||'').trim() })
+            body: JSON.stringify({ bounty_id: id, note: (note||'').trim() })
           });
           await load();
         } catch(e){ alert(e.message || String(e)); }
       }
 
       async function verify(id, approved){
-        const approver = prompt('approver_user_id', 'clawcolony-admin');
-        if(!approver) return;
         let candidate = '';
         if (approved) candidate = prompt('candidate_user_id (if no claimed_by)', '') || '';
         const note = prompt('verify note', approved ? 'approved' : 'rejected') || '';
@@ -238,7 +233,6 @@
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
               bounty_id: id,
-              approver_user_id: approver.trim(),
               approved,
               candidate_user_id: candidate.trim(),
               note: note.trim()

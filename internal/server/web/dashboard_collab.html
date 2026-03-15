@@ -184,7 +184,7 @@
         <h3>操作台（可测）</h3>
         <div class="body">
           <div class="row">
-            <button class="ok" onclick="runSampleFlow()">一键三人样例流程</button>
+            <button class="ok" onclick="runSampleFlow()">预填三人样例成员</button>
             <button class="warn" onclick="loadDetail()">拉取详情</button>
           </div>
 
@@ -195,7 +195,7 @@
             <textarea id="goal">目标: 三个 agent 协作完成一个可评审交付，并正确走完 assign/start/submit/review/close。</textarea>
           </div>
           <div class="row">
-            <select id="proposer" style="flex:1"></select>
+            <div class="meta" style="flex:1">发起者由当前认证身份决定。</div>
             <button onclick="propose()">发起</button>
           </div>
 
@@ -203,7 +203,6 @@
             <input id="collabId" placeholder="collab_id" style="flex:1" />
           </div>
           <div class="row">
-            <select id="applyUser" style="flex:1"></select>
             <input id="pitch" placeholder="报名说明" style="flex:1" value="我能执行并提交可验收产物" />
             <button onclick="applyJoin()">报名</button>
           </div>
@@ -297,7 +296,7 @@
         const data = await j('/v1/bots?include_inactive=0');
         bots = filterDashboardBots(data.items || []);
         const options = bots.map(b => `<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join('');
-        for (const id of ['proposer','applyUser','orchestrator','executor','reviewer']) {
+        for (const id of ['orchestrator','executor','reviewer']) {
           const sel = document.getElementById(id);
           const prev = sel.value;
           sel.innerHTML = options;
@@ -328,12 +327,11 @@
       }
 
       async function propose(){
-        const proposer = document.getElementById('proposer').value;
         const title = document.getElementById('title').value.trim();
         const goal = document.getElementById('goal').value.trim();
         const data = await j('/v1/collab/propose', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({proposer_user_id: proposer, title, goal, complexity:'high', min_members:2, max_members:3})
+          body: JSON.stringify({title, goal, complexity:'high', min_members:2, max_members:3})
         });
         const id = data.item.collab_id;
         setStatus('proposed: ' + id);
@@ -342,13 +340,12 @@
 
       async function applyJoin(){
         const collabId = document.getElementById('collabId').value.trim();
-        const userId = document.getElementById('applyUser').value;
         const pitch = document.getElementById('pitch').value.trim();
         await j('/v1/collab/apply', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({collab_id: collabId, user_id: userId, pitch})
+          body: JSON.stringify({collab_id: collabId, pitch})
         });
-        setStatus('applied: ' + userId);
+        setStatus('applied');
         await loadDetail();
       }
 
@@ -361,7 +358,6 @@
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
             collab_id: collabId,
-            orchestrator_user_id: orchestrator,
             assignments: [
               {user_id: orchestrator, role: 'orchestrator'},
               {user_id: executor, role: 'executor'},
@@ -376,10 +372,9 @@
 
       async function startExec(){
         const collabId = document.getElementById('collabId').value.trim();
-        const orchestrator = document.getElementById('orchestrator').value;
         await j('/v1/collab/start', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({collab_id: collabId, orchestrator_user_id: orchestrator, status_or_summary_note: 'start'})
+          body: JSON.stringify({collab_id: collabId, status_or_summary_note: 'start'})
         });
         setStatus('executing');
         await loadDetail();
@@ -387,12 +382,11 @@
 
       async function submitArtifact(){
         const collabId = document.getElementById('collabId').value.trim();
-        const executor = document.getElementById('executor').value;
         const summary = document.getElementById('submitSummary').value.trim();
         const content = document.getElementById('submitContent').value.trim();
         const data = await j('/v1/collab/submit', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({collab_id: collabId, user_id: executor, role: 'executor', kind: 'code', summary, content})
+          body: JSON.stringify({collab_id: collabId, role: 'executor', kind: 'code', summary, content})
         });
         lastArtifactId = data.item.id;
         setStatus('submitted artifact=' + lastArtifactId);
@@ -401,7 +395,6 @@
 
       async function reviewLastArtifact(){
         const collabId = document.getElementById('collabId').value.trim();
-        const reviewer = document.getElementById('reviewer').value;
         if (!lastArtifactId) {
           const data = await j(`/v1/collab/artifacts?collab_id=${encodeURIComponent(collabId)}&limit=1`);
           const first = (data.items||[])[0];
@@ -410,7 +403,7 @@
         }
         await j('/v1/collab/review', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({collab_id: collabId, reviewer_user_id: reviewer, artifact_id: lastArtifactId, status: 'accepted', review_note: 'ok'})
+          body: JSON.stringify({collab_id: collabId, artifact_id: lastArtifactId, status: 'accepted', review_note: 'ok'})
         });
         setStatus('reviewed accepted artifact=' + lastArtifactId);
         await loadDetail();
@@ -418,10 +411,9 @@
 
       async function closeCollab(){
         const collabId = document.getElementById('collabId').value.trim();
-        const orchestrator = document.getElementById('orchestrator').value;
         await j('/v1/collab/close', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({collab_id: collabId, orchestrator_user_id: orchestrator, result: 'closed', status_or_summary_note: 'done'})
+          body: JSON.stringify({collab_id: collabId, result: 'closed', status_or_summary_note: 'done'})
         });
         setStatus('closed');
         await loadDetail();
@@ -446,23 +438,10 @@
         try {
           if (bots.length < 3) throw new Error('active users < 3');
           const a = bots[0].user_id, b = bots[1].user_id, c = bots[2].user_id;
-          document.getElementById('proposer').value = a;
           document.getElementById('orchestrator').value = a;
           document.getElementById('executor').value = b;
           document.getElementById('reviewer').value = c;
-          document.getElementById('applyUser').value = b;
-
-          await propose();
-          await applyJoin();
-          document.getElementById('applyUser').value = c;
-          await applyJoin();
-          await assignRoles();
-          await startExec();
-          await submitArtifact();
-          await reviewLastArtifact();
-          await closeCollab();
-          setStatus('sample flow done');
-          await loadCollabs();
+          setStatus('sample members prefilled; multi-agent flow now requires switching the current auth identity between steps.');
         } catch (e) {
           setStatus('sample flow failed: ' + (e.message || e), true);
         }

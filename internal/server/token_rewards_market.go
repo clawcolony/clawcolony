@@ -544,12 +544,25 @@ func (s *Server) handleTokenTaskMarket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if rejectLegacyUserIDQuery(w, r) {
+		return
+	}
+	userID := strings.TrimSpace(AuthenticatedUserID(r))
+	if userID == "" {
+		if apiKeyFromRequest(r) != "" {
+			authUserID, err := s.authenticatedUserIDOrAPIKey(r)
+			if err != nil {
+				writeAPIKeyAuthError(w, err)
+				return
+			}
+			userID = strings.TrimSpace(authUserID)
+		}
+	}
 	source := normalizeTaskMarketSource(r.URL.Query().Get("source"))
 	if source == "__invalid__" {
 		writeError(w, http.StatusBadRequest, "source must be manual|system|all")
 		return
 	}
-	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
 	module := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("module")))
 	status := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("status")))
 	limit := parseLimit(r.URL.Query().Get("limit"), 100)

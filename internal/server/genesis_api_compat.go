@@ -23,7 +23,6 @@ const (
 )
 
 type apiGovProposeRequest struct {
-	UserID                  string `json:"user_id"`
 	Title                   string `json:"title"`
 	Content                 string `json:"content"`
 	Type                    string `json:"type"`
@@ -34,7 +33,6 @@ type apiGovProposeRequest struct {
 }
 
 type apiGovVoteRequest struct {
-	UserID     string `json:"user_id"`
 	ProposalID int64  `json:"proposal_id"`
 	Choice     string `json:"choice"`
 	Reason     string `json:"reason"`
@@ -42,19 +40,16 @@ type apiGovVoteRequest struct {
 }
 
 type apiGovCosignRequest struct {
-	UserID     string `json:"user_id"`
 	ProposalID int64  `json:"proposal_id"`
 }
 
 type apiLibraryPublishRequest struct {
-	UserID   string `json:"user_id"`
 	Title    string `json:"title"`
 	Content  string `json:"content"`
 	Category string `json:"category"`
 }
 
 type apiLifeMetamorphoseRequest struct {
-	UserID  string         `json:"user_id"`
 	Changes map[string]any `json:"changes"`
 }
 
@@ -200,21 +195,21 @@ func (s *Server) handleAPIGovPropose(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if _, err := s.authenticatedUserIDOrAPIKey(r); err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req apiGovProposeRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
 	req.Title = strings.TrimSpace(req.Title)
 	req.Content = strings.TrimSpace(req.Content)
 	req.Type = strings.TrimSpace(req.Type)
 	req.Reason = strings.TrimSpace(req.Reason)
-	if req.UserID == "" || req.Title == "" || req.Content == "" {
-		writeError(w, http.StatusBadRequest, "user_id, title, content are required")
+	if req.Title == "" || req.Content == "" {
+		writeError(w, http.StatusBadRequest, "title and content are required")
 		return
 	}
 	section := "governance"
@@ -228,7 +223,6 @@ func (s *Server) handleAPIGovPropose(w http.ResponseWriter, r *http.Request) {
 		reason = "governance proposal"
 	}
 	payload := kbProposalCreateRequest{
-		ProposerUserID:          req.UserID,
 		Title:                   req.Title,
 		Reason:                  reason,
 		VoteThresholdPct:        req.VoteThresholdPct,
@@ -250,18 +244,19 @@ func (s *Server) handleAPIGovVote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req apiGovVoteRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
 	req.Reason = strings.TrimSpace(req.Reason)
-	if req.UserID == "" || req.ProposalID <= 0 {
-		writeError(w, http.StatusBadRequest, "user_id and proposal_id are required")
+	if req.ProposalID <= 0 {
+		writeError(w, http.StatusBadRequest, "proposal_id is required")
 		return
 	}
 	choice, ok := normalizeGovChoice(req.Choice)
@@ -285,13 +280,13 @@ func (s *Server) handleAPIGovVote(w http.ResponseWriter, r *http.Request) {
 	acks, _ := s.store.ListKBAcks(r.Context(), req.ProposalID, revisionID)
 	hasAck := false
 	for _, a := range acks {
-		if strings.TrimSpace(a.UserID) == req.UserID {
+		if strings.TrimSpace(a.UserID) == userID {
 			hasAck = true
 			break
 		}
 	}
 	if !hasAck {
-		if _, err := s.store.AckKBProposal(r.Context(), req.ProposalID, revisionID, req.UserID); err != nil {
+		if _, err := s.store.AckKBProposal(r.Context(), req.ProposalID, revisionID, userID); err != nil {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
@@ -299,7 +294,6 @@ func (s *Server) handleAPIGovVote(w http.ResponseWriter, r *http.Request) {
 	payload := kbProposalVoteRequest{
 		ProposalID: req.ProposalID,
 		RevisionID: revisionID,
-		UserID:     req.UserID,
 		Vote:       choice,
 		Reason:     req.Reason,
 	}
@@ -311,22 +305,21 @@ func (s *Server) handleAPIGovCosign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	if _, err := s.authenticatedUserIDOrAPIKey(r); err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req apiGovCosignRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
-	if req.UserID == "" || req.ProposalID <= 0 {
-		writeError(w, http.StatusBadRequest, "user_id and proposal_id are required")
+	if req.ProposalID <= 0 {
+		writeError(w, http.StatusBadRequest, "proposal_id is required")
 		return
 	}
 	s.proxyJSONToHandler(w, r, s.handleKBProposalEnroll, kbProposalEnrollRequest{
 		ProposalID: req.ProposalID,
-		UserID:     req.UserID,
 	})
 }
 
@@ -384,26 +377,27 @@ func (s *Server) handleAPILibraryPublish(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req apiLibraryPublishRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
 	req.Title = strings.TrimSpace(req.Title)
 	req.Content = strings.TrimSpace(req.Content)
 	req.Category = strings.TrimSpace(req.Category)
-	if req.UserID == "" || req.Title == "" || req.Content == "" {
-		writeError(w, http.StatusBadRequest, "user_id, title, content are required")
+	if req.Title == "" || req.Content == "" {
+		writeError(w, http.StatusBadRequest, "title and content are required")
 		return
 	}
 	if req.Category == "" {
 		req.Category = "general"
 	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -420,7 +414,7 @@ func (s *Server) handleAPILibraryPublish(w http.ResponseWriter, r *http.Request)
 		Title:     req.Title,
 		Content:   req.Content,
 		Category:  req.Category,
-		AuthorID:  req.UserID,
+		AuthorID:  userID,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -491,24 +485,21 @@ func (s *Server) handleAPILifeMetamorphose(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req apiLifeMetamorphoseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.UserID == "" {
-		req.UserID = queryUserID(r)
-	}
-	if req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
 	if len(req.Changes) == 0 {
 		writeError(w, http.StatusBadRequest, "changes is required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -522,7 +513,7 @@ func (s *Server) handleAPILifeMetamorphose(w http.ResponseWriter, r *http.Reques
 	}
 	item := lifeMetamorphoseEvent{
 		ID:        state.NextID,
-		UserID:    req.UserID,
+		UserID:    userID,
 		Changes:   req.Changes,
 		CreatedAt: now,
 	}
@@ -535,7 +526,7 @@ func (s *Server) handleAPILifeMetamorphose(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = s.appendChronicleEntryLocked(r.Context(), 0, "life.metamorphose", fmt.Sprintf("%s submitted metamorphose changes", req.UserID))
+	_ = s.appendChronicleEntryLocked(r.Context(), 0, "life.metamorphose", fmt.Sprintf("%s submitted metamorphose changes", userID))
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": item})
 }
 

@@ -215,10 +215,7 @@
 
           <div class="title" style="margin-top:12px;">快速操作</div>
           <div class="row">
-            <select id="uid" style="flex:1;">
-              <option value="">请选择 user_id</option>
-            </select>
-            <input id="pid" placeholder="proposal_id" style="width:120px;" />
+            <input id="pid" placeholder="proposal_id" style="flex:1;" />
           </div>
           <div class="row">
             <button onclick="enroll()">报名</button>
@@ -238,10 +235,7 @@
           <div class="card">
           <div class="title">创建 Proposal</div>
           <div class="row">
-            <select id="c_uid" style="flex:1;">
-              <option value="">请选择 proposer_user_id</option>
-            </select>
-            <input id="c_title" placeholder="title" style="flex:2;" />
+            <input id="c_title" placeholder="title" style="flex:1;" />
           </div>
             <div class="row">
               <input id="c_reason" placeholder="reason" style="flex:2;" />
@@ -498,7 +492,6 @@
 
       async function createProposal(){
         const payload = {
-          proposer_user_id: $("c_uid").value.trim(),
           title: $("c_title").value.trim(),
           reason: $("c_reason").value.trim(),
           vote_threshold_pct: Number($("c_threshold").value || 80),
@@ -522,31 +515,27 @@
 
       async function enroll(){
         const proposal_id = Number($("pid").value.trim() || 0);
-        const user_id = $("uid").value.trim();
-        await j("/v1/kb/proposals/enroll", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id, user_id }) });
+        await j("/v1/kb/proposals/enroll", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id }) });
         await loadDetail();
       }
 
       async function startVote(){
         const proposal_id = Number($("pid").value.trim() || 0);
-        const user_id = $("uid").value.trim();
-        await j("/v1/kb/proposals/start-vote", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id, user_id }) });
+        await j("/v1/kb/proposals/start-vote", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id }) });
         await loadDetail();
       }
 
       async function castVote(){
         const proposal_id = Number($("pid").value.trim() || 0);
-        const user_id = $("uid").value.trim();
         const vote = $("vote").value.trim();
         const reason = $("voteReason").value.trim();
-        await j("/v1/kb/proposals/vote", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id, user_id, vote, reason }) });
+        await j("/v1/kb/proposals/vote", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id, vote, reason }) });
         await loadDetail();
       }
 
       async function applyProposal(){
         const proposal_id = Number($("pid").value.trim() || 0);
-        const user_id = $("uid").value.trim();
-        await j("/v1/kb/proposals/apply", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id, user_id }) });
+        await j("/v1/kb/proposals/apply", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id }) });
         await loadDetail();
       }
 
@@ -560,14 +549,6 @@
       async function loadUsers(){
         const data = await j("/v1/bots?include_inactive=0");
         activeBots = filterDashboardBots(data.items || []);
-        const activeUsers = activeBots.map(x => x.user_id).filter(Boolean);
-        const uidPrev = $("uid").value;
-        const cUidPrev = $("c_uid").value;
-        const opts = '<option value="">请选择 user_id</option>' + activeBots.map(b => `<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
-        $("uid").innerHTML = opts;
-        $("c_uid").innerHTML = opts.replace("请选择 user_id", "请选择 proposer_user_id");
-        $("uid").value = activeUsers.includes(uidPrev) ? uidPrev : (activeUsers[0] || "");
-        $("c_uid").value = activeUsers.includes(cUidPrev) ? cUidPrev : ($("uid").value || "");
       }
 
       setInterval(() => {

@@ -228,21 +228,20 @@ func TestAPIColonyChronicleDenoisesRoutineWorldEntriesAndKeepsMeaningfulTransiti
 func TestAPIColonyChronicleIncludesGovernanceStoryEvents(t *testing.T) {
 	srv := newTestServer()
 	ctx := context.Background()
-	reporterID := seedActiveUser(t, srv)
+	reporterID, reporterAPIKey := seedActiveUserWithAPIKey(t, srv)
 	targetID := seedActiveUser(t, srv)
-	judgeID := seedActiveUser(t, srv)
+	judgeID, judgeAPIKey := seedActiveUserWithAPIKey(t, srv)
 	if _, err := srv.store.UpdateBotNickname(ctx, targetID, "小壳"); err != nil {
 		t.Fatalf("set target nickname: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/report", map[string]any{
-		"reporter_user_id": reporterID,
-		"target_user_id":   targetID,
-		"reason":           "repeated abuse",
-		"evidence":         "trace-1",
-	})
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/report", map[string]any{
+		"target_user_id": targetID,
+		"reason":         "repeated abuse",
+		"evidence":       "trace-1",
+	}, apiKeyHeaders(reporterAPIKey))
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("governance report status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("governance report status=%d reporter=%s body=%s", w.Code, reporterID, w.Body.String())
 	}
 	var reportResp struct {
 		Item governanceReportItem `json:"item"`
@@ -251,12 +250,11 @@ func TestAPIColonyChronicleIncludesGovernanceStoryEvents(t *testing.T) {
 		t.Fatalf("decode governance report response: %v", err)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/cases/open", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/cases/open", map[string]any{
 		"report_id": reportResp.Item.ReportID,
-		"opened_by": judgeID,
-	})
+	}, apiKeyHeaders(judgeAPIKey))
 	if w.Code != http.StatusAccepted {
-		t.Fatalf("governance case open status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("governance case open status=%d judge=%s body=%s", w.Code, judgeID, w.Body.String())
 	}
 	var caseResp struct {
 		Item disciplineCaseItem `json:"item"`
@@ -265,12 +263,11 @@ func TestAPIColonyChronicleIncludesGovernanceStoryEvents(t *testing.T) {
 		t.Fatalf("decode governance case response: %v", err)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/governance/cases/verdict", map[string]any{
-		"case_id":       caseResp.Item.CaseID,
-		"judge_user_id": judgeID,
-		"verdict":       "banish",
-		"note":          "confirmed",
-	})
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/cases/verdict", map[string]any{
+		"case_id": caseResp.Item.CaseID,
+		"verdict": "banish",
+		"note":    "confirmed",
+	}, apiKeyHeaders(judgeAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("governance verdict status=%d body=%s", w.Code, w.Body.String())
 	}

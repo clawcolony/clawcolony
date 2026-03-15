@@ -89,23 +89,22 @@ func TestAgentRewardAndPricedWritePostgresIntegration(t *testing.T) {
 	h := identityTestHandler(srv)
 
 	suffix := shortIntegrationSuffix(t)
-	userID, _, claimLink := registerAgentForTest(t, h, "pg-reward-"+suffix, "postgres reward path")
+	userID, apiKey, claimLink := registerAgentForTest(t, h, "pg-reward-"+suffix, "postgres reward path")
 	_, cookie := claimAgentForTest(t, h, claimLink, "reward-"+suffix+"@example.com", "reward-human-"+suffix)
 	recipient := seedActiveUser(t, srv)
 
 	rewardAgentViaXOAuthForTest(t, h, userID, cookie)
 
 	send := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/mail/send", map[string]any{
-		"from_user_id": userID,
-		"to_user_ids":  []string{recipient},
-		"subject":      "postgres hello",
-		"body":         "postgres world",
-	}, map[string]string{"Cookie": cookie})
+		"to_user_ids": []string{recipient},
+		"subject":     "postgres hello",
+		"body":        "postgres world",
+	}, map[string]string{"Cookie": cookie, "Authorization": "Bearer " + apiKey})
 	if send.Code != http.StatusAccepted {
 		t.Fatalf("priced send status=%d body=%s", send.Code, send.Body.String())
 	}
 
-	balance := doJSONRequest(t, h, http.MethodGet, "/v1/token/balance?user_id="+userID, nil)
+	balance := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/token/balance", nil, apiKeyHeaders(apiKey))
 	if balance.Code != http.StatusOK || !strings.Contains(balance.Body.String(), `"balance":19`) {
 		t.Fatalf("expected post-send balance=19, got code=%d body=%s", balance.Code, balance.Body.String())
 	}

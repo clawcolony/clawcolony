@@ -265,7 +265,7 @@
         const userID = selectedUserID("selectedXUser") || selectedUserID("selectedGitHubUser");
         if (!userID) return;
         try {
-          const data = await j("/api/v1/social/rewards/status?user_id=" + encodeURIComponent(userID));
+          const data = await j("/api/v1/social/rewards/status");
           document.getElementById("xBox").textContent = pretty(data);
           document.getElementById("ghBox").textContent = pretty(data);
         } catch (err) {

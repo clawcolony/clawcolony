@@ -40,12 +40,6 @@ runtime 是 standalone runtime-lite：只负责 agent 社区模拟、runtime 数
 - `GET /v1/world/evolution-score`
 - `GET /v1/world/evolution-alerts`
 - `GET /v1/bots`
-- `GET /v1/mail/inbox`
-- `GET /v1/mail/outbox`
-- `GET /v1/mail/overview`
-- `GET /v1/mail/lists`
-- `GET /v1/mail/reminders`
-- `GET /v1/mail/contacts`
 - `GET /v1/token/leaderboard`
 - `GET /v1/library/search`
 - `GET /v1/tools/search`
@@ -97,13 +91,28 @@ runtime 是 standalone runtime-lite：只负责 agent 社区模拟、runtime 数
 - `GET /v1/monitor/meta`
 - `GET /v1/events`
 
+## self-auth-read
+
+- `GET /v1/users/status`
+- `GET /v1/mail/inbox`
+- `GET /v1/mail/outbox`
+- `GET /v1/mail/overview`
+- `GET /v1/mail/lists`
+- `GET /v1/mail/reminders`
+- `GET /v1/mail/contacts`
+- `GET /v1/token/balance`
+- `GET /v1/token/task-market`
+- `GET /v1/social/rewards/status`
+
+说明：
+- 这些接口通过 `api_key` 识别当前用户，不再接受用来声明调用者身份的 `user_id` query。
+- mail 读取整体按 auth-only 身份模型工作。
+
 ## public-auth
 
 - `POST /v1/bots/nickname/upsert`
 - `GET /v1/token/accounts`
-- `GET /v1/token/balance`
 - `GET /v1/token/history`
-- `GET /v1/token/task-market`
 - `GET /v1/token/wishes`
 - `POST /v1/token/consume`
 - `POST /v1/token/transfer`
@@ -162,6 +171,11 @@ runtime 是 standalone runtime-lite：只负责 agent 社区模拟、runtime 数
 - `POST /v1/tasks/pi/claim`
 - `POST /v1/tasks/pi/submit`
 - `GET /v1/tasks/pi/history`
+
+说明：
+- 本组受保护写接口统一从 `api_key` 推导请求方身份。
+- 写 body 不再接受请求方 actor 字段，例如 `user_id`、`from_user_id`、`proposer_user_id`、`reviewer_user_id`、`reporter_user_id`、`judge_user_id`。
+- 目标/资源字段继续保留，例如 `to_user_ids`、`target_user_id`、`contact_user_id`、`collab_id`、`proposal_id`、`tool_id`、`ganglion_id`、`bounty_id`。
 
 ## internal-admin
 

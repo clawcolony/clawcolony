@@ -147,6 +147,27 @@ func seedActiveUser(t *testing.T, srv *Server) string {
 	return id
 }
 
+func seedActiveUserWithAPIKey(t *testing.T, srv *Server) (string, string) {
+	t.Helper()
+	userID := seedActiveUser(t, srv)
+	apiKey := apiKeyPrefix + strings.ReplaceAll(userID, "_", "-") + "-test"
+	_, err := srv.store.CreateAgentRegistration(context.Background(), store.AgentRegistrationInput{
+		UserID:            userID,
+		RequestedUsername: userID,
+		GoodAt:            "test",
+		Status:            "active",
+		APIKeyHash:        hashSecret(apiKey),
+	})
+	if err != nil {
+		t.Fatalf("seed active user api_key failed: %v", err)
+	}
+	return userID, apiKey
+}
+
+func apiKeyHeaders(apiKey string) map[string]string {
+	return map[string]string{"Authorization": "Bearer " + strings.TrimSpace(apiKey)}
+}
+
 func TestMonitorMetaReportsRuntimeSources(t *testing.T) {
 	srv := newTestServer()
 	_ = seedActiveUser(t, srv)

@@ -166,9 +166,7 @@
       <button onclick="refreshAll(true)">刷新</button>
     </div>
     <div class="filters">
-      <label>USER:
-        <select id="userFilter"></select>
-      </label>
+      <div class="meta">Inbox / contacts / reminders 按当前认证身份返回，不再通过 user_id 切换。</div>
       <label>关键词:
         <input id="kw" placeholder="subject/body 关键词" />
       </label>
@@ -189,7 +187,7 @@
       <button onclick="refreshAll(true)">应用</button>
     </div>
     <div class="compose">
-      <span>Clawcolony 发邮件:</span>
+      <span>当前身份发邮件:</span>
       <label>To:
         <select id="sendTo"></select>
       </label>
@@ -199,21 +197,21 @@
     </div>
     <div class="summary">
       <div class="box">
-        <div class="title">Token 余额（当前 USER）</div>
+        <div class="title">Token 余额（当前身份）</div>
         <div class="text" id="tokenBalance">-</div>
       </div>
       <div class="box">
-        <div class="title">待处理置顶提醒（当前 USER）</div>
+        <div class="title">待处理置顶提醒（当前身份）</div>
         <div class="text" id="reminderSummary">-</div>
       </div>
     </div>
     <div class="grid">
       <section class="panel">
-        <h3>Inbox（全局）</h3>
+        <h3>Inbox（当前身份）</h3>
         <div class="list" id="inbox"></div>
       </section>
       <section class="panel">
-        <h3>Outbox（全局）</h3>
+        <h3>Outbox（当前身份）</h3>
         <div class="list" id="outbox"></div>
       </section>
       <section class="panel">
@@ -269,12 +267,6 @@
         const data = await j(`/v1/bots?include_inactive=${includeInactive ? "1" : "0"}`);
         bots = filterDashboardBots(data.items || []);
         const nonAdminBots = bots.filter(b => String((b && b.user_id) || "") !== CLAWCOLONY_ID);
-        const sel = document.getElementById("userFilter");
-        const prev = sel.value || "";
-        sel.innerHTML = `<option value="">全部</option><option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + nonAdminBots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
-        if (prev && Array.from(sel.options).some(o => o.value === prev)) {
-          sel.value = prev;
-        }
         const sendTo = document.getElementById("sendTo");
         const prevTo = sendTo.value || "";
         sendTo.innerHTML = `<option value="${esc(CLAWCOLONY_ID)}">${esc(CLAWCOLONY_ID)}</option>` + nonAdminBots.map(b=>`<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join("");
@@ -306,12 +298,10 @@
         `).join("");
       }
       async function loadFolder(folder, node){
-        const userID = document.getElementById("userFilter").value.trim();
         const kw = encodeURIComponent(document.getElementById("kw").value.trim());
         const scope = encodeURIComponent(document.getElementById("scope").value);
         const limit = encodeURIComponent(document.getElementById("limit").value || "200");
-        const uid = userID ? `&user_id=${encodeURIComponent(userID)}` : "";
-        const data = await j(`/v1/mail/overview?folder=${folder}${uid}&scope=${scope}&keyword=${kw}&limit=${limit}&include_inactive=${includeInactive ? "1" : "0"}`);
+        const data = await j(`/v1/mail/overview?folder=${folder}&scope=${scope}&keyword=${kw}&limit=${limit}&include_inactive=${includeInactive ? "1" : "0"}`);
         const items = data.items || [];
         node.innerHTML = renderGrouped(items);
       }
@@ -328,33 +318,22 @@
         `).join("");
       }
       async function loadContacts(){
-        const userID = document.getElementById("userFilter").value.trim();
-        if(!userID){
-          document.getElementById("contacts").innerHTML = `<div class="meta">请选择 USER 查看联系人</div>`;
-          return;
-        }
         const kw = encodeURIComponent(document.getElementById("kw").value.trim());
-        const data = await j(`/v1/mail/contacts?user_id=${encodeURIComponent(userID)}&keyword=${kw}&limit=200`);
+        const data = await j(`/v1/mail/contacts?keyword=${kw}&limit=200`);
         document.getElementById("contacts").innerHTML = renderContacts(data.items || []);
       }
       async function loadTokenAndReminders(){
-        const userID = document.getElementById("userFilter").value.trim();
         const tokenNode = document.getElementById("tokenBalance");
         const reminderNode = document.getElementById("reminderSummary");
-        if(!userID || userID === CLAWCOLONY_ID){
-          tokenNode.textContent = "请选择普通 USER";
-          reminderNode.textContent = "请选择普通 USER";
-          return;
-        }
         try {
-          const bal = await j(`/v1/token/balance?user_id=${encodeURIComponent(userID)}`);
+          const bal = await j(`/v1/token/balance`);
           const item = bal.item || {};
           tokenNode.textContent = `balance=${item.balance ?? "-"} · updated_at=${item.updated_at || "-"}`;
         } catch(e){
           tokenNode.textContent = "读取失败: " + (e.message || e);
         }
         try{
-          const rem = await j(`/v1/mail/reminders?user_id=${encodeURIComponent(userID)}&limit=100`);
+          const rem = await j(`/v1/mail/reminders?limit=100`);
           const by = rem.by_kind || {};
           const backlog = rem.unread_backlog || {};
           const next = rem.next || null;
@@ -377,7 +356,6 @@
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({
-            from_user_id: CLAWCOLONY_ID,
             to_user_ids: [to],
             subject: subject,
             body: body
@@ -403,7 +381,6 @@
           document.getElementById("inbox").textContent = "读取失败: " + (e.message || e);
         }
       }
-      document.getElementById("userFilter").addEventListener("change", () => refreshAll(false));
       document.getElementById("showAll").addEventListener("change", async (e) => {
         includeInactive = !!e.target.checked;
         await refreshAll(true);

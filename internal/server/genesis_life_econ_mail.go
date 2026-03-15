@@ -16,7 +16,6 @@ import (
 )
 
 type mailListCreateRequest struct {
-	OwnerUserID  string   `json:"owner_user_id"`
 	Name         string   `json:"name"`
 	Description  string   `json:"description"`
 	InitialUsers []string `json:"initial_users"`
@@ -24,32 +23,27 @@ type mailListCreateRequest struct {
 
 type mailListJoinLeaveRequest struct {
 	ListID string `json:"list_id"`
-	UserID string `json:"user_id"`
 }
 
 type mailSendListRequest struct {
-	FromUserID string `json:"from_user_id"`
-	ListID     string `json:"list_id"`
-	Subject    string `json:"subject"`
-	Body       string `json:"body"`
+	ListID  string `json:"list_id"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
 }
 
 type tokenTransferRequest struct {
-	FromUserID string `json:"from_user_id"`
-	ToUserID   string `json:"to_user_id"`
-	Amount     int64  `json:"amount"`
-	Memo       string `json:"memo"`
+	ToUserID string `json:"to_user_id"`
+	Amount   int64  `json:"amount"`
+	Memo     string `json:"memo"`
 }
 
 type tokenTipRequest struct {
-	FromUserID string `json:"from_user_id"`
-	ToUserID   string `json:"to_user_id"`
-	Amount     int64  `json:"amount"`
-	Reason     string `json:"reason"`
+	ToUserID string `json:"to_user_id"`
+	Amount   int64  `json:"amount"`
+	Reason   string `json:"reason"`
 }
 
 type tokenWishCreateRequest struct {
-	UserID       string `json:"user_id"`
 	Title        string `json:"title"`
 	Reason       string `json:"reason"`
 	TargetAmount int64  `json:"target_amount"`
@@ -57,46 +51,39 @@ type tokenWishCreateRequest struct {
 
 type tokenWishFulfillRequest struct {
 	WishID         string `json:"wish_id"`
-	FulfilledBy    string `json:"fulfilled_by"`
 	GrantedAmount  int64  `json:"granted_amount"`
 	FulfillComment string `json:"fulfill_comment"`
 }
 
 type lifeHibernateRequest struct {
-	UserID string `json:"user_id"`
 	Reason string `json:"reason"`
 }
 
 type lifeWakeRequest struct {
-	UserID      string `json:"user_id"`
-	WakerUserID string `json:"waker_user_id"`
-	Reason      string `json:"reason"`
+	UserID string `json:"user_id"`
+	Reason string `json:"reason"`
 }
 
 type lifeSetWillRequest struct {
-	UserID        string                `json:"user_id"`
 	Note          string                `json:"note"`
 	Beneficiaries []lifeWillBeneficiary `json:"beneficiaries"`
 	ToolHeirs     []string              `json:"tool_heirs"`
 }
 
 type bountyPostRequest struct {
-	PosterUserID string `json:"poster_user_id"`
-	Description  string `json:"description"`
-	Reward       int64  `json:"reward"`
-	Criteria     string `json:"criteria"`
-	Deadline     string `json:"deadline"`
+	Description string `json:"description"`
+	Reward      int64  `json:"reward"`
+	Criteria    string `json:"criteria"`
+	Deadline    string `json:"deadline"`
 }
 
 type bountyClaimRequest struct {
 	BountyID int64  `json:"bounty_id"`
-	UserID   string `json:"user_id"`
 	Note     string `json:"note"`
 }
 
 type bountyVerifyRequest struct {
 	BountyID        int64  `json:"bounty_id"`
-	ApproverUserID  string `json:"approver_user_id"`
 	Approved        bool   `json:"approved"`
 	CandidateUserID string `json:"candidate_user_id"`
 	Note            string `json:"note"`
@@ -162,8 +149,11 @@ func (s *Server) handleMailLists(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, ok := s.requireAPIKeyUserID(w, r)
+	if !ok {
+		return
+	}
 	keyword := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("keyword")))
-	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
 	limit := parseLimit(r.URL.Query().Get("limit"), 200)
 
 	genesisStateMu.Lock()
@@ -209,29 +199,33 @@ func (s *Server) handleMailListCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	ownerUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req mailListCreateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.OwnerUserID = strings.TrimSpace(req.OwnerUserID)
 	req.Name = strings.TrimSpace(req.Name)
 	req.Description = strings.TrimSpace(req.Description)
-	if req.OwnerUserID == "" || req.Name == "" {
-		writeError(w, http.StatusBadRequest, "owner_user_id and name are required")
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.OwnerUserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), ownerUserID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	members := normalizeUniqueUsers(append(req.InitialUsers, req.OwnerUserID))
+	members := normalizeUniqueUsers(append(req.InitialUsers, ownerUserID))
 	now := time.Now().UTC()
 	item := mailingList{
 		ListID:      newMailListID(),
 		Name:        req.Name,
 		Description: req.Description,
-		OwnerUserID: req.OwnerUserID,
+		OwnerUserID: ownerUserID,
 		Members:     members,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -256,18 +250,22 @@ func (s *Server) handleMailListJoin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req mailListJoinLeaveRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.ListID = strings.TrimSpace(req.ListID)
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.ListID == "" || req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "list_id and user_id are required")
+	if req.ListID == "" {
+		writeError(w, http.StatusBadRequest, "list_id is required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -282,7 +280,7 @@ func (s *Server) handleMailListJoin(w http.ResponseWriter, r *http.Request) {
 		if state.Lists[i].ListID != req.ListID {
 			continue
 		}
-		state.Lists[i].Members = normalizeUniqueUsers(append(state.Lists[i].Members, req.UserID))
+		state.Lists[i].Members = normalizeUniqueUsers(append(state.Lists[i].Members, userID))
 		state.Lists[i].UpdatedAt = time.Now().UTC()
 		if err := s.saveMailingListState(r.Context(), state); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -299,15 +297,19 @@ func (s *Server) handleMailListLeave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req mailListJoinLeaveRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.ListID = strings.TrimSpace(req.ListID)
-	req.UserID = strings.TrimSpace(req.UserID)
-	if req.ListID == "" || req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "list_id and user_id are required")
+	if req.ListID == "" {
+		writeError(w, http.StatusBadRequest, "list_id is required")
 		return
 	}
 	genesisStateMu.Lock()
@@ -324,7 +326,7 @@ func (s *Server) handleMailListLeave(w http.ResponseWriter, r *http.Request) {
 		before := state.Lists[i].Members
 		after := make([]string, 0, len(before))
 		for _, m := range before {
-			if m == req.UserID {
+			if m == userID {
 				continue
 			}
 			after = append(after, m)
@@ -346,24 +348,28 @@ func (s *Server) handleMailSendList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	fromUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req mailSendListRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.FromUserID = strings.TrimSpace(req.FromUserID)
 	req.ListID = strings.TrimSpace(req.ListID)
 	req.Subject = strings.TrimSpace(req.Subject)
 	req.Body = strings.TrimSpace(req.Body)
-	if req.FromUserID == "" || req.ListID == "" {
-		writeError(w, http.StatusBadRequest, "from_user_id and list_id are required")
+	if req.ListID == "" {
+		writeError(w, http.StatusBadRequest, "list_id is required")
 		return
 	}
 	if req.Subject == "" && req.Body == "" {
 		writeError(w, http.StatusBadRequest, "subject or body is required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.FromUserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), fromUserID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -391,7 +397,7 @@ func (s *Server) handleMailSendList(w http.ResponseWriter, r *http.Request) {
 	to := make([]string, 0, len(listItem.Members))
 	for _, m := range listItem.Members {
 		m = strings.TrimSpace(m)
-		if m == "" || m == req.FromUserID {
+		if m == "" || m == fromUserID {
 			continue
 		}
 		to = append(to, m)
@@ -410,19 +416,19 @@ func (s *Server) handleMailSendList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"item": map[string]any{"list_id": req.ListID, "to_count": 0}})
 		return
 	}
-	item, err := s.store.SendMail(r.Context(), req.FromUserID, to, req.Subject, req.Body)
+	item, err := s.store.SendMail(r.Context(), fromUserID, to, req.Subject, req.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	units := int64((utf8.RuneCountInString(req.Subject) + utf8.RuneCountInString(req.Body)) * len(to))
-	s.appendCommCostEvent(r.Context(), req.FromUserID, "comm.mail.send_list", units, map[string]any{
+	s.appendCommCostEvent(r.Context(), fromUserID, "comm.mail.send_list", units, map[string]any{
 		"list_id":     req.ListID,
 		"to_count":    len(to),
 		"subject_len": utf8.RuneCountInString(req.Subject),
 		"body_len":    utf8.RuneCountInString(req.Body),
 	})
-	s.pushUnreadMailHint(r.Context(), req.FromUserID, to, req.Subject)
+	s.pushUnreadMailHint(r.Context(), fromUserID, to, req.Subject)
 	writeJSON(w, http.StatusAccepted, map[string]any{"item": item, "list": listItem})
 }
 
@@ -431,23 +437,27 @@ func (s *Server) handleTokenTransfer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	fromUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req tokenTransferRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.FromUserID = strings.TrimSpace(req.FromUserID)
 	req.ToUserID = strings.TrimSpace(req.ToUserID)
 	req.Memo = strings.TrimSpace(req.Memo)
-	if req.FromUserID == "" || req.ToUserID == "" {
-		writeError(w, http.StatusBadRequest, "from_user_id and to_user_id are required")
+	if req.ToUserID == "" {
+		writeError(w, http.StatusBadRequest, "to_user_id is required")
 		return
 	}
-	if isSystemTokenUserID(req.FromUserID) || isSystemTokenUserID(req.ToUserID) {
+	if isSystemTokenUserID(fromUserID) || isSystemTokenUserID(req.ToUserID) {
 		writeError(w, http.StatusBadRequest, "system accounts cannot participate in transfer")
 		return
 	}
-	if req.FromUserID == req.ToUserID {
+	if fromUserID == req.ToUserID {
 		writeError(w, http.StatusBadRequest, "from_user_id and to_user_id must differ")
 		return
 	}
@@ -455,7 +465,7 @@ func (s *Server) handleTokenTransfer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "amount must be > 0")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.FromUserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), fromUserID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -463,7 +473,7 @@ func (s *Server) handleTokenTransfer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "to_user_id not found")
 		return
 	}
-	debit, err := s.store.Consume(r.Context(), req.FromUserID, req.Amount)
+	debit, err := s.store.Consume(r.Context(), fromUserID, req.Amount)
 	if err != nil {
 		if err == store.ErrInsufficientBalance {
 			writeError(w, http.StatusBadRequest, "insufficient balance")
@@ -474,12 +484,12 @@ func (s *Server) handleTokenTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 	credit, err := s.store.Recharge(r.Context(), req.ToUserID, req.Amount)
 	if err != nil {
-		_, _ = s.store.Recharge(r.Context(), req.FromUserID, req.Amount)
+		_, _ = s.store.Recharge(r.Context(), fromUserID, req.Amount)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	meta, _ := json.Marshal(map[string]any{"to_user_id": req.ToUserID, "memo": req.Memo})
-	_, _ = s.store.AppendCostEvent(r.Context(), store.CostEvent{UserID: req.FromUserID, CostType: "econ.transfer.out", Amount: req.Amount, Units: 1, MetaJSON: string(meta)})
+	_, _ = s.store.AppendCostEvent(r.Context(), store.CostEvent{UserID: fromUserID, CostType: "econ.transfer.out", Amount: req.Amount, Units: 1, MetaJSON: string(meta)})
 	_, _ = s.store.AppendCostEvent(r.Context(), store.CostEvent{UserID: req.ToUserID, CostType: "econ.transfer.in", Amount: req.Amount, Units: 1, MetaJSON: string(meta)})
 	writeJSON(w, http.StatusAccepted, map[string]any{"debit": debit, "credit": credit})
 }
@@ -489,22 +499,26 @@ func (s *Server) handleTokenTip(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	fromUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req tokenTipRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	transfer := tokenTransferRequest{
-		FromUserID: strings.TrimSpace(req.FromUserID),
-		ToUserID:   strings.TrimSpace(req.ToUserID),
-		Amount:     req.Amount,
-		Memo:       strings.TrimSpace(req.Reason),
+		ToUserID: strings.TrimSpace(req.ToUserID),
+		Amount:   req.Amount,
+		Memo:     strings.TrimSpace(req.Reason),
 	}
-	if transfer.FromUserID == "" || transfer.ToUserID == "" {
-		writeError(w, http.StatusBadRequest, "from_user_id and to_user_id are required")
+	if transfer.ToUserID == "" {
+		writeError(w, http.StatusBadRequest, "to_user_id is required")
 		return
 	}
-	if isSystemTokenUserID(transfer.FromUserID) || isSystemTokenUserID(transfer.ToUserID) {
+	if isSystemTokenUserID(fromUserID) || isSystemTokenUserID(transfer.ToUserID) {
 		writeError(w, http.StatusBadRequest, "system accounts cannot participate in tip")
 		return
 	}
@@ -512,7 +526,7 @@ func (s *Server) handleTokenTip(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "amount must be > 0")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), transfer.FromUserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), fromUserID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -520,7 +534,7 @@ func (s *Server) handleTokenTip(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "to_user_id not found")
 		return
 	}
-	debit, err := s.store.Consume(r.Context(), transfer.FromUserID, transfer.Amount)
+	debit, err := s.store.Consume(r.Context(), fromUserID, transfer.Amount)
 	if err != nil {
 		if err == store.ErrInsufficientBalance {
 			writeError(w, http.StatusBadRequest, "insufficient balance")
@@ -531,12 +545,12 @@ func (s *Server) handleTokenTip(w http.ResponseWriter, r *http.Request) {
 	}
 	credit, err := s.store.Recharge(r.Context(), transfer.ToUserID, transfer.Amount)
 	if err != nil {
-		_, _ = s.store.Recharge(r.Context(), transfer.FromUserID, transfer.Amount)
+		_, _ = s.store.Recharge(r.Context(), fromUserID, transfer.Amount)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	meta, _ := json.Marshal(map[string]any{"to_user_id": transfer.ToUserID, "reason": strings.TrimSpace(req.Reason)})
-	_, _ = s.store.AppendCostEvent(r.Context(), store.CostEvent{UserID: strings.TrimSpace(req.FromUserID), CostType: "econ.tip.out", Amount: req.Amount, Units: 1, MetaJSON: string(meta)})
+	_, _ = s.store.AppendCostEvent(r.Context(), store.CostEvent{UserID: fromUserID, CostType: "econ.tip.out", Amount: req.Amount, Units: 1, MetaJSON: string(meta)})
 	_, _ = s.store.AppendCostEvent(r.Context(), store.CostEvent{UserID: strings.TrimSpace(req.ToUserID), CostType: "econ.tip.in", Amount: req.Amount, Units: 1, MetaJSON: string(meta)})
 	writeJSON(w, http.StatusAccepted, map[string]any{"debit": debit, "credit": credit})
 }
@@ -556,33 +570,37 @@ func (s *Server) handleTokenWishCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req tokenWishCreateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Title = strings.TrimSpace(req.Title)
 	req.Reason = strings.TrimSpace(req.Reason)
-	if req.UserID == "" || req.TargetAmount <= 0 {
-		writeError(w, http.StatusBadRequest, "user_id and target_amount are required")
+	if req.TargetAmount <= 0 {
+		writeError(w, http.StatusBadRequest, "target_amount is required")
 		return
 	}
 	if req.Title == "" {
 		req.Title = "token wish"
 	}
-	if isSystemTokenUserID(req.UserID) {
+	if isSystemTokenUserID(userID) {
 		writeError(w, http.StatusBadRequest, "system accounts cannot create wishes")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	now := time.Now().UTC()
 	item := tokenWish{
 		WishID:        newWishID(),
-		UserID:        req.UserID,
+		UserID:        userID,
 		Title:         req.Title,
 		Reason:        req.Reason,
 		TargetAmount:  req.TargetAmount,
@@ -643,20 +661,21 @@ func (s *Server) handleTokenWishFulfill(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	fulfilledBy, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req tokenWishFulfillRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.WishID = strings.TrimSpace(req.WishID)
-	req.FulfilledBy = strings.TrimSpace(req.FulfilledBy)
 	req.FulfillComment = strings.TrimSpace(req.FulfillComment)
 	if req.WishID == "" {
 		writeError(w, http.StatusBadRequest, "wish_id is required")
 		return
-	}
-	if req.FulfilledBy == "" {
-		req.FulfilledBy = clawWorldSystemID
 	}
 	genesisStateMu.Lock()
 	defer genesisStateMu.Unlock()
@@ -693,7 +712,7 @@ func (s *Server) handleTokenWishFulfill(w http.ResponseWriter, r *http.Request) 
 		state.Items[i].Status = "fulfilled"
 		state.Items[i].UpdatedAt = now
 		state.Items[i].GrantedAmount = amount
-		state.Items[i].FulfilledBy = req.FulfilledBy
+		state.Items[i].FulfilledBy = fulfilledBy
 		state.Items[i].FulfillComment = req.FulfillComment
 		state.Items[i].FulfilledAt = &now
 		if err := s.saveTokenWishState(r.Context(), state); err != nil {
@@ -711,18 +730,18 @@ func (s *Server) handleLifeHibernate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req lifeHibernateRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Reason = strings.TrimSpace(req.Reason)
-	if req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
-		return
-	}
-	life, err := s.store.GetUserLifeState(r.Context(), req.UserID)
+	life, err := s.store.GetUserLifeState(r.Context(), userID)
 	if err != nil && !errors.Is(err, store.ErrUserLifeStateNotFound) {
 		writeError(w, http.StatusInternalServerError, "failed to load current life state")
 		return
@@ -732,7 +751,7 @@ func (s *Server) handleLifeHibernate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, _, err := s.applyUserLifeState(r.Context(), store.UserLifeState{
-		UserID:    req.UserID,
+		UserID:    userID,
 		State:     "hibernated",
 		Reason:    req.Reason,
 		UpdatedAt: time.Now().UTC(),
@@ -752,13 +771,17 @@ func (s *Server) handleLifeWake(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	actorUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req lifeWakeRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	req.UserID = strings.TrimSpace(req.UserID)
-	req.WakerUserID = strings.TrimSpace(req.WakerUserID)
 	req.Reason = strings.TrimSpace(req.Reason)
 	if req.UserID == "" {
 		writeError(w, http.StatusBadRequest, "user_id is required")
@@ -783,7 +806,7 @@ func (s *Server) handleLifeWake(w http.ResponseWriter, r *http.Request) {
 	}, store.UserLifeStateAuditMeta{
 		SourceModule: "life.wake",
 		SourceRef:    "api:/v1/life/wake",
-		ActorUserID:  req.WakerUserID,
+		ActorUserID:  actorUserID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update life state")
@@ -797,17 +820,17 @@ func (s *Server) handleLifeSetWill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req lifeSetWillRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Note = strings.TrimSpace(req.Note)
-	if req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "user_id is required")
-		return
-	}
 	if len(req.Beneficiaries) == 0 {
 		writeError(w, http.StatusBadRequest, "beneficiaries is required")
 		return
@@ -825,7 +848,7 @@ func (s *Server) handleLifeSetWill(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	item := lifeWill{
-		UserID:        req.UserID,
+		UserID:        userID,
 		Note:          req.Note,
 		Beneficiaries: req.Beneficiaries,
 		ToolHeirs:     normalizeUniqueUsers(req.ToolHeirs),
@@ -833,10 +856,10 @@ func (s *Server) handleLifeSetWill(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:     now,
 		Executed:      false,
 	}
-	if prev, ok := state.Items[req.UserID]; ok {
+	if prev, ok := state.Items[userID]; ok {
 		item.CreatedAt = prev.CreatedAt
 	}
-	state.Items[req.UserID] = item
+	state.Items[userID] = item
 	if err := s.saveLifeWillState(r.Context(), state); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -930,19 +953,23 @@ func (s *Server) handleBountyPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	posterUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req bountyPostRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.PosterUserID = strings.TrimSpace(req.PosterUserID)
 	req.Description = strings.TrimSpace(req.Description)
 	req.Criteria = strings.TrimSpace(req.Criteria)
-	if req.PosterUserID == "" || req.Description == "" || req.Reward <= 0 {
-		writeError(w, http.StatusBadRequest, "poster_user_id, description, reward are required")
+	if req.Description == "" || req.Reward <= 0 {
+		writeError(w, http.StatusBadRequest, "description and reward are required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.PosterUserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), posterUserID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -953,7 +980,7 @@ func (s *Server) handleBountyPost(w http.ResponseWriter, r *http.Request) {
 			deadlinePtr = &u
 		}
 	}
-	if _, err := s.store.Consume(r.Context(), req.PosterUserID, req.Reward); err != nil {
+	if _, err := s.store.Consume(r.Context(), posterUserID, req.Reward); err != nil {
 		if err == store.ErrInsufficientBalance {
 			writeError(w, http.StatusBadRequest, "insufficient balance")
 			return
@@ -965,14 +992,14 @@ func (s *Server) handleBountyPost(w http.ResponseWriter, r *http.Request) {
 	defer genesisStateMu.Unlock()
 	state, err := s.getBountyState(r.Context())
 	if err != nil {
-		_, _ = s.store.Recharge(r.Context(), req.PosterUserID, req.Reward)
+		_, _ = s.store.Recharge(r.Context(), posterUserID, req.Reward)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	now := time.Now().UTC()
 	item := bountyItem{
 		BountyID:     state.NextID,
-		PosterUserID: req.PosterUserID,
+		PosterUserID: posterUserID,
 		Description:  req.Description,
 		Reward:       req.Reward,
 		Criteria:     req.Criteria,
@@ -985,7 +1012,7 @@ func (s *Server) handleBountyPost(w http.ResponseWriter, r *http.Request) {
 	state.NextID++
 	state.Items = append(state.Items, item)
 	if err := s.saveBountyState(r.Context(), state); err != nil {
-		_, _ = s.store.Recharge(r.Context(), req.PosterUserID, req.Reward)
+		_, _ = s.store.Recharge(r.Context(), posterUserID, req.Reward)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1060,18 +1087,22 @@ func (s *Server) handleBountyClaim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	userID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req bountyClaimRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.UserID = strings.TrimSpace(req.UserID)
 	req.Note = strings.TrimSpace(req.Note)
-	if req.BountyID <= 0 || req.UserID == "" {
-		writeError(w, http.StatusBadRequest, "bounty_id and user_id are required")
+	if req.BountyID <= 0 {
+		writeError(w, http.StatusBadRequest, "bounty_id is required")
 		return
 	}
-	if err := s.ensureUserAlive(r.Context(), req.UserID); err != nil {
+	if err := s.ensureUserAlive(r.Context(), userID); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -1092,7 +1123,7 @@ func (s *Server) handleBountyClaim(w http.ResponseWriter, r *http.Request) {
 		}
 		now := time.Now().UTC()
 		state.Items[i].Status = "claimed"
-		state.Items[i].ClaimedBy = req.UserID
+		state.Items[i].ClaimedBy = userID
 		state.Items[i].ClaimNote = req.Note
 		state.Items[i].ClaimedAt = &now
 		state.Items[i].UpdatedAt = now
@@ -1111,12 +1142,16 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	approverUserID, err := s.authenticatedUserIDOrAPIKey(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	var req bountyVerifyRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	req.ApproverUserID = strings.TrimSpace(req.ApproverUserID)
 	req.CandidateUserID = strings.TrimSpace(req.CandidateUserID)
 	req.Note = strings.TrimSpace(req.Note)
 	if req.BountyID <= 0 {
@@ -1160,7 +1195,7 @@ func (s *Server) handleBountyVerify(w http.ResponseWriter, r *http.Request) {
 			}
 			state.Items[i].Status = "paid"
 			state.Items[i].ReleasedTo = receiver
-			state.Items[i].ReleasedBy = req.ApproverUserID
+			state.Items[i].ReleasedBy = approverUserID
 			state.Items[i].ReleasedAt = &now
 			state.Items[i].EscrowAmount = 0
 		} else {
