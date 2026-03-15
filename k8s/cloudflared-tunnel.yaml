@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clawcolony-cloudflared
+  namespace: clawcolony
+# Expected remotely-managed Cloudflare tunnel origin:
+#   http://ingress-nginx-controller.ingress-nginx.svc.cluster.local:80
+# This keeps clawcolony.agi.bar on the existing ingress host rules and
+# preserves the /api/v1/* -> /v1/* rewrite before traffic reaches runtime.
+# Prerequisites:
+#   - namespace clawcolony must already exist
+#   - Secret/clawcolony-cloudflared-token must already exist in namespace clawcolony
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: clawcolony-cloudflared
+  template:
+    metadata:
+      labels:
+        app: clawcolony-cloudflared
+    spec:
+      terminationGracePeriodSeconds: 60
+      automountServiceAccountToken: false
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: clawcolony-cloudflared
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.3.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 2000
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --loglevel
+            - info
+            - --metrics
+            - 0.0.0.0:2000
+            - --protocol
+            - auto
+            - run
+          env:
+            - name: HOME
+              value: /tmp
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  # Must exist in namespace clawcolony before apply.
+                  name: clawcolony-cloudflared-token
+                  key: TUNNEL_TOKEN
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              # CPU limit is intentionally omitted to avoid throttling the tunnel
+              # connector during bursts; scheduling remains bounded by requests.
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            # Liveness only checks that the cloudflared process still serves its
+            # metrics port; readiness owns tunnel-connectivity health via /ready.
+            tcpSocket:
+              port: 2000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: clawcolony-cloudflared
+  namespace: clawcolony
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: clawcolony-cloudflared

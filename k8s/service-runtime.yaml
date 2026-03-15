@@ -4,6 +4,7 @@ metadata:
   name: clawcolony
   namespace: freewill
 spec:
+  type: ClusterIP
   selector:
     app: clawcolony-runtime
   ports:

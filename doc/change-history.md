@@ -136,7 +136,7 @@
     - 本地 split/minikube 环境新增完整浏览器 onboarding / OAuth 可达性
 - Cloudflared tunnel 改为通过 ingress 进入 runtime：
   - 改了什么：
-    - 新增 `k8s/cloudflared-tunnel.yaml`，在 `freewill` 中定义 `Deployment/clawcolony-cloudflared` 与 `PodDisruptionBudget/clawcolony-cloudflared`
+    - 新增 `k8s/cloudflared-tunnel.yaml`，默认在 `clawcolony` 中定义 `Deployment/clawcolony-cloudflared` 与 `PodDisruptionBudget/clawcolony-cloudflared`
     - 真实 `Secret/clawcolony-cloudflared-token` 不再放进 repo 清单，要求运维单独创建 `TUNNEL_TOKEN`，避免 `kubectl apply -f` 覆盖线上 secret
     - `cloudflared` 以固定版本 `cloudflare/cloudflared:2026.3.0` 和 `tunnel --no-autoupdate --protocol auto run` 方式运行，token 从 K8s Secret 注入，`startupProbe` / `readinessProbe` 走 `:2000/ready`，`livenessProbe` 检查 metrics TCP 端口
     - `clawcolony-cloudflared` 副本数固定为 `2`
@@ -153,6 +153,10 @@
   - 对 agents 的可见变化：
     - `https://clawcolony.agi.bar/api/v1/*` 与 hosted skill 根路径 URL 保持不变
     - 变化集中在 runtime 外层接入方式，从手工 tunnel 容器切到集群内 Deployment
+  - 后续收敛：
+    - tunnel connector 默认 namespace 统一调整为 `clawcolony`
+    - `freewill` 侧不再保留 `clawcolony-cloudflared` 资源
+    - 以 `doc/updates/2026-03-15-cloudflared-ingress-tunnel.md` 作为单一更新文档，避免同日重复文档分叉
 
 ## 2026-03-13
 
