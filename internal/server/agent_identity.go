@@ -730,7 +730,7 @@ async function postJSON(url, payload){
 }
 document.getElementById("claimForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const data = await postJSON("/v1/claims/request-magic-link", {
+  const data = await postJSON("/api/v1/claims/request-magic-link", {
     claim_token: claimToken,
     email: document.getElementById("email").value.trim(),
     human_username: document.getElementById("human_username").value.trim(),
@@ -741,7 +741,7 @@ document.getElementById("claimForm").addEventListener("submit", async (e) => {
     completeBtn.onclick = () => {
       const magic = new URL(data.magic_link, window.location.origin).searchParams.get("magic_token");
       if (magic) {
-        postJSON("/v1/claims/complete", {magic_token: magic}).catch(() => {});
+        postJSON("/api/v1/claims/complete", {magic_token: magic}).catch(() => {});
       }
     };
   }
@@ -749,9 +749,9 @@ document.getElementById("claimForm").addEventListener("submit", async (e) => {
 if (magicToken) {
   completeBtn.style.display = "inline-block";
   completeBtn.onclick = () => {
-    postJSON("/v1/claims/complete", {magic_token: magicToken}).catch(() => {});
+    postJSON("/api/v1/claims/complete", {magic_token: magicToken}).catch(() => {});
   };
-  postJSON("/v1/claims/complete", {magic_token: magicToken}).catch(() => {});
+  postJSON("/api/v1/claims/complete", {magic_token: magicToken}).catch(() => {});
 }
 </script>
 </body></html>`
@@ -1572,7 +1572,7 @@ func (s *Server) socialOAuthConfig(provider string) (socialOAuthProviderConfig, 
 			AuthorizeURL: strings.TrimSpace(s.cfg.GitHubOAuthAuthorizeURL),
 			TokenURL:     strings.TrimSpace(s.cfg.GitHubOAuthTokenURL),
 			UserInfoURL:  strings.TrimSpace(s.cfg.GitHubOAuthUserInfoURL),
-			Scopes:       []string{"read:user", "public_repo"},
+			Scopes:       []string{"read:user"},
 			UsePKCE:      true,
 		}
 		if cfg.AuthorizeURL == "" {
@@ -1848,77 +1848,6 @@ func (s *Server) githubOAuthUserInfoURL() string {
 	return defaultGitHubUserInfoURL
 }
 
-func (s *Server) verifyGitHubStarWithToken(ctx context.Context, accessToken string) (bool, error) {
-	repo := strings.TrimSpace(s.officialGitHubRepo())
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(s.githubAPIBaseURL(), "/")+"/user/starred/"+repo, nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
-	req.Header.Set("User-Agent", "clawcolony-runtime")
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("github star verification request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusNoContent:
-		return true, nil
-	case http.StatusNotFound:
-		return false, nil
-	case http.StatusOK:
-		return true, nil
-	default:
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return false, fmt.Errorf("github star verification request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-}
-
-func (s *Server) verifyGitHubForkWithToken(ctx context.Context, accessToken string) (bool, error) {
-	target := strings.ToLower(strings.TrimSpace(s.officialGitHubRepo()))
-	for page := 1; page <= maxGitHubVerificationPages; page++ {
-		reqURL := fmt.Sprintf("%s/user/repos?type=owner&per_page=100&page=%d", strings.TrimRight(s.githubAPIBaseURL(), "/"), page)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-		if err != nil {
-			return false, err
-		}
-		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
-		req.Header.Set("User-Agent", "clawcolony-runtime")
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			return false, fmt.Errorf("github fork verification request failed: %w", err)
-		}
-		var repos []githubRepoRecord
-		if resp.StatusCode == http.StatusOK {
-			err = json.NewDecoder(resp.Body).Decode(&repos)
-		} else {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-			resp.Body.Close()
-			return false, fmt.Errorf("github fork verification request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
-		}
-		resp.Body.Close()
-		if err != nil {
-			return false, err
-		}
-		if len(repos) == 0 {
-			return false, nil
-		}
-		for _, repo := range repos {
-			if repo.Parent != nil && repo.Fork && strings.EqualFold(strings.TrimSpace(repo.Parent.FullName), target) {
-				return true, nil
-			}
-		}
-		if len(repos) < 100 {
-			return false, nil
-		}
-	}
-	return false, nil
-}
-
 func (s *Server) handleSocialXCallback(w http.ResponseWriter, r *http.Request) {
 	s.handleSocialOAuthCallback(w, r, "x")
 }
@@ -2044,11 +1973,11 @@ func (s *Server) completeGitHubOAuthCallback(ctx context.Context, ownerID, userI
 	if err != nil {
 		return nil, err
 	}
-	starred, err := s.verifyGitHubStarWithToken(ctx, accessToken)
+	starred, err := s.verifyGitHubStar(ctx, viewer.Login)
 	if err != nil {
 		return nil, err
 	}
-	forked, err := s.verifyGitHubForkWithToken(ctx, accessToken)
+	forked, err := s.verifyGitHubFork(ctx, viewer.Login)
 	if err != nil {
 		return nil, err
 	}

@@ -144,20 +144,21 @@ func enableGitHubOAuthForTest(t *testing.T, starred, forked bool) *httptest.Serv
 				t.Fatalf("expected github code_verifier")
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"access_token":"gh-access-token","token_type":"bearer","scope":"read:user public_repo"}`))
+			_, _ = w.Write([]byte(`{"access_token":"gh-access-token","token_type":"bearer","scope":"read:user"}`))
 		case r.URL.Path == "/user":
 			if got := r.Header.Get("Authorization"); got != "Bearer gh-access-token" {
 				t.Fatalf("unexpected github auth header=%q", got)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":42,"login":"octo","name":"Octo Human"}`))
-		case r.URL.Path == "/user/starred/clawcolony/clawcolony":
+		case r.URL.Path == "/users/octo/starred":
 			if starred {
-				w.WriteHeader(http.StatusNoContent)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[{"full_name":"clawcolony/clawcolony"}]`))
 				return
 			}
-			http.NotFound(w, r)
-		case r.URL.Path == "/user/repos":
+			_, _ = w.Write([]byte(`[]`))
+		case r.URL.Path == "/users/octo/repos":
 			w.Header().Set("Content-Type", "application/json")
 			if forked {
 				_, _ = w.Write([]byte(`[{"full_name":"octo/clawcolony","fork":true,"parent":{"full_name":"clawcolony/clawcolony"}}]`))
@@ -444,6 +445,37 @@ func TestGitHubVerifyUsesServerSideVerificationAndRewards(t *testing.T) {
 	ownerMe := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/owner/me", nil, map[string]string{"Cookie": cookie})
 	if ownerMe.Code != http.StatusOK || !strings.Contains(ownerMe.Body.String(), `"github_username":"octo"`) {
 		t.Fatalf("expected owner github identity binding, got code=%d body=%s", ownerMe.Code, ownerMe.Body.String())
+	}
+}
+
+func TestGitHubConnectStartUsesLeastPrivilegeScope(t *testing.T) {
+	gh := enableGitHubOAuthForTest(t, false, false)
+	defer gh.Close()
+
+	srv := newTestServer()
+	h := identityTestHandler(srv)
+
+	userID, _, claimLink := registerAgentForTest(t, h, "github-scope-agent", "oss")
+	_, cookie := claimAgentForTest(t, h, claimLink, "github-scope@example.com", "octo-human")
+
+	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/github/connect/start", map[string]any{
+		"user_id": userID,
+	}, map[string]string{"Cookie": cookie})
+	if start.Code != http.StatusAccepted {
+		t.Fatalf("github connect start status=%d body=%s", start.Code, start.Body.String())
+	}
+
+	body := parseJSONBody(t, start)
+	rawAuthorizeURL, _ := body["authorize_url"].(string)
+	if strings.TrimSpace(rawAuthorizeURL) == "" {
+		t.Fatalf("missing authorize_url in start response: %s", start.Body.String())
+	}
+	authorizeURL, err := neturl.Parse(rawAuthorizeURL)
+	if err != nil {
+		t.Fatalf("parse authorize_url: %v", err)
+	}
+	if got := authorizeURL.Query().Get("scope"); got != "read:user" {
+		t.Fatalf("expected least-privilege github scope, got=%q", got)
 	}
 }
 
@@ -819,6 +851,26 @@ func TestPricedBusinessActionsCoverage(t *testing.T) {
 	sort.Strings(got)
 	if strings.Join(expected, "\n") != strings.Join(got, "\n") {
 		t.Fatalf("priced action coverage drift\nexpected=%v\ngot=%v", expected, got)
+	}
+}
+
+func TestClaimPageUsesAPIV1Routes(t *testing.T) {
+	page := buildClaimPage("claim-token", "magic-token")
+	for _, needle := range []string{
+		"/api/v1/claims/request-magic-link",
+		"/api/v1/claims/complete",
+	} {
+		if !strings.Contains(page, needle) {
+			t.Fatalf("claim page missing %s", needle)
+		}
+	}
+	for _, needle := range []string{
+		`"/v1/claims/request-magic-link"`,
+		`"/v1/claims/complete"`,
+	} {
+		if strings.Contains(page, needle) {
+			t.Fatalf("claim page still contains old route %s", needle)
+		}
 	}
 }
 

@@ -118,3 +118,64 @@ func TestDashboardIdentityPagesLoad(t *testing.T) {
 		})
 	}
 }
+
+func TestDashboardIdentityPagesUseAPIV1Routes(t *testing.T) {
+	checks := []struct {
+		file      string
+		required  []string
+		forbidden []string
+	}{
+		{
+			file: "web/dashboard_agent_register.html",
+			required: []string{
+				"/api/v1/users/register",
+				"/api/v1/users/status",
+				"/api/v1/token/pricing",
+			},
+			forbidden: []string{
+				`"/v1/users/register"`,
+				`"/v1/users/status"`,
+				`"/v1/token/pricing"`,
+			},
+		},
+		{
+			file: "web/dashboard_agent_owner.html",
+			required: []string{
+				"/api/v1/owner/me",
+				"/api/v1/owner/logout",
+				"/api/v1/social/policy",
+				"/api/v1/social/rewards/status",
+				"/api/v1/social/github/connect/start",
+				"/api/v1/social/x/connect/start",
+			},
+			forbidden: []string{
+				`"/v1/owner/me"`,
+				`"/v1/owner/logout"`,
+				`"/v1/social/policy"`,
+				`"/v1/social/rewards/status"`,
+				`"/v1/social/github/connect/start"`,
+				`"/v1/social/x/connect/start"`,
+			},
+		},
+	}
+
+	for _, c := range checks {
+		t.Run(strings.TrimPrefix(strings.TrimSuffix(c.file, ".html"), "web/"), func(t *testing.T) {
+			data, err := dashboardFS.ReadFile(c.file)
+			if err != nil {
+				t.Fatalf("read template failed: %v", err)
+			}
+			s := string(data)
+			for _, tok := range c.required {
+				if !strings.Contains(s, tok) {
+					t.Fatalf("required token missing: %q", tok)
+				}
+			}
+			for _, tok := range c.forbidden {
+				if strings.Contains(s, tok) {
+					t.Fatalf("forbidden token exists: %q", tok)
+				}
+			}
+		})
+	}
+}

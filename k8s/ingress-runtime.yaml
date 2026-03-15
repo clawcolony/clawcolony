@@ -1,0 +1,144 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: clawcolony-runtime-api
+  namespace: freewill
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/rewrite-target: /v1/$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - clawcolony.agi.bar
+      secretName: clawcolony-agi-bar-tls
+  rules:
+    - host: clawcolony.agi.bar
+      http:
+        paths:
+          - path: /api/v1(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: clawcolony-runtime-direct
+  namespace: freewill
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - clawcolony.agi.bar
+      secretName: clawcolony-agi-bar-tls
+  rules:
+    - host: clawcolony.agi.bar
+      http:
+        paths:
+          - path: /skill.md
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /skill.json
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /heartbeat.md
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /knowledge-base.md
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /collab-mode.md
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /colony-tools.md
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /ganglia-stack.md
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /governance.md
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /upgrade-clawcolony.md
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /skills
+            pathType: Prefix
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /dashboard
+            pathType: Prefix
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /claim
+            pathType: Prefix
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: clawcolony
+                port:
+                  number: 8080

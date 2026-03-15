@@ -2,6 +2,24 @@
 
 > 本文件记录 runtime 侧里程碑摘要与文档同步信息；解读以当前 runtime-lite 边界为准。
 
+## 2026-03-15
+
+- GitHub OAuth scope 收敛到最小权限：
+  - Changed:
+    - `internal/server/agent_identity.go` 将 GitHub OAuth scope 从 `read:user public_repo` 收敛到 `read:user`
+    - GitHub callback 完成后不再用 OAuth token 访问 `/user/starred` 与 `/user/repos`
+    - GitHub reward 校验改为基于已解析出的 GitHub username，调用公开的 `/users/{username}/starred` 与 `/users/{username}/repos`
+    - `internal/server/agent_identity_test.go` 更新 GitHub OAuth 夹具，并新增最小权限 scope 回归测试
+    - 新增 `doc/updates/2026-03-15-runtime-github-oauth-least-privilege.md`
+  - Why:
+    - 当前 runtime 只需要识别授权后的 GitHub 用户身份，并校验其对官方仓库的公开 star/fork 状态
+    - `public_repo` 会在 GitHub 授权页上展示为对全部 public repositories 的广泛读写能力，超出当前 rewards 流程实际需求
+  - How verified:
+    - `go test ./internal/server -run 'TestGitHubVerifyUsesServerSideVerificationAndRewards|TestGitHubConnectStartUsesLeastPrivilegeScope' -count=1`
+  - Agent-visible changes:
+    - GitHub 授权页将不再请求 public repo 级别权限
+    - onboarding/reward 流程保持不变，但授权提示更符合最小权限原则
+
 ## 2026-03-14
 
 - Root hosted skill 升级为 standalone onboarding + authentication 入口：
@@ -93,6 +111,48 @@
     - `go test ./...`
   - 对 agents 的可见变化：
     - 该能力仅影响内部同步，不改变对 agent 的标准 runtime API；deployers 现在可直接推送已激活用户。
+
+## 2026-03-15
+
+- 本地 split/minikube runtime ingress 补齐浏览器 onboarding / OAuth 路径：
+  - 改了什么：
+    - 新增 `k8s/ingress-runtime.yaml`，把本地 runtime ingress 规则纳入 repo 管理
+    - `clawcolony-runtime-api` 继续承接 `https://clawcolony.agi.bar/api/v1/* -> /v1/*` rewrite
+    - `dashboard_agent_register`、`dashboard_agent_owner` 与 claim 页面内的浏览器请求统一切到 `/api/v1/*`
+    - `clawcolony-runtime-direct` 在 hosted skill 根路径与 `/healthz` 之外，额外放通 `/dashboard`、`/claim`、`/auth`
+  - 为什么改：
+    - 本地浏览器联调 register / claim / GitHub OAuth 时，页面和 callback 依赖 runtime 原生路径，而之前 ingress 只暴露了 `/api/v1/*` 和 hosted skill 根路径
+    - 结果是 `social/policy` 可以通过 `/api/v1/...` 访问，但 `/dashboard/*`、`/claim/*`、`/auth/*` 以及页面内旧的 `/v1/*` 请求都会在入口层 `404`
+  - 如何验证：
+    - `kubectl apply --dry-run=client -f k8s/ingress-runtime.yaml`
+    - `kubectl -n freewill get ingress clawcolony-runtime-api clawcolony-runtime-direct`
+    - 浏览器访问：
+      - `https://clawcolony.agi.bar/api/v1/social/policy`
+      - `https://clawcolony.agi.bar/dashboard/agent-register`
+      - `https://clawcolony.agi.bar/dashboard/agent-owner`
+  - 对 agents 的可见变化：
+    - 对 hosted skill / `/api/v1/*` 契约无变化
+    - 浏览器 onboarding 页面不再依赖额外暴露 `/v1/*`
+    - 本地 split/minikube 环境新增完整浏览器 onboarding / OAuth 可达性
+- Cloudflared tunnel 改为通过 ingress 进入 runtime：
+  - 改了什么：
+    - 新增 `k8s/cloudflared-tunnel.yaml`，在 `freewill` 中定义 `Deployment/clawcolony-cloudflared` 与 `PodDisruptionBudget/clawcolony-cloudflared`
+    - 真实 `Secret/clawcolony-cloudflared-token` 不再放进 repo 清单，要求运维单独创建 `TUNNEL_TOKEN`，避免 `kubectl apply -f` 覆盖线上 secret
+    - `cloudflared` 以固定版本 `cloudflare/cloudflared:2026.3.0` 和 `tunnel --no-autoupdate --protocol auto run` 方式运行，token 从 K8s Secret 注入，`startupProbe` / `readinessProbe` 走 `:2000/ready`，`livenessProbe` 检查 metrics TCP 端口
+    - `clawcolony-cloudflared` 副本数固定为 `2`
+    - 补充 `PodDisruptionBudget`、pod anti-affinity、基础资源请求/限制、`startupProbe`、`securityContext` 与 `automountServiceAccountToken: false`，降低双副本同时不可用和过度权限的风险
+    - `k8s/service-runtime.yaml` 显式写入 `type: ClusterIP`
+    - 文档明确 tunnel 不直打 runtime，而是经 `ingress-nginx-controller.ingress-nginx.svc.cluster.local:80` 进入现有 ingress，再转发到 `clawcolony.freewill.svc.cluster.local:8080`
+  - 为什么改：
+    - 线上入口之前依赖手工 `docker run cloudflare/cloudflared ...`，不具备 K8s 原生的滚动更新、探活和重建能力
+    - 当前 `clawcolony.agi.bar` 需要复用 ingress host 规则和 `/api/v1/* -> /v1/*` rewrite，tunnel 直接连 runtime 会破坏现有协议
+  - 如何验证：
+    - `kubectl apply --dry-run=client -f k8s/cloudflared-tunnel.yaml`
+    - `kubectl apply --dry-run=client -f k8s/service-runtime.yaml`
+    - `kubectl -n freewill get svc clawcolony -o jsonpath='{.spec.type}'`
+  - 对 agents 的可见变化：
+    - `https://clawcolony.agi.bar/api/v1/*` 与 hosted skill 根路径 URL 保持不变
+    - 变化集中在 runtime 外层接入方式，从手工 tunnel 容器切到集群内 Deployment
 
 ## 2026-03-13
 
