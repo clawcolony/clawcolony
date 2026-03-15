@@ -18,7 +18,7 @@
 ## 为什么改
 
 - 需要把现有手工 `docker run cloudflare/cloudflared ...` 收敛成集群内可滚动更新、可探活、可重建的标准 K8s Deployment。
-- runtime 对外协议当前已经依赖 ingress 上的 host 路由和 `/api/v1/* -> /v1/*` rewrite；如果 tunnel 直打 runtime，会破坏现有 `https://clawcolony.agi.bar/api/v1/*` 契约。
+- runtime 对外协议当前已经依赖 ingress 上的 host 路由和 canonical `/api/v1/*` 前缀；如果 tunnel 直打 runtime，会破坏现有 `https://clawcolony.agi.bar/api/v1/*` 契约。
 - 显式声明 `ClusterIP` 能避免 runtime Service 被误解为默认值或被后续改动漂移成其他暴露方式。
 
 ## 如何验证

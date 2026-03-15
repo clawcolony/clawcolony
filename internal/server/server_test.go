@@ -128,6 +128,18 @@ func ptrTime(t time.Time) *time.Time {
 	return &v
 }
 
+func legacyAPIPath(parts ...string) string {
+	path := "/" + "v1"
+	for _, part := range parts {
+		part = strings.Trim(part, "/")
+		if part == "" {
+			continue
+		}
+		path += "/" + part
+	}
+	return path
+}
+
 func seedActiveUser(t *testing.T, srv *Server) string {
 	t.Helper()
 	id := "user-test-" + strconv.FormatInt(atomic.AddInt64(&seedCounter, 1), 10)
@@ -172,7 +184,7 @@ func TestMonitorMetaReportsRuntimeSources(t *testing.T) {
 	srv := newTestServer()
 	_ = seedActiveUser(t, srv)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/monitor/meta", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/monitor/meta", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("monitor meta status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -206,12 +218,12 @@ func TestDashboardCoreRuntimePages(t *testing.T) {
 		token string
 	}{
 		{path: "/dashboard", token: "Clawcolony Dashboard"},
-		{path: "/dashboard/mail", token: "/v1/mail/overview"},
-		{path: "/dashboard/collab", token: "/v1/collab/list"},
-		{path: "/dashboard/kb", token: "/v1/kb/proposals"},
-		{path: "/dashboard/governance", token: "/v1/governance/overview"},
-		{path: "/dashboard/world-tick", token: "/v1/runtime/scheduler-settings"},
-		{path: "/dashboard/monitor", token: "/v1/monitor/meta"},
+		{path: "/dashboard/mail", token: "/api/v1/mail/overview"},
+		{path: "/dashboard/collab", token: "/api/v1/collab/list"},
+		{path: "/dashboard/kb", token: "/api/v1/kb/proposals"},
+		{path: "/dashboard/governance", token: "/api/v1/governance/overview"},
+		{path: "/dashboard/world-tick", token: "/api/v1/runtime/scheduler-settings"},
+		{path: "/dashboard/monitor", token: "/api/v1/monitor/meta"},
 	}
 
 	for _, tc := range cases {
@@ -233,6 +245,24 @@ func TestDashboardPromptsPageNotFound(t *testing.T) {
 	w := doJSONRequest(t, srv.mux, http.MethodGet, "/dashboard/prompts", nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("dashboard prompts page should be disabled in runtime, got=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestLegacyV1PathsReturnNotFound(t *testing.T) {
+	srv := newTestServer()
+
+	for _, tc := range []struct {
+		method string
+		parts  []string
+	}{
+		{method: http.MethodGet, parts: []string{"meta"}},
+		{method: http.MethodGet, parts: []string{"mail", "overview"}},
+	} {
+		path := legacyAPIPath(tc.parts...)
+		w := doJSONRequest(t, srv.mux, tc.method, path, nil)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s %s should return 404 after /api/v1 hard cut, got=%d body=%s", tc.method, path, w.Code, w.Body.String())
+		}
 	}
 }
 
@@ -266,7 +296,7 @@ func TestRuntimeSchedulerSettingsCompatPathIsCached(t *testing.T) {
 func TestRuntimeSchedulerSettingsEndpoints(t *testing.T) {
 	srv := newTestServer()
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/runtime/scheduler-settings", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/runtime/scheduler-settings", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("get runtime scheduler settings status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -281,7 +311,7 @@ func TestRuntimeSchedulerSettingsEndpoints(t *testing.T) {
 		t.Fatalf("unexpected runtime scheduler defaults: %s", w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodPost, "/v1/runtime/scheduler-settings/upsert", map[string]any{
+	w = doJSONRequest(t, srv.mux, http.MethodPost, "/api/v1/runtime/scheduler-settings/upsert", map[string]any{
 		"autonomy_reminder_interval_ticks":       240,
 		"community_comm_reminder_interval_ticks": 480,
 		"kb_enrollment_reminder_interval_ticks":  360,
@@ -293,7 +323,7 @@ func TestRuntimeSchedulerSettingsEndpoints(t *testing.T) {
 		t.Fatalf("upsert runtime scheduler settings status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/runtime/scheduler-settings", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/runtime/scheduler-settings", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("get runtime scheduler settings after upsert status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -347,7 +377,7 @@ func TestRuntimeSchedulerSettingsPartialDBPayloadFallsBackMissingFields(t *testi
 
 func TestRuntimeSchedulerSettingsUpsertRejectsInvalidInput(t *testing.T) {
 	srv := newTestServer()
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/runtime/scheduler-settings/upsert", map[string]any{
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/api/v1/runtime/scheduler-settings/upsert", map[string]any{
 		"autonomy_reminder_interval_ticks":       -1,
 		"community_comm_reminder_interval_ticks": 480,
 		"kb_enrollment_reminder_interval_ticks":  360,
@@ -370,7 +400,7 @@ func TestLowTokenAlertCooldownFromRuntimeSchedulerSettings(t *testing.T) {
 		t.Fatalf("consume token: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/runtime/scheduler-settings/upsert", map[string]any{
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/api/v1/runtime/scheduler-settings/upsert", map[string]any{
 		"autonomy_reminder_interval_ticks":       0,
 		"community_comm_reminder_interval_ticks": 0,
 		"kb_enrollment_reminder_interval_ticks":  0,

@@ -333,7 +333,7 @@
               return;
             }
           }
-          const r = await fetch("/v1/world/freeze/rescue", {
+          const r = await fetch("/api/v1/world/freeze/rescue", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
             body: JSON.stringify({
@@ -373,7 +373,7 @@
         const state = document.getElementById("replayState");
         try{
           const sourceTickID = Number(document.getElementById("replaySourceTickID").value || 0);
-          const r = await fetch("/v1/world/tick/replay", {
+          const r = await fetch("/api/v1/world/tick/replay", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
             body: JSON.stringify({source_tick_id: sourceTickID}),
@@ -513,7 +513,7 @@
       async function loadAlertSettings(){
         const state = document.getElementById("settingsState");
         try{
-          const d = await j("/v1/world/cost-alert-settings");
+          const d = await j("/api/v1/world/cost-alert-settings");
           const it = d.item || {};
           document.getElementById("alertThreshold").value = String(it.threshold_amount || 100);
           document.getElementById("alertTopUsers").value = String(it.top_users || 10);
@@ -545,7 +545,7 @@
       async function loadRuntimeSchedulerSettings(){
         const state = document.getElementById("schedulerState");
         try{
-          const d = await j("/v1/runtime/scheduler-settings");
+          const d = await j("/api/v1/runtime/scheduler-settings");
           const it = d.item || {};
           document.getElementById("schedAutonomyTicks").value = String(it.autonomy_reminder_interval_ticks ?? 0);
           document.getElementById("schedCommunityTicks").value = String(it.community_comm_reminder_interval_ticks ?? 0);
@@ -561,7 +561,7 @@
       async function loadEvolutionSettings(){
         const state = document.getElementById("settingsState");
         try{
-          const d = await j("/v1/world/evolution-alert-settings");
+          const d = await j("/api/v1/world/evolution-alert-settings");
           const it = d.item || {};
           document.getElementById("evoWindowMin").value = String(it.window_minutes || 60);
           document.getElementById("evoWarnThreshold").value = String(it.warn_threshold || 65);
@@ -583,7 +583,7 @@
             cost_alert_notify_cooldown_seconds: parseIntInput("alertCooldownSec", "cost_alert_notify_cooldown_seconds", MIN_SCHEDULER_COOLDOWN_SECONDS, MAX_SCHEDULER_COOLDOWN_SECONDS),
             low_token_alert_cooldown_seconds: parseIntInput("schedLowTokenCooldownSec", "low_token_alert_cooldown_seconds", MIN_SCHEDULER_COOLDOWN_SECONDS, MAX_SCHEDULER_COOLDOWN_SECONDS, true),
           };
-          const r = await fetch("/v1/runtime/scheduler-settings/upsert", {
+          const r = await fetch("/api/v1/runtime/scheduler-settings/upsert", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
             body: JSON.stringify(body),
@@ -604,7 +604,7 @@
             top_users: Number(document.getElementById("alertTopUsers").value || 0),
             scan_limit: Number(document.getElementById("alertScanLimit").value || 0),
           };
-          const r = await fetch("/v1/world/cost-alert-settings/upsert", {
+          const r = await fetch("/api/v1/world/cost-alert-settings/upsert", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
             body: JSON.stringify(body),
@@ -628,7 +628,7 @@
             critical_threshold: Number(document.getElementById("evoCriticalThreshold").value || 0),
             notify_cooldown_seconds: Number(document.getElementById("alertCooldownSec").value || 0),
           };
-          const r = await fetch("/v1/world/evolution-alert-settings/upsert", {
+          const r = await fetch("/api/v1/world/evolution-alert-settings/upsert", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
             body: JSON.stringify(body),
@@ -650,23 +650,23 @@
           const alertScanLimit = encodeURIComponent(document.getElementById("alertScanLimit").value || "500");
           const evoWindow = encodeURIComponent(document.getElementById("evoWindowMin").value || "60");
           const [status, history] = await Promise.all([
-            j("/v1/world/tick/status"),
-            j(`/v1/world/tick/history?limit=${limit}`)
+            j("/api/v1/world/tick/status"),
+            j(`/api/v1/world/tick/history?limit=${limit}`)
           ]);
           document.getElementById("replaySourceTickID").value = String(status.tick_id || 0);
           const stepTickID = encodeURIComponent(String(status.tick_id || 0));
           const [steps, chainVerify, lifeStates, cost, summary, toolAudit, alerts, notifyLog, evolution, evolutionAlerts, evolutionNotifyLog] = await Promise.all([
-            j(`/v1/world/tick/steps?tick_id=${stepTickID}&limit=50`),
-            j(`/v1/world/tick/chain/verify?limit=${limit}`),
-            j(`/v1/world/life-state?limit=${limit}&user_id=${costUserID}`),
-            j(`/v1/world/cost-events?limit=${limit}&user_id=${costUserID}`),
-            j(`/v1/world/cost-summary?limit=${limit}&user_id=${costUserID}`),
-            j(`/v1/world/tool-audit?limit=${limit}&user_id=${costUserID}`),
-            j(`/v1/world/cost-alerts?limit=${alertScanLimit}&user_id=${costUserID}&threshold_amount=${alertThreshold}&top_users=${alertTopUsers}`),
-            j(`/v1/world/cost-alert-notifications?limit=${limit}&user_id=${costUserID}`),
-            j(`/v1/world/evolution-score?window_minutes=${evoWindow}&mail_scan_limit=${alertScanLimit}&kb_scan_limit=${limit}`),
-            j(`/v1/world/evolution-alerts?window_minutes=${evoWindow}`),
-            j(`/v1/world/evolution-alert-notifications?limit=${limit}`)
+            j(`/api/v1/world/tick/steps?tick_id=${stepTickID}&limit=50`),
+            j(`/api/v1/world/tick/chain/verify?limit=${limit}`),
+            j(`/api/v1/world/life-state?limit=${limit}&user_id=${costUserID}`),
+            j(`/api/v1/world/cost-events?limit=${limit}&user_id=${costUserID}`),
+            j(`/api/v1/world/cost-summary?limit=${limit}&user_id=${costUserID}`),
+            j(`/api/v1/world/tool-audit?limit=${limit}&user_id=${costUserID}`),
+            j(`/api/v1/world/cost-alerts?limit=${alertScanLimit}&user_id=${costUserID}&threshold_amount=${alertThreshold}&top_users=${alertTopUsers}`),
+            j(`/api/v1/world/cost-alert-notifications?limit=${limit}&user_id=${costUserID}`),
+            j(`/api/v1/world/evolution-score?window_minutes=${evoWindow}&mail_scan_limit=${alertScanLimit}&kb_scan_limit=${limit}`),
+            j(`/api/v1/world/evolution-alerts?window_minutes=${evoWindow}`),
+            j(`/api/v1/world/evolution-alert-notifications?limit=${limit}`)
           ]);
           renderStatus(status || {});
           renderTickSteps((steps && steps.items) || []);

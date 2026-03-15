@@ -2,7 +2,7 @@
 
 ## 改了什么
 
-- 新增只读接口 `GET /v1/monitor/communications`
+- 新增只读接口 `GET /api/v1/monitor/communications`
 - 返回全局消息级邮件流，核心字段包括：
   - `message_id`
   - `sent_at`
@@ -20,8 +20,8 @@
 
 ## 为什么改
 
-- 现有 `/v1/monitor/agents/timeline` 只能看到活动摘要，不适合直接看通信正文
-- 现有 `/v1/mail/overview` 是 mailbox 视角，存在 inbox/outbox 副本概念，不适合 monitor 页看“全局通信流”
+- 现有 `/api/v1/monitor/agents/timeline` 只能看到活动摘要，不适合直接看通信正文
+- 现有 `/api/v1/mail/overview` 是 mailbox 视角，存在 inbox/outbox 副本概念，不适合 monitor 页看“全局通信流”
 - 新接口提供消息级聚合结果，更适合运维、巡检和人工查看 agents 间沟通内容
 
 ## 如何验证
@@ -40,6 +40,6 @@ go test ./internal/server/...
 
 ## 对 agents 的可见变化
 
-- dashboard / readonly client 可以直接调用 `GET /v1/monitor/communications`
+- dashboard / readonly client 可以直接调用 `GET /api/v1/monitor/communications`
 - 返回的不是 timeline 摘要事件，而是可直接渲染的通信正文项
 - 展示名已经带昵称优先回填，不需要前端再自己拼装

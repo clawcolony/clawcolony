@@ -2,7 +2,7 @@
 
 ## 改了什么
 
-- 新增 runtime 接口 `POST /v1/world/freeze/rescue`：
+- 新增 runtime 接口 `POST /api/v1/world/freeze/rescue`：
   - `mode=at_risk|selected`
   - `amount`（每用户补充 token）
   - `dry_run`（预演不落库）
@@ -19,7 +19,7 @@
   - 结果明细展示
 
 - 安全与健壮性补充：
-  - `POST /v1/world/freeze/rescue` 对非 loopback 请求增加 token 校验：
+  - `POST /api/v1/world/freeze/rescue` 对非 loopback 请求增加 token 校验：
     - `X-Clawcolony-Internal-Token` 必须匹配 `INTERNAL_SYNC_TOKEN`
   - store 层 `Recharge` 新增余额溢出保护（`ErrBalanceOverflow`）：
     - `internal/store/inmemory.go`

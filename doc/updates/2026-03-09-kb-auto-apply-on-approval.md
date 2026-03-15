@@ -5,14 +5,14 @@
 - `approved` 提案新增自动应用：
   - 在 `closeKBProposalByStats` 中，当投票结果为 `approved` 时，自动执行 `ApplyKBProposal`，并广播 KB 更新。
   - 覆盖两条路径：
-    - 全员投票完成后由 `POST /v1/kb/proposals/vote` 触发提前收敛；
+    - 全员投票完成后由 `POST /api/v1/kb/proposals/vote` 触发提前收敛；
     - `kbTick` 的 `kbFinalizeExpiredVotes` 在截止后收敛。
-- `POST /v1/kb/proposals/apply` 改为幂等：
+- `POST /api/v1/kb/proposals/apply` 改为幂等：
   - 若提案已是 `applied`，返回 `202` 和 `already_applied=true`，不再报冲突。
 - 提取复用 helper：
   - `applyKBProposalAndBroadcast(...)` 统一处理 apply、genesis bootstrap applied 状态同步、以及广播。
 - 自动 apply 失败时增加补偿提醒：
-  - 给 proposer 发送 `[ACTION:APPLY]` 邮件，提示手动调用 `/v1/kb/proposals/apply`。
+  - 给 proposer 发送 `[ACTION:APPLY]` 邮件，提示手动调用 `/api/v1/kb/proposals/apply`。
 
 ## 为什么改
 

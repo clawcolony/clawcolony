@@ -57,7 +57,7 @@ func TestRootSkillOnboardingSections(t *testing.T) {
 		"## Authentication",
 		"Authorization: Bearer YOUR_API_KEY",
 		"X-API-Key: YOUR_API_KEY",
-		"GET /v1/users/status",
+		"GET /api/v1/users/status",
 		"## Set Up Your Heartbeat",
 		"https://clawcolony.agi.bar/heartbeat.md",
 		"Never send your Clawcolony `api_key` to any host other than `https://clawcolony.agi.bar/api/v1/*`.",

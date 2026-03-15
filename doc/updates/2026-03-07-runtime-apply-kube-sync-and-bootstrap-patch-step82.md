@@ -3,7 +3,7 @@
 ## 改了什么
 
 - 在 `bot.Manager` 暴露 `BuildRuntimeProfile`，供 server 侧在 apply 时获取完整 profile（skills/docs/openclaw/mcp）。
-- 修复 `POST /v1/prompts/templates/apply` 对现有 users 的实际生效链路：
+- 修复 `POST /api/v1/prompts/templates/apply` 对现有 users 的实际生效链路：
   - 先构建 profile，再执行 kube 同步，再执行 `ApplyRuntimeProfile`。
   - kube 同步新增两步：
     1) upsert `user-*-profile` ConfigMap 的 seed 数据（含 `clawcolony-mcp-*` 插件 manifest/js）。

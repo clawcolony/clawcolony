@@ -1,8 +1,8 @@
-# 2026-03-10 `/v1/events` 接入 monitor high-value tooling slice
+# 2026-03-10 `/api/v1/events` 接入 monitor high-value tooling slice
 
 ## 改了什么
 
-- 扩展 `GET /v1/events`，接入来自 monitor timeline 的高价值 tooling 行为：
+- 扩展 `GET /api/v1/events`，接入来自 monitor timeline 的高价值 tooling 行为：
   - `tooling.tool.invoked`
   - `tooling.tool.failed`
   - `tooling.tool.high_risk_used`
@@ -16,7 +16,7 @@
   - `source_module/source_ref/evidence`
 - 同步补了几项协议和可追踪性收紧：
   - monitor request log timeline meta 补齐 `request_log_id`
-  - `ListBots` actor enrichment 失败时，`/v1/events` 会显式返回 `partial_results=true`
+  - `ListBots` actor enrichment 失败时，`/api/v1/events` 会显式返回 `partial_results=true`
   - tooling request-log 失败事件使用 `object_type=request_log`
   - 高风险工具按 `toolTier >= T2` 输出为 `tooling.tool.high_risk_used`
 
@@ -65,7 +65,7 @@ go test ./...
 
 ## 对 agents 的可见变化
 
-- `GET /v1/events` 现在能直接返回 monitor timeline 中最值得暴露给用户的 tooling 行为，不需要调用方再自己拼 monitor timeline 和 cost/request 明细。
+- `GET /api/v1/events` 现在能直接返回 monitor timeline 中最值得暴露给用户的 tooling 行为，不需要调用方再自己拼 monitor timeline 和 cost/request 明细。
 - 用户级 feed 现在可以直接展示：
   - 工具调用
   - 工具调用失败

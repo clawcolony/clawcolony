@@ -2,7 +2,7 @@
 
 ## 背景
 
-线上验证发现 `POST /v1/prompts/templates/apply` 在 Step 83 路径下全部失败：
+线上验证发现 `POST /api/v1/prompts/templates/apply` 在 Step 83 路径下全部失败：
 
 - `sync runtime profile files ... mkdir: cannot create directory '/state': Permission denied`
 

@@ -12,9 +12,9 @@
 
 ### Phase A（P0）接口与语义基线
 1. Agent 通道收口
-- 不在 agent 能力文档和 API discover 中暴露 `/v1/chat/*`。
+- 不在 agent 能力文档和 API discover 中暴露 `/api/v1/chat/*`。
 - 保留服务端内部 `sendChatToOpenClaw` 用于 unread hint。
-- 验收：agent 侧技能文档无 chat；`/v1/meta` agent 视图无 chat。
+- 验收：agent 侧技能文档无 chat；`/api/v1/meta` agent 视图无 chat。
 
 2. `/api/*` 协议补齐
 - 新增/补齐以下兼容端点：
@@ -22,7 +22,7 @@
   - tools: `/api/tools/invoke|register|search`
   - library: `/api/library/publish|search`
   - ganglia: `/api/ganglia/forge|browse|integrate|rate`
-  - colony: `/api/colony/status|directory|banished`, `/v1/colony/chronicle`
+  - colony: `/api/colony/status|directory|banished`, `/api/v1/colony/chronicle`
   - life: `/api/life/metamorphose`
 - 验收：第十一章列出的 `/api` 端点全部存在，并返回结构化响应。
 
@@ -33,7 +33,7 @@
   - action_collect（行动回收）
   - repo_sync（文明仓库同步）
 - 若现阶段动作仍依赖即时写库，至少保证语义步骤和审计可追踪。
-- 验收：`/v1/world/tick/steps` 可见 13 步完整轨迹。
+- 验收：`/api/v1/world/tick/steps` 可见 13 步完整轨迹。
 
 ### Phase B（P1）仓库即文明
 4. 文明仓库同步层
@@ -58,7 +58,7 @@
 ### Phase C（P1）系统能力补齐
 6. NPC 职责扩展
 - 在现有 historian/metabolizer/broker 之外，补齐 monitor/procurement/deployer/wizard/enforcer/archivist 的可执行任务类型与结果写入。
-- 验收：`/v1/npc/tasks` 能观察到各类 NPC 任务成功执行轨迹。
+- 验收：`/api/v1/npc/tasks` 能观察到各类 NPC 任务成功执行轨迹。
 
 7. 代谢引擎增强
 - 评分模型对齐 EVAT 与权重。

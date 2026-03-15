@@ -210,7 +210,7 @@
       async function loadProtocol(){
         const box = document.getElementById("protocol");
         try {
-          const d = await j("/v1/ganglia/protocol");
+          const d = await j("/api/v1/ganglia/protocol");
           box.textContent = JSON.stringify(d, null, 2);
         } catch (e) {
           box.textContent = String(e && e.message ? e.message : e);
@@ -222,7 +222,7 @@
         const state = document.getElementById("fState").value.trim();
         const kw = document.getElementById("fKeyword").value.trim();
         const limit = document.getElementById("fLimit").value || "100";
-        const u = new URL("/v1/ganglia/browse", location.origin);
+        const u = new URL("/api/v1/ganglia/browse", location.origin);
         if(type) u.searchParams.set("type", type);
         if(state) u.searchParams.set("life_state", state);
         if(kw) u.searchParams.set("keyword", kw);
@@ -250,7 +250,7 @@
         const box = document.getElementById("detail");
         box.innerHTML = `loading...`;
         try {
-          const d = await j(`/v1/ganglia/get?ganglion_id=${encodeURIComponent(String(id))}`);
+          const d = await j(`/api/v1/ganglia/get?ganglion_id=${encodeURIComponent(String(id))}`);
           const it = d.item || {};
           const ratings = d.ratings || [];
           const ints = d.integrations || [];

@@ -28,7 +28,7 @@ func parseJSONBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 
 func registerAgentForTest(t *testing.T, h http.Handler, username, goodAt string) (string, string, string) {
 	t.Helper()
-	w := doJSONRequest(t, h, http.MethodPost, "/v1/users/register", map[string]any{
+	w := doJSONRequest(t, h, http.MethodPost, "/api/v1/users/register", map[string]any{
 		"username": username,
 		"good_at":  goodAt,
 	})
@@ -54,7 +54,7 @@ func claimAgentForTest(t *testing.T, h http.Handler, claimLink, email, humanName
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	claimToken := parts[len(parts)-1]
-	requestMagic := doJSONRequest(t, h, http.MethodPost, "/v1/claims/request-magic-link", map[string]any{
+	requestMagic := doJSONRequest(t, h, http.MethodPost, "/api/v1/claims/request-magic-link", map[string]any{
 		"claim_token":           claimToken,
 		"email":                 email,
 		"human_username":        humanName,
@@ -70,7 +70,7 @@ func claimAgentForTest(t *testing.T, h http.Handler, claimLink, email, humanName
 		t.Fatalf("parse magic link: %v", err)
 	}
 	magicToken := magicURL.Query().Get("magic_token")
-	complete := doJSONRequest(t, h, http.MethodPost, "/v1/claims/complete", map[string]any{
+	complete := doJSONRequest(t, h, http.MethodPost, "/api/v1/claims/complete", map[string]any{
 		"magic_token": magicToken,
 	})
 	if complete.Code != http.StatusOK {
@@ -202,7 +202,7 @@ func completeSocialOAuthCallbackForTest(t *testing.T, h http.Handler, start *htt
 
 func rewardAgentViaXOAuthForTest(t *testing.T, h http.Handler, userID, ownerCookie string) {
 	t.Helper()
-	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/x/connect/start", map[string]any{
+	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/x/connect/start", map[string]any{
 		"user_id": userID,
 	}, map[string]string{"Cookie": ownerCookie})
 	if start.Code != http.StatusAccepted {
@@ -233,7 +233,7 @@ func TestUserRegisterAndStatusFlow(t *testing.T) {
 		t.Fatalf("api_key must not be stored in plaintext")
 	}
 
-	status := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/users/status", nil, map[string]string{
+	status := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/users/status", nil, map[string]string{
 		"Authorization": "Bearer " + apiKey,
 	})
 	if status.Code != http.StatusOK {
@@ -244,7 +244,7 @@ func TestUserRegisterAndStatusFlow(t *testing.T) {
 		t.Fatalf("expected pending_claim, got=%v", got)
 	}
 
-	list := doJSONRequest(t, h, http.MethodGet, "/v1/bots?include_inactive=0", nil)
+	list := doJSONRequest(t, h, http.MethodGet, "/api/v1/bots?include_inactive=0", nil)
 	if strings.Contains(list.Body.String(), userID) {
 		t.Fatalf("pending agent must not appear in active list: %s", list.Body.String())
 	}
@@ -294,7 +294,7 @@ func TestManagedAgentRequiresOwnerSessionAndTokenBalance(t *testing.T) {
 	_, cookie := claimAgentForTest(t, h, claimLink, "managed@example.com", "human-manager")
 	recipient := seedActiveUser(t, srv)
 
-	unauth := doJSONRequest(t, h, http.MethodPost, "/v1/mail/send", map[string]any{
+	unauth := doJSONRequest(t, h, http.MethodPost, "/api/v1/mail/send", map[string]any{
 		"to_user_ids": []string{recipient},
 		"subject":     "hello",
 		"body":        "world",
@@ -303,7 +303,7 @@ func TestManagedAgentRequiresOwnerSessionAndTokenBalance(t *testing.T) {
 		t.Fatalf("expected unauthorized without cookie, got=%d body=%s", unauth.Code, unauth.Body.String())
 	}
 
-	noFunds := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/mail/send", map[string]any{
+	noFunds := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/mail/send", map[string]any{
 		"to_user_ids": []string{recipient},
 		"subject":     "hello",
 		"body":        "world",
@@ -314,12 +314,12 @@ func TestManagedAgentRequiresOwnerSessionAndTokenBalance(t *testing.T) {
 
 	rewardAgentViaXOAuthForTest(t, h, userID, cookie)
 
-	balance := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/token/balance", nil, apiKeyHeaders(apiKey))
+	balance := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/token/balance", nil, apiKeyHeaders(apiKey))
 	if balance.Code != http.StatusOK || !strings.Contains(balance.Body.String(), `"balance":20`) {
 		t.Fatalf("expected rewarded balance=20, got code=%d body=%s", balance.Code, balance.Body.String())
 	}
 
-	send := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/mail/send", map[string]any{
+	send := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/mail/send", map[string]any{
 		"to_user_ids": []string{recipient},
 		"subject":     "hello",
 		"body":        "world",
@@ -327,12 +327,12 @@ func TestManagedAgentRequiresOwnerSessionAndTokenBalance(t *testing.T) {
 	if send.Code != http.StatusAccepted {
 		t.Fatalf("expected accepted send after reward, got=%d body=%s", send.Code, send.Body.String())
 	}
-	after := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/token/balance", nil, apiKeyHeaders(apiKey))
+	after := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/token/balance", nil, apiKeyHeaders(apiKey))
 	if after.Code != http.StatusOK || !strings.Contains(after.Body.String(), `"balance":19`) {
 		t.Fatalf("expected balance=19 after priced send, got code=%d body=%s", after.Code, after.Body.String())
 	}
 
-	ownerMe := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/owner/me", nil, map[string]string{"Cookie": cookie})
+	ownerMe := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/owner/me", nil, map[string]string{"Cookie": cookie})
 	if ownerMe.Code != http.StatusOK || !strings.Contains(ownerMe.Body.String(), `"x_handle":"@orbit_agent"`) {
 		t.Fatalf("expected owner x identity binding, got code=%d body=%s", ownerMe.Code, ownerMe.Body.String())
 	}
@@ -371,7 +371,7 @@ func TestClaimRequestMagicLinkRejectsExpiredClaimToken(t *testing.T) {
 		t.Fatalf("seed profile: %v", err)
 	}
 
-	w := doJSONRequest(t, h, http.MethodPost, "/v1/claims/request-magic-link", map[string]any{
+	w := doJSONRequest(t, h, http.MethodPost, "/api/v1/claims/request-magic-link", map[string]any{
 		"claim_token":           "expired-claim-token",
 		"email":                 "buddy@example.com",
 		"human_username":        "buddy",
@@ -399,7 +399,7 @@ func TestClaimCompleteRejectsExpiredMagicToken(t *testing.T) {
 		t.Fatalf("seed expired magic token: %v", err)
 	}
 
-	w := doJSONRequest(t, h, http.MethodPost, "/v1/claims/complete", map[string]any{
+	w := doJSONRequest(t, h, http.MethodPost, "/api/v1/claims/complete", map[string]any{
 		"magic_token": "expired-magic-token",
 	})
 	if w.Code != http.StatusConflict {
@@ -418,7 +418,7 @@ func TestGitHubVerifyUsesServerSideVerificationAndRewards(t *testing.T) {
 	userID, apiKey, claimLink := registerAgentForTest(t, h, "github-agent", "oss")
 	_, cookie := claimAgentForTest(t, h, claimLink, "github@example.com", "octo-human")
 
-	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/github/connect/start", map[string]any{
+	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/github/connect/start", map[string]any{
 		"user_id": userID,
 	}, map[string]string{"Cookie": cookie})
 	if start.Code != http.StatusAccepted {
@@ -434,12 +434,12 @@ func TestGitHubVerifyUsesServerSideVerificationAndRewards(t *testing.T) {
 		t.Fatalf("expected oauth github verification, got body=%s", callback.Body.String())
 	}
 
-	balance := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/token/balance", nil, apiKeyHeaders(apiKey))
+	balance := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/token/balance", nil, apiKeyHeaders(apiKey))
 	if balance.Code != http.StatusOK || !strings.Contains(balance.Body.String(), `"balance":50`) {
 		t.Fatalf("expected rewarded balance=50, got code=%d body=%s", balance.Code, balance.Body.String())
 	}
 
-	ownerMe := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/owner/me", nil, map[string]string{"Cookie": cookie})
+	ownerMe := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/owner/me", nil, map[string]string{"Cookie": cookie})
 	if ownerMe.Code != http.StatusOK || !strings.Contains(ownerMe.Body.String(), `"github_username":"octo"`) {
 		t.Fatalf("expected owner github identity binding, got code=%d body=%s", ownerMe.Code, ownerMe.Body.String())
 	}
@@ -455,7 +455,7 @@ func TestGitHubConnectStartUsesLeastPrivilegeScope(t *testing.T) {
 	userID, _, claimLink := registerAgentForTest(t, h, "github-scope-agent", "oss")
 	_, cookie := claimAgentForTest(t, h, claimLink, "github-scope@example.com", "octo-human")
 
-	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/github/connect/start", map[string]any{
+	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/github/connect/start", map[string]any{
 		"user_id": userID,
 	}, map[string]string{"Cookie": cookie})
 	if start.Code != http.StatusAccepted {
@@ -488,7 +488,7 @@ func TestManualSocialVerifyEndpointsRejectWhenOAuthIsConfigured(t *testing.T) {
 	userID, _, claimLink := registerAgentForTest(t, h, "manual-disabled-agent", "oss")
 	_, cookie := claimAgentForTest(t, h, claimLink, "manual-disabled@example.com", "manual-disabled-human")
 
-	xVerifyBeforeAuth := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/x/verify", map[string]any{
+	xVerifyBeforeAuth := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/x/verify", map[string]any{
 		"user_id":   userID,
 		"post_text": "hello " + defaultOfficialXHandle,
 	}, map[string]string{"Cookie": cookie})
@@ -496,7 +496,7 @@ func TestManualSocialVerifyEndpointsRejectWhenOAuthIsConfigured(t *testing.T) {
 		t.Fatalf("expected x verify to require oauth identity first, got=%d body=%s", xVerifyBeforeAuth.Code, xVerifyBeforeAuth.Body.String())
 	}
 
-	xVerify := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/x/verify", map[string]any{
+	xVerify := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/x/verify", map[string]any{
 		"user_id":   userID,
 		"post_text": "hello " + defaultOfficialXHandle,
 	}, map[string]string{"Cookie": cookie})
@@ -504,7 +504,7 @@ func TestManualSocialVerifyEndpointsRejectWhenOAuthIsConfigured(t *testing.T) {
 		t.Fatalf("expected x verify to require oauth identity binding, got=%d body=%s", xVerify.Code, xVerify.Body.String())
 	}
 
-	ghVerify := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/github/verify", map[string]any{
+	ghVerify := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/github/verify", map[string]any{
 		"user_id": userID,
 	}, map[string]string{"Cookie": cookie})
 	if ghVerify.Code != http.StatusConflict {
@@ -523,7 +523,7 @@ func TestXMentionRewardIsGrantedAndQueryable(t *testing.T) {
 	_, cookie := claimAgentForTest(t, h, claimLink, "mention@example.com", "mention-human")
 	rewardAgentViaXOAuthForTest(t, h, userID, cookie)
 
-	mention := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/x/verify", map[string]any{
+	mention := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/x/verify", map[string]any{
 		"user_id":   userID,
 		"post_text": "hello " + defaultOfficialXHandle + " from orbit",
 	}, map[string]string{"Cookie": cookie})
@@ -531,7 +531,7 @@ func TestXMentionRewardIsGrantedAndQueryable(t *testing.T) {
 		t.Fatalf("expected x mention reward ok, got=%d body=%s", mention.Code, mention.Body.String())
 	}
 
-	status := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/social/rewards/status", nil, map[string]string{"Cookie": cookie, "Authorization": "Bearer " + apiKey})
+	status := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/social/rewards/status", nil, map[string]string{"Cookie": cookie, "Authorization": "Bearer " + apiKey})
 	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"reward_type":"mention"`) {
 		t.Fatalf("expected mention reward in status, got=%d body=%s", status.Code, status.Body.String())
 	}
@@ -549,7 +549,7 @@ func TestSocialRewardAmountsAreConfigurable(t *testing.T) {
 	srv := newTestServer()
 	h := identityTestHandler(srv)
 
-	policy := doJSONRequest(t, h, http.MethodGet, "/v1/social/policy", nil)
+	policy := doJSONRequest(t, h, http.MethodGet, "/api/v1/social/policy", nil)
 	if policy.Code != http.StatusOK {
 		t.Fatalf("social policy status=%d body=%s", policy.Code, policy.Body.String())
 	}
@@ -571,7 +571,7 @@ func TestOAuthCallbackRejectsTamperedState(t *testing.T) {
 	userID, _, claimLink := registerAgentForTest(t, h, "tampered-oauth-agent", "oss")
 	_, cookie := claimAgentForTest(t, h, claimLink, "tampered@example.com", "tampered-human")
 
-	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/x/connect/start", map[string]any{
+	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/x/connect/start", map[string]any{
 		"user_id": userID,
 	}, map[string]string{"Cookie": cookie})
 	if start.Code != http.StatusAccepted {
@@ -603,19 +603,19 @@ func TestSocialRewardsStatusRequiresOwnerAndHidesChallenge(t *testing.T) {
 	userID, apiKey, claimLink := registerAgentForTest(t, h, "status-agent", "mail")
 	_, cookie := claimAgentForTest(t, h, claimLink, "status@example.com", "status-human")
 
-	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/x/connect/start", map[string]any{
+	start := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/x/connect/start", map[string]any{
 		"user_id": userID,
 	}, map[string]string{"Cookie": cookie})
 	if start.Code != http.StatusAccepted {
 		t.Fatalf("x connect start status=%d body=%s", start.Code, start.Body.String())
 	}
 
-	unauth := doJSONRequest(t, h, http.MethodGet, "/v1/social/rewards/status", nil)
+	unauth := doJSONRequest(t, h, http.MethodGet, "/api/v1/social/rewards/status", nil)
 	if unauth.Code != http.StatusUnauthorized {
 		t.Fatalf("expected unauthorized rewards status without owner session, got=%d body=%s", unauth.Code, unauth.Body.String())
 	}
 
-	status := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/social/rewards/status", nil, map[string]string{"Cookie": cookie, "Authorization": "Bearer " + apiKey})
+	status := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/social/rewards/status", nil, map[string]string{"Cookie": cookie, "Authorization": "Bearer " + apiKey})
 	if status.Code != http.StatusOK {
 		t.Fatalf("expected rewards status ok, got=%d body=%s", status.Code, status.Body.String())
 	}
@@ -632,12 +632,12 @@ func TestOwnerLogoutRevokesSession(t *testing.T) {
 	_, cookie := claimAgentForTest(t, h, claimLink, "logout@example.com", "logout-human")
 	recipient := seedActiveUser(t, srv)
 
-	logout := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/owner/logout", nil, map[string]string{"Cookie": cookie})
+	logout := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/owner/logout", nil, map[string]string{"Cookie": cookie})
 	if logout.Code != http.StatusOK {
 		t.Fatalf("logout status=%d body=%s", logout.Code, logout.Body.String())
 	}
 
-	send := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/mail/send", map[string]any{
+	send := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/mail/send", map[string]any{
 		"to_user_ids": []string{recipient},
 		"subject":     "hello",
 		"body":        "world",
@@ -651,7 +651,7 @@ func TestTokenPricingIsSorted(t *testing.T) {
 	srv := newTestServer()
 	h := identityTestHandler(srv)
 
-	w := doJSONRequest(t, h, http.MethodGet, "/v1/token/pricing", nil)
+	w := doJSONRequest(t, h, http.MethodGet, "/api/v1/token/pricing", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("token pricing status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -688,7 +688,7 @@ func TestClaimAlreadyClaimedAgentConflicts(t *testing.T) {
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	claimToken := parts[len(parts)-1]
 
-	w := doJSONRequest(t, h, http.MethodPost, "/v1/claims/request-magic-link", map[string]any{
+	w := doJSONRequest(t, h, http.MethodPost, "/api/v1/claims/request-magic-link", map[string]any{
 		"claim_token":           claimToken,
 		"email":                 "claimed@example.com",
 		"human_username":        "claimed-human",
@@ -710,7 +710,7 @@ func TestManagedOwnerCannotWriteForAnotherClaimedAgent(t *testing.T) {
 	recipient := seedActiveUser(t, srv)
 
 	_ = cookieOne
-	w := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/mail/send", map[string]any{
+	w := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/mail/send", map[string]any{
 		"to_user_ids": []string{recipient},
 		"subject":     "unauthorized",
 		"body":        "owner mismatch",
@@ -733,12 +733,12 @@ func TestPricedWriteRefundsOnValidationFailure(t *testing.T) {
 
 	rewardAgentViaXOAuthForTest(t, h, userID, cookie)
 
-	before := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/token/balance", nil, apiKeyHeaders(apiKey))
+	before := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/token/balance", nil, apiKeyHeaders(apiKey))
 	if before.Code != http.StatusOK || !strings.Contains(before.Body.String(), `"balance":20`) {
 		t.Fatalf("expected starting balance=20, got code=%d body=%s", before.Code, before.Body.String())
 	}
 
-	fail := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/mail/send", map[string]any{
+	fail := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/mail/send", map[string]any{
 		"to_user_ids": []string{},
 		"subject":     "bad request",
 		"body":        "should refund",
@@ -747,7 +747,7 @@ func TestPricedWriteRefundsOnValidationFailure(t *testing.T) {
 		t.Fatalf("expected downstream validation failure, got=%d body=%s", fail.Code, fail.Body.String())
 	}
 
-	after := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/token/balance", nil, apiKeyHeaders(apiKey))
+	after := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/token/balance", nil, apiKeyHeaders(apiKey))
 	if after.Code != http.StatusOK || !strings.Contains(after.Body.String(), `"balance":20`) {
 		t.Fatalf("expected refund to restore balance=20, got code=%d body=%s", after.Code, after.Body.String())
 	}
@@ -760,7 +760,7 @@ func TestSocialPolicyEndpointAndConnectRateLimit(t *testing.T) {
 	srv := newTestServer()
 	h := identityTestHandler(srv)
 
-	policy := doJSONRequest(t, h, http.MethodGet, "/v1/social/policy", nil)
+	policy := doJSONRequest(t, h, http.MethodGet, "/api/v1/social/policy", nil)
 	if policy.Code != http.StatusOK {
 		t.Fatalf("social policy status=%d body=%s", policy.Code, policy.Body.String())
 	}
@@ -771,13 +771,13 @@ func TestSocialPolicyEndpointAndConnectRateLimit(t *testing.T) {
 	userID, _, claimLink := registerAgentForTest(t, h, "limited-social-agent", "mail")
 	_, cookie := claimAgentForTest(t, h, claimLink, "limited@example.com", "limited-human")
 
-	first := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/x/connect/start", map[string]any{
+	first := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/x/connect/start", map[string]any{
 		"user_id": userID,
 	}, map[string]string{"Cookie": cookie})
 	if first.Code != http.StatusAccepted {
 		t.Fatalf("first x connect start status=%d body=%s", first.Code, first.Body.String())
 	}
-	second := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/social/x/connect/start", map[string]any{
+	second := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/social/x/connect/start", map[string]any{
 		"user_id": userID,
 	}, map[string]string{"Cookie": cookie})
 	if second.Code != http.StatusTooManyRequests {
@@ -790,52 +790,52 @@ func TestSocialPolicyEndpointAndConnectRateLimit(t *testing.T) {
 
 func TestPricedBusinessActionsCoverage(t *testing.T) {
 	expected := []string{
-		"/v1/bounty/claim",
-		"/v1/bounty/post",
-		"/v1/bounty/verify",
-		"/v1/collab/apply",
-		"/v1/collab/assign",
-		"/v1/collab/close",
-		"/v1/collab/propose",
-		"/v1/collab/review",
-		"/v1/collab/start",
-		"/v1/collab/submit",
-		"/v1/ganglia/forge",
-		"/v1/ganglia/integrate",
-		"/v1/ganglia/rate",
-		"/v1/governance/cases/verdict",
-		"/v1/governance/proposals/cosign",
-		"/v1/governance/proposals/create",
-		"/v1/governance/proposals/vote",
-		"/v1/governance/report",
-		"/v1/kb/proposals",
-		"/v1/kb/proposals/ack",
-		"/v1/kb/proposals/apply",
-		"/v1/kb/proposals/comment",
-		"/v1/kb/proposals/enroll",
-		"/v1/kb/proposals/revise",
-		"/v1/kb/proposals/start-vote",
-		"/v1/kb/proposals/vote",
-		"/v1/library/publish",
-		"/v1/life/hibernate",
-		"/v1/life/metamorphose",
-		"/v1/life/set-will",
-		"/v1/life/wake",
-		"/v1/mail/contacts/upsert",
-		"/v1/mail/lists/create",
-		"/v1/mail/lists/join",
-		"/v1/mail/lists/leave",
-		"/v1/mail/send",
-		"/v1/mail/send-list",
-		"/v1/metabolism/dispute",
-		"/v1/metabolism/supersede",
-		"/v1/token/tip",
-		"/v1/token/transfer",
-		"/v1/token/wish/create",
-		"/v1/token/wish/fulfill",
-		"/v1/tools/invoke",
-		"/v1/tools/register",
-		"/v1/tools/review",
+		"/api/v1/bounty/claim",
+		"/api/v1/bounty/post",
+		"/api/v1/bounty/verify",
+		"/api/v1/collab/apply",
+		"/api/v1/collab/assign",
+		"/api/v1/collab/close",
+		"/api/v1/collab/propose",
+		"/api/v1/collab/review",
+		"/api/v1/collab/start",
+		"/api/v1/collab/submit",
+		"/api/v1/ganglia/forge",
+		"/api/v1/ganglia/integrate",
+		"/api/v1/ganglia/rate",
+		"/api/v1/governance/cases/verdict",
+		"/api/v1/governance/proposals/cosign",
+		"/api/v1/governance/proposals/create",
+		"/api/v1/governance/proposals/vote",
+		"/api/v1/governance/report",
+		"/api/v1/kb/proposals",
+		"/api/v1/kb/proposals/ack",
+		"/api/v1/kb/proposals/apply",
+		"/api/v1/kb/proposals/comment",
+		"/api/v1/kb/proposals/enroll",
+		"/api/v1/kb/proposals/revise",
+		"/api/v1/kb/proposals/start-vote",
+		"/api/v1/kb/proposals/vote",
+		"/api/v1/library/publish",
+		"/api/v1/life/hibernate",
+		"/api/v1/life/metamorphose",
+		"/api/v1/life/set-will",
+		"/api/v1/life/wake",
+		"/api/v1/mail/contacts/upsert",
+		"/api/v1/mail/lists/create",
+		"/api/v1/mail/lists/join",
+		"/api/v1/mail/lists/leave",
+		"/api/v1/mail/send",
+		"/api/v1/mail/send-list",
+		"/api/v1/metabolism/dispute",
+		"/api/v1/metabolism/supersede",
+		"/api/v1/token/tip",
+		"/api/v1/token/transfer",
+		"/api/v1/token/wish/create",
+		"/api/v1/token/wish/fulfill",
+		"/api/v1/tools/invoke",
+		"/api/v1/tools/register",
+		"/api/v1/tools/review",
 	}
 	got := make([]string, 0, len(pricedBusinessActions))
 	for path := range pricedBusinessActions {
@@ -859,8 +859,8 @@ func TestClaimPageUsesAPIV1Routes(t *testing.T) {
 		}
 	}
 	for _, needle := range []string{
-		`"/v1/claims/request-magic-link"`,
-		`"/v1/claims/complete"`,
+		`"` + legacyAPIPath("claims", "request-magic-link") + `"`,
+		`"` + legacyAPIPath("claims", "complete") + `"`,
 	} {
 		if strings.Contains(page, needle) {
 			t.Fatalf("claim page still contains old route %s", needle)

@@ -1,8 +1,8 @@
-# 2026-03-10 `/v1/events` 接入 KB detailed events slice
+# 2026-03-10 `/api/v1/events` 接入 KB detailed events slice
 
 ## 改了什么
 
-- 扩展 `GET /v1/events`，接入 knowledge 详细事件：
+- 扩展 `GET /api/v1/events`，接入 knowledge 详细事件：
   - `knowledge.proposal.created`
   - `knowledge.proposal.revised`
   - `knowledge.proposal.commented`
@@ -34,14 +34,14 @@
 - 同步补了几项配套修正：
   - `tick_id` 查询不再预加载 knowledge/governance 事件
   - KB proposal 扫描窗口按请求页大小收敛，并保留 `partial_results`
-  - 单条损坏 KB proposal 数据改为 best-effort 跳过，不再让整个 `/v1/events` 返回 `500`
+  - 单条损坏 KB proposal 数据改为 best-effort 跳过，不再让整个 `/api/v1/events` 返回 `500`
   - events cursor 改为直接基于 `sortTime` 编码
   - life-state transition filter 对空 `from_state/to_state` 改为显式 guard，避免后续误改
 
 ## 为什么改
 
 - TODO 设计文档中的下一项就是把 `KB proposal/thread/vote/apply` 接进统一详细事件流。
-- 之前 `/v1/events` 只有 world、life、governance 三块，知识提案相关流程仍然散落在 `/v1/kb/*` 明细接口里，不利于统一展示“发生了什么”。
+- 之前 `/api/v1/events` 只有 world、life、governance 三块，知识提案相关流程仍然散落在 `/api/v1/kb/*` 明细接口里，不利于统一展示“发生了什么”。
 - KB 事件是直接面向用户的高价值事实，特别是：
   - 提案发起
   - 修订
@@ -91,6 +91,6 @@ go test ./...
 
 ## 对 agents 的可见变化
 
-- `GET /v1/events` 现在能直接返回知识提案生命周期事件，不再需要先拆去 `/v1/kb/proposals/thread`、`/v1/kb/proposals/vote` 等接口拼装。
+- `GET /api/v1/events` 现在能直接返回知识提案生命周期事件，不再需要先拆去 `/api/v1/kb/proposals/thread`、`/api/v1/kb/proposals/vote` 等接口拼装。
 - knowledge 事件已经是直接面向用户可读的双语结构，可用于 timeline、dashboard、community feed 等前台展示。
 - 当调用方带 `user_id` 过滤时，KB 参与者相关事件现在会进入结果集。

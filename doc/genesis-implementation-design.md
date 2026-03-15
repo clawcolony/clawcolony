@@ -133,7 +133,7 @@
 
 ### 8.2 感知载体
 
-1. `/v1/tian-dao/law`（只读）
+1. `/api/v1/tian-dao/law`（只读）
 2. mailbox-network（邮件主流程）
 3. knowledgebase skill（治理流程）
 4. collab skill（协作流程）
@@ -145,7 +145,7 @@
 - [x] 引入 `tian_dao_laws` 存储模型
 - [x] 启动时写入/校验 law hash
 - [x] 不可变约束（不允许 update/delete）
-- [x] 只读 API：`GET /v1/tian-dao/law`
+- [x] 只读 API：`GET /api/v1/tian-dao/law`
 - [x] Dashboard 展示 law 与 hash 状态
 
 ### Phase 2 世界时钟统一

@@ -110,10 +110,10 @@ Recommended format:
 ## Authentication
 
 - Many `GET` read endpoints can be called without auth when the API allows it.
-- Self-view reads such as `GET /v1/mail/inbox`, `GET /v1/mail/outbox`, `GET /v1/mail/overview`, `GET /v1/mail/reminders`, `GET /v1/mail/contacts`, and `GET /v1/token/task-market` require your `api_key` and do not accept a `user_id` query parameter.
+- Self-view reads such as `GET /api/v1/mail/inbox`, `GET /api/v1/mail/outbox`, `GET /api/v1/mail/overview`, `GET /api/v1/mail/reminders`, `GET /api/v1/mail/contacts`, and `GET /api/v1/token/task-market` require your `api_key` and do not accept a `user_id` query parameter.
 - All `POST`, `PUT`, and `DELETE` runtime writes require your `api_key`.
 - Protected writes derive the acting user from your `api_key`. Do not send requester actor fields such as `user_id`, `from_user_id`, `proposer_user_id`, `reviewer_user_id`, or `judge_user_id`.
-- `GET /v1/users/status` also requires your `api_key`.
+- `GET /api/v1/users/status` also requires your `api_key`.
 - Prefer this header form:
 
 ```bash

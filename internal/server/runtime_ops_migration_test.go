@@ -16,21 +16,21 @@ func TestRuntimeRemovedEndpointsReturn404(t *testing.T) {
 		method string
 		path   string
 	}{
-		{http.MethodGet, "/v1/prompts/templates"},
-		{http.MethodPut, "/v1/prompts/templates/upsert"},
-		{http.MethodPost, "/v1/prompts/templates/apply"},
-		{http.MethodGet, "/v1/bots/logs"},
-		{http.MethodGet, "/v1/bots/logs/all"},
-		{http.MethodGet, "/v1/bots/rule-status"},
-		{http.MethodPost, "/v1/bots/dev/link"},
-		{http.MethodGet, "/v1/bots/dev/health"},
-		{http.MethodGet, "/v1/bots/openclaw/status"},
-		{http.MethodGet, "/v1/system/openclaw-dashboard-config"},
-		{http.MethodPost, "/v1/chat/send"},
-		{http.MethodGet, "/v1/chat/history"},
-		{http.MethodGet, "/v1/chat/stream"},
-		{http.MethodGet, "/v1/chat/state"},
-		{http.MethodGet, "/v1/bots/profile/readme"},
+		{http.MethodGet, "/api/v1/prompts/templates"},
+		{http.MethodPut, "/api/v1/prompts/templates/upsert"},
+		{http.MethodPost, "/api/v1/prompts/templates/apply"},
+		{http.MethodGet, "/api/v1/bots/logs"},
+		{http.MethodGet, "/api/v1/bots/logs/all"},
+		{http.MethodGet, "/api/v1/bots/rule-status"},
+		{http.MethodPost, "/api/v1/bots/dev/link"},
+		{http.MethodGet, "/api/v1/bots/dev/health"},
+		{http.MethodGet, "/api/v1/bots/openclaw/status"},
+		{http.MethodGet, "/api/v1/system/openclaw-dashboard-config"},
+		{http.MethodPost, "/api/v1/chat/send"},
+		{http.MethodGet, "/api/v1/chat/history"},
+		{http.MethodGet, "/api/v1/chat/stream"},
+		{http.MethodGet, "/api/v1/chat/state"},
+		{http.MethodGet, "/api/v1/bots/profile/readme"},
 	}
 	for _, tc := range cases {
 		w := doJSONRequest(t, srv.mux, tc.method, tc.path, nil)
@@ -47,10 +47,10 @@ func TestRuntimeRemovedPrefixEndpointsReturn404(t *testing.T) {
 		method string
 		path   string
 	}{
-		{http.MethodGet, "/v1/bots/dev/u1/p/3000/"},
-		{http.MethodHead, "/v1/bots/dev/u1/p/3000/"},
-		{http.MethodOptions, "/v1/bots/dev/u1/p/3000/"},
-		{http.MethodGet, "/v1/bots/openclaw/u1/"},
+		{http.MethodGet, "/api/v1/bots/dev/u1/p/3000/"},
+		{http.MethodHead, "/api/v1/bots/dev/u1/p/3000/"},
+		{http.MethodOptions, "/api/v1/bots/dev/u1/p/3000/"},
+		{http.MethodGet, "/api/v1/bots/openclaw/u1/"},
 	}
 	for _, tc := range cases {
 		w := doJSONRequest(t, srv.mux, tc.method, tc.path, nil)
@@ -74,16 +74,16 @@ func TestRuntimeIdentityEndpointsStillAvailable(t *testing.T) {
 		t.Fatalf("seed runtime identity registration: %v", err)
 	}
 
-	list := doJSONRequest(t, h, http.MethodGet, "/v1/bots?include_inactive=1", nil)
+	list := doJSONRequest(t, h, http.MethodGet, "/api/v1/bots?include_inactive=1", nil)
 	if list.Code != http.StatusOK {
-		t.Fatalf("GET /v1/bots expected 200 got=%d body=%s", list.Code, list.Body.String())
+		t.Fatalf("GET /api/v1/bots expected 200 got=%d body=%s", list.Code, list.Body.String())
 	}
 
-	nick := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/bots/nickname/upsert", map[string]any{
+	nick := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/bots/nickname/upsert", map[string]any{
 		"nickname": "Nick",
 	}, apiKeyHeaders(apiKey))
 	if nick.Code != http.StatusNotFound {
-		t.Fatalf("POST /v1/bots/nickname/upsert expected 404(bot not found) got=%d body=%s", nick.Code, nick.Body.String())
+		t.Fatalf("POST /api/v1/bots/nickname/upsert expected 404(bot not found) got=%d body=%s", nick.Code, nick.Body.String())
 	}
 }
 
@@ -105,9 +105,9 @@ func TestRuntimeBotsListUsesDBStatusFilter(t *testing.T) {
 		Initialized: false,
 	})
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/bots?include_inactive=0", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/bots?include_inactive=0", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("GET /v1/bots expected 200 got=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("GET /api/v1/bots expected 200 got=%d body=%s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
 	if !strings.Contains(body, "u-active") {

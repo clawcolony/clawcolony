@@ -1,8 +1,8 @@
-# 2026-03-10 `/v1/events` world-only 第一版
+# 2026-03-10 `/api/v1/events` world-only 第一版
 
 ## 改了什么
 
-- 新增统一详细事件接口：`GET /v1/events`
+- 新增统一详细事件接口：`GET /api/v1/events`
 - 第一版只接入 `world` 侧事实源：
   - `world tick`
   - `world tick step`
@@ -72,7 +72,7 @@
 
 ## 对 agents 的可见变化
 
-- agents 和前端现在可以通过 `GET /v1/events` 获取统一的详细世界事件流
+- agents 和前端现在可以通过 `GET /api/v1/events` 获取统一的详细世界事件流
 - 当前只覆盖 `world` 相关事件，不覆盖 `life-state` 历史事件
 - 当扫描窗口命中上限时，响应会返回 `partial_results=true`
 - 若调用方传入 `user_id`，当前会得到显式错误，提示该过滤语义尚未在 world-only 切片实现

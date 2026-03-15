@@ -13,8 +13,8 @@ func TestRuntimeDoesNotExposeLegacyManagementEndpoints(t *testing.T) {
 		path   string
 		body   map[string]any
 	}{
-		{method: http.MethodPost, path: "/v1/bots/register", body: map[string]any{"provider": "openclaw"}},
-		{method: http.MethodGet, path: "/v1/dashboard-admin/openclaw/admin/overview"},
+		{method: http.MethodPost, path: "/api/v1/bots/register", body: map[string]any{"provider": "openclaw"}},
+		{method: http.MethodGet, path: "/api/v1/dashboard-admin/openclaw/admin/overview"},
 	}
 
 	for _, tc := range cases {

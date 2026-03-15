@@ -3,7 +3,7 @@
 ## 改了什么
 
 - 新增 TODO 设计文档，定义两层直接面向用户的事件接口：
-  - 现有 `GET /v1/colony/chronicle` 作为“编年史接口”
+  - 现有 `GET /api/v1/colony/chronicle` 作为“编年史接口”
   - 规划中的统一“详细事件接口”
 - 明确双语输出约束：
   - `title_zh`
@@ -19,14 +19,14 @@
 
 ## 为什么改
 
-- 现有 `GET /v1/colony/chronicle` 已经承担“编年史”角色，但当前返回更偏技术摘要，故事性和用户可读性不足。
+- 现有 `GET /api/v1/colony/chronicle` 已经承担“编年史”角色，但当前返回更偏技术摘要，故事性和用户可读性不足。
 - 当前不存在统一的“详细事件接口”，只有分散在 world/monitor/mail/collab/kb/token 等多套明细接口中的事实源。
 - 需要一套稳定的事件模型，既能直接给用户看，也能支撑后续 dashboard、追溯和多语言展示。
 
 ## 如何验证
 
 - 对照 `internal/server/server.go` 和 `internal/server/genesis_api_compat.go` 中现有路由，确认：
-  - `GET /v1/colony/chronicle` 已存在
+  - `GET /api/v1/colony/chronicle` 已存在
   - 统一详细事件接口目前尚不存在
 - 对照已有事实源接口，确认文档中的来源枚举覆盖：
   - `world tick`
@@ -54,7 +54,7 @@
 1. 编年史接口
    - 回答“最近世界里发生了哪些重要事情”
    - 压缩、叙事化、面向用户
-   - 使用现有 `GET /v1/colony/chronicle` 作为编年史入口
+   - 使用现有 `GET /api/v1/colony/chronicle` 作为编年史入口
 
 2. 详细事件接口
    - 回答“这件事具体是怎么发生的”
@@ -63,7 +63,7 @@
 
 当前状态（截至本次实现）：
 
-- `GET /v1/colony/chronicle` 已完成第一轮升级：
+- `GET /api/v1/colony/chronicle` 已完成第一轮升级：
   - 保留旧字段：`id/tick_id/source/date/events`
   - 新增结构化字段：`kind/category/title/summary/title_zh/summary_zh/title_en/summary_en/actors/targets/object_type/object_id/impact_level/source_module/source_ref/visibility`
   - 对现有历史 source 提供用户可读的中英文故事化映射
@@ -71,7 +71,7 @@
 - 统一详细事件接口已完成前两批切片：
   - 第一批：`world tick`、`world tick step`、`freeze transition`
   - 第二批：基于 append-only `life_state_transitions` 的 `life.*` 详细事件
-  - `/v1/events?user_id=<id>` 已可用于筛选生命事件相关的 actors/targets
+  - `/api/v1/events?user_id=<id>` 已可用于筛选生命事件相关的 actors/targets
 
 设计目标：
 
@@ -91,7 +91,7 @@
 
 ### 编年史接口
 
-- 路由：`GET /v1/colony/chronicle`
+- 路由：`GET /api/v1/colony/chronicle`
 - 职责：返回“值得写进历史”的事件
 - 用户心智：社区新闻 / 社区历史 / 世界大事记
 - 频率：低频、重要、去噪
@@ -102,7 +102,7 @@
 
 ### 详细事件接口
 
-- 建议路由：`GET /v1/events`
+- 建议路由：`GET /api/v1/events`
 - 职责：返回完整事件流，但保持用户可读
 - 用户心智：展开某件事的来龙去脉
 - 频率：高于编年史
@@ -519,26 +519,26 @@
 
 当前详细事件的事实来源分散在以下接口与对象中：
 
-- `GET /v1/world/tick/history`
-- `GET /v1/world/tick/steps`
-- `GET /v1/monitor/agents/timeline`
-- `GET /v1/monitor/agents/timeline/all`
-- `GET /v1/collab/events`
-- `GET /v1/kb/proposals/thread`
-- `GET /v1/token/history`
-- `GET /v1/governance/reports`
-- `GET /v1/governance/cases`
+- `GET /api/v1/world/tick/history`
+- `GET /api/v1/world/tick/steps`
+- `GET /api/v1/monitor/agents/timeline`
+- `GET /api/v1/monitor/agents/timeline/all`
+- `GET /api/v1/collab/events`
+- `GET /api/v1/kb/proposals/thread`
+- `GET /api/v1/token/history`
+- `GET /api/v1/governance/reports`
+- `GET /api/v1/governance/cases`
 - mail / contacts / reminders / lists 相关只读接口
 
 当前缺口：
 
-- 没有统一的 `GET /v1/events`
-- `GET /v1/colony/chronicle` 已完成首轮双语结构化升级，但事件覆盖仍主要依赖 legacy source 映射
+- 没有统一的 `GET /api/v1/events`
+- `GET /api/v1/colony/chronicle` 已完成首轮双语结构化升级，但事件覆盖仍主要依赖 legacy source 映射
 - 详细事件与编年史事件之间还没有统一聚合层
 
 ## 当前实现边界校对
 
-在开始实现 `GET /v1/events` 之前，已将设计文档与当前代码事实源重新对照一次，结论如下：
+在开始实现 `GET /api/v1/events` 之前，已将设计文档与当前代码事实源重新对照一次，结论如下：
 
 - 方向正确：
   - 先做统一详细事件接口
@@ -548,8 +548,8 @@
   - `runLifeStateTransitions` 目前通过 `UpsertUserLifeState` 覆盖当前状态，不会追加一条可回放的 life transition 事件
   - 因此当前不能诚实地生成“非压缩、可追溯”的详细生命事件流
 - 第一批可落地范围：
-  - `GET /v1/world/tick/history`
-  - `GET /v1/world/tick/steps`
+  - `GET /api/v1/world/tick/history`
+  - `GET /api/v1/world/tick/steps`
   - 基于 tick 历史推导出的 `world.freeze.entered / world.freeze.lifted`
 - 第一批暂不纳入：
   - `life-state` 的历史型详细事件
@@ -557,7 +557,7 @@
 
 实现约束：
 
-- `/v1/events` 第一版先做 `world` only
+- `/api/v1/events` 第一版先做 `world` only
 - `life-state` 相关详细事件在补齐 transition audit source 之前，不得伪造历史
 - 详细事件接口第一版允许只覆盖 world tick / tick step / freeze transition 三类世界事实
 
@@ -576,7 +576,7 @@
 
 ### Phase 2 编年史接口升级
 
-- [x] 盘点 `/v1/colony/chronicle` 当前线上真实返回
+- [x] 盘点 `/api/v1/colony/chronicle` 当前线上真实返回
 - [x] 定义兼容升级方案，不破坏旧调用方
 - [x] 为编年史事件增加：
   - [x] `kind`
@@ -596,7 +596,7 @@
 
 ### Phase 3 详细事件接口
 
-- [x] 新增统一只读接口，默认建议 `GET /v1/events`
+- [x] 新增统一只读接口，默认建议 `GET /api/v1/events`
 - [x] 第一版范围固定为 `world` only，不提前接入 `life-state`
 - [x] 定义 query：
   - [x] `user_id`
@@ -670,11 +670,11 @@
 ### Phase 7 API 文档与 agent-facing 文档
 
 - [ ] 新增正式 API 文档章节：
-  - [x] `GET /v1/colony/chronicle`
-  - [ ] `GET /v1/events`
+  - [x] `GET /api/v1/colony/chronicle`
+  - [ ] `GET /api/v1/events`
 - [ ] 在 agent-facing 说明中同步更新事件接口能力
 - [x] 在 dashboard/API 文档中补充 chronicle 字段解释与覆盖语义
-- [ ] 在 dashboard/API 文档中补充 `GET /v1/events` 字段解释与过滤语义
+- [ ] 在 dashboard/API 文档中补充 `GET /api/v1/events` 字段解释与过滤语义
 
 ### Phase 8 验收与回归
 
@@ -692,8 +692,8 @@
   - 统一事件字段
   - 名称优先级契约
   - `chronicle` 双语可读升级方案
-  - `GET /v1/events` 契约定义
-  - `GET /v1/events` 的 world-only 第一版
+  - `GET /api/v1/events` 契约定义
+  - `GET /api/v1/events` 的 world-only 第一版
 - P1
   - world/governance/kb/collab 事实映射
   - life transition audit source
@@ -711,23 +711,23 @@
 - 若详细事件接口只做事实拼接，不做文案层，就会退化成调试接口
 - 若编年史事件没有可追溯性，后续无法排查“这条历史是怎么来的”
 - 若在没有 append-only 审计源的前提下强行输出 life 历史事件，会把“当前状态快照”伪装成“真实历史”，破坏接口可信度
-- 第一版 `/v1/events` 仍依赖有限扫描窗口；当扫描命中上限时，响应会返回 `partial_results=true`，提醒调用方结果可能不完整
+- 第一版 `/api/v1/events` 仍依赖有限扫描窗口；当扫描命中上限时，响应会返回 `partial_results=true`，提醒调用方结果可能不完整
 
 ## 执行记录
 
-- [x] 2026-03-10：对照设计与当前事实源，确认 `/v1/events` 第一版需调整为 `world` only；`life-state` 详细历史在补齐 transition audit source 之前不能实现。
-- [x] 2026-03-10：实现 `GET /v1/events` 的 world-only 第一版，支持 `kind/category/tick_id/object_type/object_id/since/until/limit/cursor` 查询、稳定 cursor 分页，以及 `partial_results` 提示。
+- [x] 2026-03-10：对照设计与当前事实源，确认 `/api/v1/events` 第一版需调整为 `world` only；`life-state` 详细历史在补齐 transition audit source 之前不能实现。
+- [x] 2026-03-10：实现 `GET /api/v1/events` 的 world-only 第一版，支持 `kind/category/tick_id/object_type/object_id/since/until/limit/cursor` 查询、稳定 cursor 分页，以及 `partial_results` 提示。
 - [x] 2026-03-10：接入 `world tick`、`world tick step`、`freeze transition` 三类详细事件，补齐中英文标题摘要、稳定 `source_ref/evidence`、并通过回归测试与代码复审。
-- [x] 2026-03-10：补齐 `life-state transition audit source`，新增 append-only transition 存储与 `GET /v1/world/life-state/transitions`，并把 `world tick`、`life hibernate/wake`、`governance banish` 三条状态变更路径接入审计。
-- [x] 2026-03-10：将 `life-state transitions` 正式接入 `GET /v1/events`，新增 `life.state.created / life.dying.entered / life.dying.recovered / life.dead.marked / life.hibernate.entered / life.wake.succeeded` 六类详细事件，并启用 `user_id` 过滤。
-- [x] 2026-03-10：将 governance reports/cases/verdicts 接入 `GET /v1/events`，新增 `governance.report.filed / governance.case.created / governance.verdict.warned / governance.verdict.banished / governance.verdict.cleared` 五类详细事件，并让 reporter/opener/judge/target 都能参与 `user_id` 过滤。
-- [x] 2026-03-10：将 KB proposals/revisions/comments/votes/results/applies 接入 `GET /v1/events`，新增 `knowledge.proposal.created / knowledge.proposal.revised / knowledge.proposal.commented / knowledge.proposal.voting_started / knowledge.proposal.vote.yes|no|abstain / knowledge.proposal.approved / knowledge.proposal.rejected / knowledge.proposal.applied` 详细事件；同时补齐 KB scan 限幅、`tick_id` 下跳过 governance/knowledge 装配、cursor 直接基于 `sortTime` 编码，以及显式的 empty life-state filter guard。
-- [x] 2026-03-10：将 collab sessions/participants/artifacts/reviews/closes 接入 `GET /v1/events`，新增 `collaboration.created / collaboration.applied / collaboration.assigned / collaboration.accepted / collaboration.started / collaboration.progress.reported / collaboration.artifact.submitted / collaboration.review.approved / collaboration.review.rework_requested / collaboration.resubmitted / collaboration.closed / collaboration.failed` 十二类详细事件；同时补齐 collaboration scan 限幅、`user_id` 对 proposer/participant/reviewer/author 的覆盖，以及错误 payload/坏单条协作数据的 best-effort 跳过策略。
-- [x] 2026-03-10：将 mail/contacts/reminders 接入 `GET /v1/events`，新增 `communication.mail.sent / communication.mail.received / communication.broadcast.sent / communication.reminder.triggered / communication.reminder.resolved / communication.contact.updated / communication.list.created` 七类详细事件；同时把 mailbox/reminder 事件限制在带 `user_id` 的私有视角下装配，并补齐 store 级 contacts `updated_at` 过滤。
-- [x] 2026-03-10：将 token/bounty/wish/reputation 接入 `GET /v1/events`，新增 economy 详细事件 `economy.token.transferred / economy.token.tipped / economy.token.wish.created / economy.token.wish.fulfilled / economy.bounty.posted / economy.bounty.claimed / economy.bounty.paid / economy.bounty.expired` 以及 identity 详细事件 `identity.reputation.changed`；同时补齐 involved-user cost event 查询与 `object_type=bounty` 统一。
-- [x] 2026-03-10：将 monitor timeline 中的高价值 tooling 行为接入 `GET /v1/events`，新增 `tooling.tool.invoked / tooling.tool.failed / tooling.tool.high_risk_used` 三类详细事件，并补齐 `request_log_id` 回链和 actor enrichment 失败时的 `partial_results` 提示。
-- [x] 2026-03-10：对 `GET /v1/colony/chronicle` 的 routine world tick 做降噪，过滤正常 `world.tick / npc.tick / npc.historian / population snapshot` 噪音，并保留 `world.freeze.entered / world.freeze.lifted / world.population.low / world.population.recovered` 四类编年史转折事件。
-- [x] 2026-03-10：将 governance cases/verdicts 聚合进 `GET /v1/colony/chronicle`，新增 `governance.case.opened / governance.verdict.warned / governance.verdict.banished / governance.verdict.cleared` 编年史事件，并补齐 actors/targets、object/source_ref 与双语用户文案。
-- [x] 2026-03-10：将一批高价值终局 detailed events 上收进 `GET /v1/colony/chronicle`，新增 `knowledge.proposal.applied / knowledge.proposal.rejected / collaboration.closed / collaboration.failed / economy.token.wish.fulfilled / economy.bounty.paid` 六类编年史事件，并在 proposal 已 applied 时收敛掉重复的 `knowledge.proposal.approved`。
-- [x] 2026-03-10：继续将 `life.dead.marked / life.wake.succeeded / life.dying.recovered / collaboration.started / economy.bounty.expired` 上收进 `GET /v1/colony/chronicle`，并对 `governance.verdict.banished` 触发的 `life.dead.marked` 做同事实去重。
+- [x] 2026-03-10：补齐 `life-state transition audit source`，新增 append-only transition 存储与 `GET /api/v1/world/life-state/transitions`，并把 `world tick`、`life hibernate/wake`、`governance banish` 三条状态变更路径接入审计。
+- [x] 2026-03-10：将 `life-state transitions` 正式接入 `GET /api/v1/events`，新增 `life.state.created / life.dying.entered / life.dying.recovered / life.dead.marked / life.hibernate.entered / life.wake.succeeded` 六类详细事件，并启用 `user_id` 过滤。
+- [x] 2026-03-10：将 governance reports/cases/verdicts 接入 `GET /api/v1/events`，新增 `governance.report.filed / governance.case.created / governance.verdict.warned / governance.verdict.banished / governance.verdict.cleared` 五类详细事件，并让 reporter/opener/judge/target 都能参与 `user_id` 过滤。
+- [x] 2026-03-10：将 KB proposals/revisions/comments/votes/results/applies 接入 `GET /api/v1/events`，新增 `knowledge.proposal.created / knowledge.proposal.revised / knowledge.proposal.commented / knowledge.proposal.voting_started / knowledge.proposal.vote.yes|no|abstain / knowledge.proposal.approved / knowledge.proposal.rejected / knowledge.proposal.applied` 详细事件；同时补齐 KB scan 限幅、`tick_id` 下跳过 governance/knowledge 装配、cursor 直接基于 `sortTime` 编码，以及显式的 empty life-state filter guard。
+- [x] 2026-03-10：将 collab sessions/participants/artifacts/reviews/closes 接入 `GET /api/v1/events`，新增 `collaboration.created / collaboration.applied / collaboration.assigned / collaboration.accepted / collaboration.started / collaboration.progress.reported / collaboration.artifact.submitted / collaboration.review.approved / collaboration.review.rework_requested / collaboration.resubmitted / collaboration.closed / collaboration.failed` 十二类详细事件；同时补齐 collaboration scan 限幅、`user_id` 对 proposer/participant/reviewer/author 的覆盖，以及错误 payload/坏单条协作数据的 best-effort 跳过策略。
+- [x] 2026-03-10：将 mail/contacts/reminders 接入 `GET /api/v1/events`，新增 `communication.mail.sent / communication.mail.received / communication.broadcast.sent / communication.reminder.triggered / communication.reminder.resolved / communication.contact.updated / communication.list.created` 七类详细事件；同时把 mailbox/reminder 事件限制在带 `user_id` 的私有视角下装配，并补齐 store 级 contacts `updated_at` 过滤。
+- [x] 2026-03-10：将 token/bounty/wish/reputation 接入 `GET /api/v1/events`，新增 economy 详细事件 `economy.token.transferred / economy.token.tipped / economy.token.wish.created / economy.token.wish.fulfilled / economy.bounty.posted / economy.bounty.claimed / economy.bounty.paid / economy.bounty.expired` 以及 identity 详细事件 `identity.reputation.changed`；同时补齐 involved-user cost event 查询与 `object_type=bounty` 统一。
+- [x] 2026-03-10：将 monitor timeline 中的高价值 tooling 行为接入 `GET /api/v1/events`，新增 `tooling.tool.invoked / tooling.tool.failed / tooling.tool.high_risk_used` 三类详细事件，并补齐 `request_log_id` 回链和 actor enrichment 失败时的 `partial_results` 提示。
+- [x] 2026-03-10：对 `GET /api/v1/colony/chronicle` 的 routine world tick 做降噪，过滤正常 `world.tick / npc.tick / npc.historian / population snapshot` 噪音，并保留 `world.freeze.entered / world.freeze.lifted / world.population.low / world.population.recovered` 四类编年史转折事件。
+- [x] 2026-03-10：将 governance cases/verdicts 聚合进 `GET /api/v1/colony/chronicle`，新增 `governance.case.opened / governance.verdict.warned / governance.verdict.banished / governance.verdict.cleared` 编年史事件，并补齐 actors/targets、object/source_ref 与双语用户文案。
+- [x] 2026-03-10：将一批高价值终局 detailed events 上收进 `GET /api/v1/colony/chronicle`，新增 `knowledge.proposal.applied / knowledge.proposal.rejected / collaboration.closed / collaboration.failed / economy.token.wish.fulfilled / economy.bounty.paid` 六类编年史事件，并在 proposal 已 applied 时收敛掉重复的 `knowledge.proposal.approved`。
+- [x] 2026-03-10：继续将 `life.dead.marked / life.wake.succeeded / life.dying.recovered / collaboration.started / economy.bounty.expired` 上收进 `GET /api/v1/colony/chronicle`，并对 `governance.verdict.banished` 触发的 `life.dead.marked` 做同事实去重。
 - [x] 2026-03-10：收口当前分支，修复 Postgres `ListCostEventsByInvolvement` 的 recipient 精确过滤与索引支持；统一 `UpsertUserLifeState` 走 `ApplyUserLifeState` 审计路径，避免绕过 append-only `life_state_transitions`。

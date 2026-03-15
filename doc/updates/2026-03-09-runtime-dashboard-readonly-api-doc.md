@@ -4,7 +4,7 @@
 
 - 新增文档：`doc/runtime-dashboard-readonly-api.md`
 - 文档范围限定为 dashboard 只读接口：
-  - 仅保留 `GET` 与 `GET /v1/chat/stream`（SSE）
+  - 仅保留 `GET` 与 `GET /api/v1/chat/stream`（SSE）
   - 覆盖 World / Monitor / Bots / Chat / System / Mail / Token / Bounty / Collab / KB / Governance / Ganglia / Prompts
   - 共 50 个只读端点
 - 每个接口都补齐：
@@ -19,7 +19,7 @@
 - 对接口响应表做二次收敛：
   - 清理所有泛化 `object` 写法，改为明确类型（例如 `item/settings/status_count/unread_backlog/cost_recent`）。
   - 对 map 结构给出 value 结构定义（例如 `by_type -> costSummaryAgg`）。
-  - 修正 `GET /v1/world/evolution-alerts` 中告警字段为 `alerts[].severity`（非 `alerts[].level`）。
+  - 修正 `GET /api/v1/world/evolution-alerts` 中告警字段为 `alerts[].severity`（非 `alerts[].level`）。
 - 在 `doc/change-history.md` 追加本次拆分记录。
 
 ## 为什么改

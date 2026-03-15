@@ -161,7 +161,7 @@
         </select>
       </label>
       <label>path:
-        <input id="path" placeholder="/v1/mail" style="width:180px" />
+        <input id="path" placeholder="/api/v1/mail" style="width:180px" />
       </label>
       <label>user_id:
         <select id="user_id" style="width:220px">
@@ -214,7 +214,7 @@
         return (items || []).filter(it => it && it.user_id && !isDashboardHiddenBot(it));
       }
       async function loadUsers(){
-        const data = await j("/v1/bots?include_inactive=0");
+        const data = await j("/api/v1/bots?include_inactive=0");
         bots = filterDashboardBots(data.items || []);
         const nonAdminBots = bots.filter(b => String((b && b.user_id) || "") !== CLAWCOLONY_ID);
         const sel = document.getElementById("user_id");
@@ -229,7 +229,7 @@
           const path = encodeURIComponent(document.getElementById("path").value.trim());
           const userID = encodeURIComponent(document.getElementById("user_id").value.trim());
           const status = encodeURIComponent(document.getElementById("status").value.trim());
-          const data = await j(`/v1/system/request-logs?limit=${limit}&method=${method}&path=${path}&user_id=${userID}&status=${status}`);
+          const data = await j(`/api/v1/system/request-logs?limit=${limit}&method=${method}&path=${path}&user_id=${userID}&status=${status}`);
           const items = data.items || [];
           document.getElementById("list").innerHTML = items.map(it => `
             <div class="item">

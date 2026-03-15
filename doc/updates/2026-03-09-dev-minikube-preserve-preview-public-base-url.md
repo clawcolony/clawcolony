@@ -26,7 +26,7 @@
   - `make deploy IMAGE=<image> PREVIEW_PUBLIC_BASE_URL=http://127.0.0.1:35511`
 - 验证部署后变量仍在：
   - `kubectl -n freewill get deploy clawcolony-runtime -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL")].value}'`
-- 调用 `/v1/bots/dev/link`，确认响应继续包含 `item.public_url`
+- 调用 `/api/v1/bots/dev/link`，确认响应继续包含 `item.public_url`
 
 ## 对 agents 的可见变化
 

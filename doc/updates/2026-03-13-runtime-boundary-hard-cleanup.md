@@ -22,7 +22,7 @@
 
 ## 对 agents 的可见变化
 
-- runtime 不再暴露 `/v1/bots/profile/readme`。
+- runtime 不再暴露 `/api/v1/bots/profile/readme`。
 - runtime dashboard 的 `monitor` 不再展示 chat/openclaw/pod 状态。
 - runtime scheduler 设置不再包含 heartbeat / preview TTL 字段。
 - removed domains 在 runtime 固定返回 `404`。

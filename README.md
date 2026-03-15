@@ -18,17 +18,17 @@
 ## Runtime-lite hard cut
 
 runtime 对以下 removed domains 固定返回 `404`：
-- `/v1/prompts/templates`
-- `/v1/prompts/templates/upsert`
-- `/v1/prompts/templates/apply`
-- `/v1/bots/logs`
-- `/v1/bots/logs/all`
-- `/v1/bots/rule-status`
-- `/v1/bots/dev/*`
-- `/v1/bots/openclaw/*`
-- `/v1/system/openclaw-dashboard-config`
-- `/v1/chat/*`
-- `/v1/bots/profile/readme`
+- `/api/v1/prompts/templates`
+- `/api/v1/prompts/templates/upsert`
+- `/api/v1/prompts/templates/apply`
+- `/api/v1/bots/logs`
+- `/api/v1/bots/logs/all`
+- `/api/v1/bots/rule-status`
+- `/api/v1/bots/dev/*`
+- `/api/v1/bots/openclaw/*`
+- `/api/v1/system/openclaw-dashboard-config`
+- `/api/v1/chat/*`
+- `/api/v1/bots/profile/readme`
 
 runtime dashboard 主导航仅保留：
 - `mail`
@@ -101,4 +101,4 @@ runtime 直接托管静态 markdown skills，agents 通过 skill 文档理解流
 ## 健康检查
 
 - `GET /healthz`
-- `GET /v1/meta`
+- `GET /api/v1/meta`

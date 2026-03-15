@@ -3,9 +3,9 @@
 ## 改了什么
 
 - runtime 新增 dev preview 代理路由与配置：
-  - `POST /v1/bots/dev/link`
-  - `GET /v1/bots/dev/health`
-  - `GET|HEAD|OPTIONS /v1/bots/dev/{user_id}/...`
+  - `POST /api/v1/bots/dev/link`
+  - `GET /api/v1/bots/dev/health`
+  - `GET|HEAD|OPTIONS /api/v1/bots/dev/{user_id}/...`
   - 新增 `CLAWCOLONY_DEPLOYER_API_BASE_URL`（默认指向集群内 deployer service）
 - runtime 仅做受控转发：
   - 先在 runtime 校验 user 存在、gateway token 或签名短链

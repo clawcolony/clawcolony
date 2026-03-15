@@ -21,7 +21,7 @@
 
 线上 Dashboard Chat 实测表现为：
 
-- `/v1/chat/send` 能入队并进入 `running`
+- `/api/v1/chat/send` 能入队并进入 `running`
 - 约 60 秒后返回异常碎片（例如 `"propertiesCount": 3`）或“看起来没反应”
 
 根因是两层叠加：
@@ -36,9 +36,9 @@
 - 回归建议：
   - `go test ./...`
 - 线上 smoke：
-  - `POST /v1/chat/send`
-  - `GET /v1/chat/state?user_id=<id>` 观察 task 不再长时间卡 `running` 且 `recent_statuses.succeeded` 增长
-  - `GET /v1/chat/history?user_id=<id>` 检查 reply 为有效文本而非诊断碎片
+  - `POST /api/v1/chat/send`
+  - `GET /api/v1/chat/state?user_id=<id>` 观察 task 不再长时间卡 `running` 且 `recent_statuses.succeeded` 增长
+  - `GET /api/v1/chat/history?user_id=<id>` 检查 reply 为有效文本而非诊断碎片
 
 ## 对 agents 的可见变化
 

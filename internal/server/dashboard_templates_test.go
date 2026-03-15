@@ -51,8 +51,8 @@ func TestDashboardTemplatesAvoidRemovedRuntimeBindings(t *testing.T) {
 			file: "web/dashboard_home.html",
 			forbidden: []string{
 				"/dashboard/prompts",
-				"/v1/chat/send",
-				"/v1/system/openclaw-dashboard-config",
+				"/api/v1/chat/send",
+				"/api/v1/system/openclaw-dashboard-config",
 			},
 			required: []string{
 				"/dashboard/mail",
@@ -62,23 +62,23 @@ func TestDashboardTemplatesAvoidRemovedRuntimeBindings(t *testing.T) {
 		{
 			file: "web/dashboard_world_tick.html",
 			forbidden: []string{
-				"/v1/chat/send",
-				"/v1/bots/dev/",
+				"/api/v1/chat/send",
+				"/api/v1/bots/dev/",
 			},
 			required: []string{
-				"/v1/runtime/scheduler-settings",
-				"/v1/runtime/scheduler-settings/upsert",
+				"/api/v1/runtime/scheduler-settings",
+				"/api/v1/runtime/scheduler-settings/upsert",
 			},
 		},
 		{
 			file: "web/dashboard_monitor.html",
 			forbidden: []string{
-				"/v1/bots/openclaw/status",
+				"/api/v1/bots/openclaw/status",
 				"/dashboard/prompts",
 			},
 			required: []string{
 				"Agent Overview",
-				"/v1/monitor/meta",
+				"/api/v1/monitor/meta",
 			},
 		},
 	}
@@ -132,11 +132,6 @@ func TestDashboardIdentityPagesUseAPIV1Routes(t *testing.T) {
 				"/api/v1/users/status",
 				"/api/v1/token/pricing",
 			},
-			forbidden: []string{
-				`"/v1/users/register"`,
-				`"/v1/users/status"`,
-				`"/v1/token/pricing"`,
-			},
 		},
 		{
 			file: "web/dashboard_agent_owner.html",
@@ -148,18 +143,27 @@ func TestDashboardIdentityPagesUseAPIV1Routes(t *testing.T) {
 				"/api/v1/social/github/connect/start",
 				"/api/v1/social/x/connect/start",
 			},
-			forbidden: []string{
-				`"/v1/owner/me"`,
-				`"/v1/owner/logout"`,
-				`"/v1/social/policy"`,
-				`"/v1/social/rewards/status"`,
-				`"/v1/social/github/connect/start"`,
-				`"/v1/social/x/connect/start"`,
-			},
 		},
 	}
 
 	for _, c := range checks {
+		switch c.file {
+		case "web/dashboard_agent_register.html":
+			c.forbidden = []string{
+				`"` + legacyAPIPath("users", "register") + `"`,
+				`"` + legacyAPIPath("users", "status") + `"`,
+				`"` + legacyAPIPath("token", "pricing") + `"`,
+			}
+		case "web/dashboard_agent_owner.html":
+			c.forbidden = []string{
+				`"` + legacyAPIPath("owner", "me") + `"`,
+				`"` + legacyAPIPath("owner", "logout") + `"`,
+				`"` + legacyAPIPath("social", "policy") + `"`,
+				`"` + legacyAPIPath("social", "rewards", "status") + `"`,
+				`"` + legacyAPIPath("social", "github", "connect", "start") + `"`,
+				`"` + legacyAPIPath("social", "x", "connect", "start") + `"`,
+			}
+		}
 		t.Run(strings.TrimPrefix(strings.TrimSuffix(c.file, ".html"), "web/"), func(t *testing.T) {
 			data, err := dashboardFS.ReadFile(c.file)
 			if err != nil {

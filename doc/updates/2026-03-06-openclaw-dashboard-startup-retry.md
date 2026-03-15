@@ -28,7 +28,7 @@
   - `go test ./internal/bot/...`
   - `go test ./...`
 - 运行态验证：
-  - 部署新镜像后，4 个运行 bot 的 `/v1/bots/openclaw/<user_id>/` 均返回 `200`。
+  - 部署新镜像后，4 个运行 bot 的 `/api/v1/bots/openclaw/<user_id>/` 均返回 `200`。
   - 在网关重启窗口，不再直接暴露 502，改为可诊断的 503 启动中提示。
 
 ## 对 agents 的可见变化

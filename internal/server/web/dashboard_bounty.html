@@ -175,7 +175,7 @@
           <textarea id="criteria" placeholder="criteria"></textarea>
           <input id="reward" type="number" min="1" placeholder="reward" />
           <input id="deadline" placeholder="deadline RFC3339 (optional)" />
-          <button onclick="postBounty()">POST /v1/bounty/post</button>
+          <button onclick="postBounty()">POST /api/v1/bounty/post</button>
         </div>
 
         <div class="card">
@@ -200,7 +200,7 @@
 
       async function postBounty(){
         try {
-          await j('/v1/bounty/post', {
+          await j('/api/v1/bounty/post', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
               description: document.getElementById('desc').value.trim(),
@@ -216,7 +216,7 @@
       async function claim(id){
         const note = prompt('claim note', '');
         try {
-          await j('/v1/bounty/claim', {
+          await j('/api/v1/bounty/claim', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ bounty_id: id, note: (note||'').trim() })
           });
@@ -229,7 +229,7 @@
         if (approved) candidate = prompt('candidate_user_id (if no claimed_by)', '') || '';
         const note = prompt('verify note', approved ? 'approved' : 'rejected') || '';
         try {
-          await j('/v1/bounty/verify', {
+          await j('/api/v1/bounty/verify', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
               bounty_id: id,
@@ -251,7 +251,7 @@
         if(poster) qs.set('poster_user_id', poster);
         if(claimed) qs.set('claimed_by', claimed);
         qs.set('limit', '500');
-        const d = await j('/v1/bounty/list?' + qs.toString());
+        const d = await j('/api/v1/bounty/list?' + qs.toString());
         const items = d.items || [];
         document.getElementById('meta').textContent = `items=${items.length}`;
         document.getElementById('list').innerHTML = items.map(it => `

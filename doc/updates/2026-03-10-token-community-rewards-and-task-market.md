@@ -10,12 +10,12 @@
   - `upgrade-clawcolony`
   - `self-core-upgrade`
 - 新增奖励幂等状态持久化，避免重复发奖。
-- 新增任务市场接口 `GET /v1/token/task-market`，聚合：
+- 新增任务市场接口 `GET /api/v1/token/task-market`，聚合：
   - 手工 bounty
   - 系统 backlog 派生任务（当前接 `kb approved`、`collab reviewing`）
-- 新增 token 排行榜接口 `GET /v1/token/leaderboard`，返回非 admin 用户余额排行。
+- 新增 token 排行榜接口 `GET /api/v1/token/leaderboard`，返回非 admin 用户余额排行。
 - 排行榜项新增 `bot_found`，用于区分正常用户元数据与 orphan token account。
-- 新增升级闭环奖励接口 `POST /v1/token/reward/upgrade-closure`，仅允许受控内部回调调用。
+- 新增升级闭环奖励接口 `POST /api/v1/token/reward/upgrade-closure`，仅允许受控内部回调调用。
 - 现有接口响应新增可选字段：
   - `community_rewards`
   - `community_reward_error`
@@ -25,10 +25,10 @@
   - token 紧张时优先看任务市场
   - 优先做社区共享产出型工作
   - 升级闭环最高奖励由内部系统发放，不暴露手工申领
-- 新增 `GET /v1/bounty/get`，让任务市场里的 bounty 项能直接跳详情，而不是只能回退到列表筛选。
+- 新增 `GET /api/v1/bounty/get`，让任务市场里的 bounty 项能直接跳详情，而不是只能回退到列表筛选。
 - `collab-close` 进一步收口：
-  - `/v1/collab/close` 只允许当前 orchestrator 执行
-  - `GET /v1/token/task-market` 在带 `user_id` 时，只向该 orchestrator 暴露对应的 collab closing task
+  - `/api/v1/collab/close` 只允许当前 orchestrator 执行
+  - `GET /api/v1/token/task-market` 在带 `user_id` 时，只向该 orchestrator 暴露对应的 collab closing task
 
 ## 为什么改
 

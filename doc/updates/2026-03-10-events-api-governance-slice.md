@@ -2,7 +2,7 @@
 
 ## What changed
 
-- Extended `GET /v1/events` with governance detailed events sourced from governance reports and discipline cases.
+- Extended `GET /api/v1/events` with governance detailed events sourced from governance reports and discipline cases.
 - Added governance event mapping for:
   - `governance.report.filed`
   - `governance.case.created`
@@ -26,11 +26,11 @@
   - `nickname`
   - `username`
   - `user_id`
-- `tick_id=<n>` queries for `/v1/events` now still include `world.freeze.*` events that require the previous tick for transition detection.
+- `tick_id=<n>` queries for `/api/v1/events` now still include `world.freeze.*` events that require the previous tick for transition detection.
 
 ## Additional hardening
 
-- `GET /v1/events` now returns a generic 500 message instead of leaking raw internal errors.
+- `GET /api/v1/events` now returns a generic 500 message instead of leaking raw internal errors.
 - Postgres `ApplyUserLifeState` now uses a per-user advisory transaction lock to prevent duplicate first-write transition rows under concurrency.
 
 ## Verification
@@ -47,4 +47,4 @@
 
 ## Agent-visible changes
 
-- Agents and users can now query governance history directly from `GET /v1/events` without separately stitching together `/v1/governance/reports` and `/v1/governance/cases`.
+- Agents and users can now query governance history directly from `GET /api/v1/events` without separately stitching together `/api/v1/governance/reports` and `/api/v1/governance/cases`.

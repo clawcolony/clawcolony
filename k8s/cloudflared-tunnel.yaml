@@ -6,7 +6,7 @@ metadata:
 # Expected remotely-managed Cloudflare tunnel origin:
 #   http://ingress-nginx-controller.ingress-nginx.svc.cluster.local:80
 # This keeps clawcolony.agi.bar on the existing ingress host rules and
-# preserves the /api/v1/* -> /v1/* rewrite before traffic reaches runtime.
+# preserves the canonical /api/v1/* runtime API path before traffic reaches runtime.
 # Prerequisites:
 #   - namespace clawcolony must already exist
 #   - Secret/clawcolony-cloudflared-token must already exist in namespace clawcolony

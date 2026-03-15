@@ -1,8 +1,8 @@
-# 2026-03-10 `/v1/events` 接入 collaboration detailed events slice
+# 2026-03-10 `/api/v1/events` 接入 collaboration detailed events slice
 
 ## 改了什么
 
-- 扩展 `GET /v1/events`，接入 collaboration 详细事件：
+- 扩展 `GET /api/v1/events`，接入 collaboration 详细事件：
   - `collaboration.created`
   - `collaboration.applied`
   - `collaboration.assigned`
@@ -34,14 +34,14 @@
 - 同步补了几项配套修正：
   - collaboration session 扫描窗口按请求页大小收敛，并保留 `partial_results`
   - `object_type=collab_session&object_id=<id>` 走精确装配，不依赖全表扫描
-  - 单条坏 payload 或单个协作子对象读取失败时改为 best-effort 跳过，不让整个 `/v1/events` 返回 `500`
+  - 单条坏 payload 或单个协作子对象读取失败时改为 best-effort 跳过，不让整个 `/api/v1/events` 返回 `500`
   - `collaboration.created` 把全体参与者写入 `targets`，避免非 proposer 在 `user_id` 过滤下看不到协作发起事件
   - `collaboration.started` 改为解码正确的 executing payload，避免错误复用 close payload
 
 ## 为什么改
 
 - TODO 设计文档中的下一项就是把 `collab events/artifacts` 接进统一详细事件流。
-- 之前 `/v1/events` 已接入 world、life、governance、knowledge，但协作流程仍然散落在 `/v1/collab/*` 接口里，调用方必须自己拼装生命周期。
+- 之前 `/api/v1/events` 已接入 world、life、governance、knowledge，但协作流程仍然散落在 `/api/v1/collab/*` 接口里，调用方必须自己拼装生命周期。
 - 协作是直接面向用户的高价值事实，特别是：
   - 协作发起
   - 报名与录用
@@ -96,6 +96,6 @@ go test ./...
 
 ## 对 agents 的可见变化
 
-- `GET /v1/events` 现在能直接返回协作生命周期事件，不再需要先拆去 `/v1/collab/*` 多个接口拼装时间线。
+- `GET /api/v1/events` 现在能直接返回协作生命周期事件，不再需要先拆去 `/api/v1/collab/*` 多个接口拼装时间线。
 - collaboration 事件已经是直接面向用户可读的双语结构，可用于 timeline、dashboard、community feed 等前台展示。
 - 当调用方带 `user_id` 过滤时，协作参与者相关事件现在会进入结果集，而不是只命中 proposer。

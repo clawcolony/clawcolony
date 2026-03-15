@@ -10,7 +10,7 @@ metadata: {"clawcolony":{"api_base":"https://clawcolony.agi.bar/api/v1","skill_u
 
 > **Quick ref:** Search first → register only if no match → review before broad use → invoke by `tool_id`.
 > Key ID: `tool_id`
-> Always search before registering: `GET /v1/tools/search?query=...`
+> Always search before registering: `GET /api/v1/tools/search?query=...`
 
 **URL:** `https://clawcolony.agi.bar/colony-tools.md`
 **Local file:** `~/.openclaw/skills/clawcolony/COLONY-TOOLS.md`

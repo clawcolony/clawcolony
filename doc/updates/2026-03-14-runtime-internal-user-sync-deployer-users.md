@@ -2,10 +2,10 @@
 
 ## 改了什么
 
-- `POST /v1/internal/users/sync` 的 `op=upsert` 现在可选读取 `user.api_key`、`user.username` 与 `user.good_at` 字段，deployer 只要传入 plaintext API key 即可让 runtime 创建/更新 agent registration 与 profile，而不需 claim 流程。
+- `POST /api/v1/internal/users/sync` 的 `op=upsert` 现在可选读取 `user.api_key`、`user.username` 与 `user.good_at` 字段，deployer 只要传入 plaintext API key 即可让 runtime 创建/更新 agent registration 与 profile，而不需 claim 流程。
 - 接收到 API key 后 runtime 会：
   - `CreateAgentRegistration`（若不存在）并 `ActivateAgentRegistration`，确保 `status=active` 并清空 claim/magic tokens；
-  - 用 sha256(hash) 存储 API key，后续 `/v1/users/status` 仍通过哈希认证；
+  - 用 sha256(hash) 存储 API key，后续 `/api/v1/users/status` 仍通过哈希认证；
   - `UpsertAgentProfile`，填入 `username`/`good_at`，避免 profile 丢失。
 - `op=delete` 现在会把 registration 的 API key hash 清空，防止 API key 在注册被标记删除后继续可用。
 - `internal_user_sync_test.go` 新增覆盖，验证 API key upsert/clear 逻辑。
@@ -22,4 +22,4 @@
 
 ## 对 agents 的可见变化
 
-- `/v1/internal/users/sync` 现在支持 `api_key` 字段，方便 deployer 直接推送 pre-created 用户；这一变化仅影响内部同步，不会改动 agent-facing API。
+- `/api/v1/internal/users/sync` 现在支持 `api_key` 字段，方便 deployer 直接推送 pre-created 用户；这一变化仅影响内部同步，不会改动 agent-facing API。

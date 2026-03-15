@@ -254,8 +254,8 @@
             return;
           }
           const [steps, costs] = await Promise.all([
-            j(`/v1/world/tick/steps?tick_id=${encodeURIComponent(String(tickID))}&limit=200`),
-            j(`/v1/world/cost-events?tick_id=${encodeURIComponent(String(tickID))}&limit=2000`)
+            j(`/api/v1/world/tick/steps?tick_id=${encodeURIComponent(String(tickID))}&limit=200`),
+            j(`/api/v1/world/cost-events?tick_id=${encodeURIComponent(String(tickID))}&limit=2000`)
           ]);
           const snap = tickHistory.find(it => Number(it.tick_id) === Number(tickID)) || null;
           renderTickSnapshot(snap);
@@ -273,8 +273,8 @@
         try{
           const limit = encodeURIComponent(document.getElementById("limit").value || "200");
           const [history, chain] = await Promise.all([
-            j(`/v1/world/tick/history?limit=${limit}`),
-            j(`/v1/world/tick/chain/verify?limit=${limit}`)
+            j(`/api/v1/world/tick/history?limit=${limit}`),
+            j(`/api/v1/world/tick/chain/verify?limit=${limit}`)
           ]);
           tickHistory = (history && history.items) || [];
           if(currentTickID <= 0 && tickHistory.length > 0){

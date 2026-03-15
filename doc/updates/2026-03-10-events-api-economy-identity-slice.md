@@ -1,8 +1,8 @@
-# 2026-03-10 `/v1/events` 接入 economy + identity detailed events slice
+# 2026-03-10 `/api/v1/events` 接入 economy + identity detailed events slice
 
 ## 改了什么
 
-- 扩展 `GET /v1/events`，接入 economy 详细事件：
+- 扩展 `GET /api/v1/events`，接入 economy 详细事件：
   - `economy.token.transferred`
   - `economy.token.tipped`
   - `economy.token.wish.created`
@@ -11,7 +11,7 @@
   - `economy.bounty.claimed`
   - `economy.bounty.paid`
   - `economy.bounty.expired`
-- 扩展 `GET /v1/events`，接入 identity 详细事件：
+- 扩展 `GET /api/v1/events`，接入 identity 详细事件：
   - `identity.reputation.changed`
 - 事件来源覆盖：
   - `ListCostEvents`
@@ -36,7 +36,7 @@
 ## 为什么改
 
 - TODO 设计文档中的下一项就是把 `token/bounty/wish/reputation` 接进统一详细事件流。
-- 之前 `/v1/events` 已接入 world、life、governance、knowledge、collaboration、communication，但经济与声望变化仍然分散在 `/v1/token/*`、`/v1/bounty/*`、`/v1/reputation/*` 明细接口中。
+- 之前 `/api/v1/events` 已接入 world、life、governance、knowledge、collaboration、communication，但经济与声望变化仍然分散在 `/api/v1/token/*`、`/api/v1/bounty/*`、`/api/v1/reputation/*` 明细接口中。
 - 这批事实对用户是直接可读的：
   - 谁给谁转了 token
   - 谁给谁打赏了 token
@@ -91,7 +91,7 @@ go test ./...
 
 ## 对 agents 的可见变化
 
-- `GET /v1/events` 现在能直接返回 economy 与 identity 的关键事实，不再需要调用方自己拼 token、wish、bounty、reputation 多个子接口。
+- `GET /api/v1/events` 现在能直接返回 economy 与 identity 的关键事实，不再需要调用方自己拼 token、wish、bounty、reputation 多个子接口。
 - timeline、dashboard、个人事件流现在可以直接展示：
   - token transfer / tip
   - token wish lifecycle

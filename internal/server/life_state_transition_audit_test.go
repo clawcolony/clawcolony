@@ -29,7 +29,7 @@ func TestLifeStateTransitionAuditRecordsWorldTickTransitions(t *testing.T) {
 		t.Fatalf("run life transitions tick3: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/life-state/transitions?user_id="+userID+"&limit=10", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/world/life-state/transitions?user_id="+userID+"&limit=10", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("life-state transitions status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -61,14 +61,14 @@ func TestLifeStateTransitionAuditRecordsHibernateAndWake(t *testing.T) {
 
 	userID, userAPIKey := seedActiveUserWithAPIKey(t, srv)
 	wakerUserID, wakerAPIKey := seedActiveUserWithAPIKey(t, srv)
-	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/life/hibernate", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/life/hibernate", map[string]any{
 		"reason": "manual-rest",
 	}, apiKeyHeaders(userAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("hibernate status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/life-state?user_id="+userID+"&limit=5", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/world/life-state?user_id="+userID+"&limit=5", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("life-state status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -76,7 +76,7 @@ func TestLifeStateTransitionAuditRecordsHibernateAndWake(t *testing.T) {
 		t.Fatalf("hibernate should persist hibernated state: %s", w.Body.String())
 	}
 
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/life/wake", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/life/wake", map[string]any{
 		"user_id": userID,
 		"reason":  "manual-wake",
 	}, apiKeyHeaders(wakerAPIKey))
@@ -84,7 +84,7 @@ func TestLifeStateTransitionAuditRecordsHibernateAndWake(t *testing.T) {
 		t.Fatalf("wake status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/life-state/transitions?user_id="+userID+"&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/world/life-state/transitions?user_id="+userID+"&limit=10", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("life-state transitions status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -104,7 +104,7 @@ func TestLifeStateTransitionAuditRecordsHibernateAndWake(t *testing.T) {
 		t.Fatalf("unexpected hibernate transition: %+v", resp.Items[1])
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/life-state/transitions?source_module=life.wake&from_state=hibernated&actor_user_id="+wakerUserID+"&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/world/life-state/transitions?source_module=life.wake&from_state=hibernated&actor_user_id="+wakerUserID+"&limit=10", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("filtered transitions status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -121,12 +121,12 @@ func TestLifeStateTransitionAuditRecordsHibernateAndWake(t *testing.T) {
 		t.Fatalf("unexpected filtered wake transition: %+v", filtered.Items[0])
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/life-state/transitions?from_state=typo", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/world/life-state/transitions?from_state=typo", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid state filter should fail, got=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/world/life-state/transitions?tick_id=9999&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/world/life-state/transitions?tick_id=9999&limit=10", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("unknown tick_id filter should return empty page, got=%d body=%s", w.Code, w.Body.String())
 	}

@@ -3,24 +3,24 @@
 ## 改了什么
 
 - runtime 对 removed domains 做 hard cut，以下路径在 runtime 固定返回 `404`：
-  - `/v1/prompts/templates`
-  - `/v1/prompts/templates/upsert`
-  - `/v1/prompts/templates/apply`
-  - `/v1/bots/logs`
-  - `/v1/bots/logs/all`
-  - `/v1/bots/rule-status`
-  - `/v1/bots/dev/link`
-  - `/v1/bots/dev/health`
-  - `/v1/bots/dev/*`
-  - `/v1/bots/openclaw/*`
-  - `/v1/bots/openclaw/status`
-  - `/v1/system/openclaw-dashboard-config`
-  - `/v1/chat/send`
-  - `/v1/chat/history`
-  - `/v1/chat/stream`
-  - `/v1/chat/state`
-- runtime 保留身份接口：`GET /v1/bots`、`POST /v1/bots/nickname/upsert`。
-- `GET /v1/bots` 改为 DB 视角过滤，不再依赖 K8s active set。
+  - `/api/v1/prompts/templates`
+  - `/api/v1/prompts/templates/upsert`
+  - `/api/v1/prompts/templates/apply`
+  - `/api/v1/bots/logs`
+  - `/api/v1/bots/logs/all`
+  - `/api/v1/bots/rule-status`
+  - `/api/v1/bots/dev/link`
+  - `/api/v1/bots/dev/health`
+  - `/api/v1/bots/dev/*`
+  - `/api/v1/bots/openclaw/*`
+  - `/api/v1/bots/openclaw/status`
+  - `/api/v1/system/openclaw-dashboard-config`
+  - `/api/v1/chat/send`
+  - `/api/v1/chat/history`
+  - `/api/v1/chat/stream`
+  - `/api/v1/chat/state`
+- runtime 保留身份接口：`GET /api/v1/bots`、`POST /api/v1/bots/nickname/upsert`。
+- `GET /api/v1/bots` 改为 DB 视角过滤，不再依赖 K8s active set。
 - runtime dashboard 收敛为 runtime-lite：移除 Chat/User Logs 页面与导航入口，删除对应模板文件。
 - runtime `internal_user_sync` 不再写入 `gateway_token`/`upgrade_token`。
 - runtime monitor 去除对 `chat_messages` 与 openclaw(K8s)状态源的依赖。

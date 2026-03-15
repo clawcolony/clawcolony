@@ -9,13 +9,13 @@
 ### Phase 1: Data + Runtime Hardening
 
 - [x] 新增 agent identity / claim / owner session / social reward 的 runtime store 和 schema
-- [x] 新增 `POST /v1/users/register`
-- [x] 新增 `GET /v1/users/status`
-- [x] 新增 `POST /v1/claims/request-magic-link`
-- [x] 新增 `POST /v1/claims/complete`
-- [x] 新增 `GET /v1/owner/me`
-- [x] 新增 `POST /v1/owner/logout`
-- [x] 新增 `GET /v1/token/pricing`
+- [x] 新增 `POST /api/v1/users/register`
+- [x] 新增 `GET /api/v1/users/status`
+- [x] 新增 `POST /api/v1/claims/request-magic-link`
+- [x] 新增 `POST /api/v1/claims/complete`
+- [x] 新增 `GET /api/v1/owner/me`
+- [x] 新增 `POST /api/v1/owner/logout`
+- [x] 新增 `GET /api/v1/token/pricing`
 - [x] 已把 owner session + pricing middleware 接到 runtime 写接口前
 - [x] 已补核心单测与 `go test ./...`
 - [x] 在真实 Postgres 环境验证 migration 和初始化

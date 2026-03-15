@@ -299,13 +299,13 @@ func (s *Server) handleGangliaProtocol(w http.ResponseWriter, r *http.Request) {
 			"score_count>=3 && score_avg<=2.2 -> legacy",
 		},
 		"apis": []string{
-			"POST /v1/ganglia/forge",
-			"GET /v1/ganglia/browse?type=<type>&life_state=<state>&keyword=<kw>&limit=<n>",
-			"GET /v1/ganglia/get?ganglion_id=<id>",
-			"POST /v1/ganglia/integrate",
-			"POST /v1/ganglia/rate",
-			"GET /v1/ganglia/integrations?user_id=<id>&ganglion_id=<id>&limit=<n>",
-			"GET /v1/ganglia/ratings?ganglion_id=<id>&limit=<n>",
+			"POST /api/v1/ganglia/forge",
+			"GET /api/v1/ganglia/browse?type=<type>&life_state=<state>&keyword=<kw>&limit=<n>",
+			"GET /api/v1/ganglia/get?ganglion_id=<id>",
+			"POST /api/v1/ganglia/integrate",
+			"POST /api/v1/ganglia/rate",
+			"GET /api/v1/ganglia/integrations?user_id=<id>&ganglion_id=<id>&limit=<n>",
+			"GET /api/v1/ganglia/ratings?ganglion_id=<id>&limit=<n>",
 		},
 	})
 }

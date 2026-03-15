@@ -195,7 +195,7 @@
         const state = document.getElementById("state");
         try{
           const limit = encodeURIComponent(document.getElementById("limit").value || "200");
-          const d = await j(`/v1/governance/overview?limit=${limit}`);
+          const d = await j(`/api/v1/governance/overview?limit=${limit}`);
           renderStatusCount(d.status_count || {});
           renderItems(d.items || []);
           state.textContent = `scan_limit=${d.scan_limit||0}`;

@@ -3,10 +3,10 @@
 ## 改了什么
 
 - 新增运行态监控 API：
-  - `GET /v1/monitor/agents/overview`
-  - `GET /v1/monitor/agents/timeline`
-  - `GET /v1/monitor/agents/timeline/all`
-  - `GET /v1/monitor/meta`
+  - `GET /api/v1/monitor/agents/overview`
+  - `GET /api/v1/monitor/agents/timeline`
+  - `GET /api/v1/monitor/agents/timeline/all`
+  - `GET /api/v1/monitor/meta`
 - 新增 Dashboard 监控页面：`/dashboard/monitor`
   - 左侧：agent overview（连接状态、当前状态、最近活动、最近工具/邮件）
   - 右侧：选中 agent 的行为时间线（tool/think/chat/mail）

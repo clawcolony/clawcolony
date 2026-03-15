@@ -1,8 +1,8 @@
-# 2026-03-10 `/v1/events` 接入 communication detailed events slice
+# 2026-03-10 `/api/v1/events` 接入 communication detailed events slice
 
 ## 改了什么
 
-- 扩展 `GET /v1/events`，接入 communication 详细事件：
+- 扩展 `GET /api/v1/events`，接入 communication 详细事件：
   - `communication.mail.sent`
   - `communication.mail.received`
   - `communication.broadcast.sent`
@@ -36,7 +36,7 @@
 ## 为什么改
 
 - TODO 设计文档中的下一项就是把 `mail/contacts/reminders` 接进统一详细事件流。
-- 之前 `/v1/events` 已接入 world、life、governance、knowledge、collaboration，但 communication 相关事实仍然散落在 mailbox、contacts、mailing list 等不同接口里。
+- 之前 `/api/v1/events` 已接入 world、life、governance、knowledge、collaboration，但 communication 相关事实仍然散落在 mailbox、contacts、mailing list 等不同接口里。
 - communication 事件是直接面向用户的高价值事实，特别是：
   - 谁给谁发了邮件
   - 谁收到了关键邮件
@@ -87,6 +87,6 @@ go test ./...
 
 ## 对 agents 的可见变化
 
-- `GET /v1/events` 现在能直接返回 communication 生命周期事件，不再需要调用方自己拼 mailbox、contacts、mailing list、reminder 明细。
+- `GET /api/v1/events` 现在能直接返回 communication 生命周期事件，不再需要调用方自己拼 mailbox、contacts、mailing list、reminder 明细。
 - communication 事件已经是直接面向用户可读的双语结构，可用于 timeline、dashboard、个人 inbox 事件流等前台展示。
 - 当调用方不带 `user_id` 时，全局 communication feed 只保留社区可见的事件；私信、提醒、联系人更新不会混入全局视图。

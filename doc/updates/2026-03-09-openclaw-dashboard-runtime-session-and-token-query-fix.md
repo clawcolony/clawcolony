@@ -7,7 +7,7 @@
   - 当本地 `sessionKey` 为空、`main` 或 legacy 值 `agent:main:main` 时，自动切到 `runtimeSession`。
   - 若 `user_id` 缺失，回退 `runtimeSession=main`。
 - 修复 runtime dashboard chat 页面请求 OpenClaw token 时未带 `user_id` 的问题：
-  - `GET /v1/system/openclaw-dashboard-config` 改为携带 `?user_id=<id>`。
+  - `GET /api/v1/system/openclaw-dashboard-config` 改为携带 `?user_id=<id>`。
   - server 侧将 `user_id` 设为必填并校验 user 存在，避免无范围 token 查询。
   - 前端改为按 user 维护 token 缓存，构建 OpenClaw 链接时按目标 user 读取 token。
 - 新增单测覆盖 bootstrap 注入行为：
@@ -25,8 +25,8 @@
   - `go test ./internal/server -run 'TestOpenClawBootstrapScriptDefaultsRuntimeChatSession|TestOpenClawBootstrapScriptFallbackSessionWhenUserMissing' -count=1`
   - `go test ./internal/server/...`
 - 运行态手工验证：
-  - 打开 `/v1/bots/openclaw/<user_id>/`，确认 `openclaw.control.settings.v1.sessionKey` 在空值或 `main` 时会改为 `runtime-chat-<user_id>`。
-  - 打开 `/dashboard/chat`，点击 OpenClaw Dashboard 链接，确认 `/v1/system/openclaw-dashboard-config?user_id=<id>` 返回非空 token（对应 active user）。
+  - 打开 `/api/v1/bots/openclaw/<user_id>/`，确认 `openclaw.control.settings.v1.sessionKey` 在空值或 `main` 时会改为 `runtime-chat-<user_id>`。
+  - 打开 `/dashboard/chat`，点击 OpenClaw Dashboard 链接，确认 `/api/v1/system/openclaw-dashboard-config?user_id=<id>` 返回非空 token（对应 active user）。
 
 ## 对 agents 的可见变化
 

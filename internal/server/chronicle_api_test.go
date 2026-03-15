@@ -51,7 +51,7 @@ func TestAPIColonyChronicleUpgradePreservesLegacyAndAddsStoryFields(t *testing.T
 		t.Fatalf("append npc monitor chronicle: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=20", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/colony/chronicle?limit=20", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -135,7 +135,7 @@ func TestAPIColonyChronicleFallbackStoryForUnknownSource(t *testing.T) {
 		t.Fatalf("append unknown chronicle: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=5", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/colony/chronicle?limit=5", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -192,7 +192,7 @@ func TestAPIColonyChronicleDenoisesRoutineWorldEntriesAndKeepsMeaningfulTransiti
 		t.Fatalf("append recovered population chronicle: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=20", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/colony/chronicle?limit=20", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -235,7 +235,7 @@ func TestAPIColonyChronicleIncludesGovernanceStoryEvents(t *testing.T) {
 		t.Fatalf("set target nickname: %v", err)
 	}
 
-	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/report", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/governance/report", map[string]any{
 		"target_user_id": targetID,
 		"reason":         "repeated abuse",
 		"evidence":       "trace-1",
@@ -250,7 +250,7 @@ func TestAPIColonyChronicleIncludesGovernanceStoryEvents(t *testing.T) {
 		t.Fatalf("decode governance report response: %v", err)
 	}
 
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/cases/open", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/governance/cases/open", map[string]any{
 		"report_id": reportResp.Item.ReportID,
 	}, apiKeyHeaders(judgeAPIKey))
 	if w.Code != http.StatusAccepted {
@@ -263,7 +263,7 @@ func TestAPIColonyChronicleIncludesGovernanceStoryEvents(t *testing.T) {
 		t.Fatalf("decode governance case response: %v", err)
 	}
 
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/cases/verdict", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/governance/cases/verdict", map[string]any{
 		"case_id": caseResp.Item.CaseID,
 		"verdict": "banish",
 		"note":    "confirmed",
@@ -272,7 +272,7 @@ func TestAPIColonyChronicleIncludesGovernanceStoryEvents(t *testing.T) {
 		t.Fatalf("governance verdict status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/colony/chronicle?limit=10", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -319,7 +319,7 @@ func TestAPIColonyChronicleStillWorksWhenActorLookupFails(t *testing.T) {
 	}
 	srv.store = chronicleListBotsFailStore{Store: srv.store}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=5", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/colony/chronicle?limit=5", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle should remain available when actor lookup fails, got=%d body=%s", w.Code, w.Body.String())
 	}
@@ -347,7 +347,7 @@ func TestAPIColonyChronicleIncludesHighValueDetailedEventAggregates(t *testing.T
 	collab := seedCollaborationEventsFixture(t, srv, ctx)
 	economy := seedEconomyIdentityEventsFixture(t, srv, ctx)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/colony/chronicle?limit=200", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/colony/chronicle?limit=200", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("chronicle status=%d body=%s", w.Code, w.Body.String())
 	}

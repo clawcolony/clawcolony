@@ -293,7 +293,7 @@
       }
 
       async function loadBots(){
-        const data = await j('/v1/bots?include_inactive=0');
+        const data = await j('/api/v1/bots?include_inactive=0');
         bots = filterDashboardBots(data.items || []);
         const options = bots.map(b => `<option value="${esc(b.user_id)}">${esc(botDisplayLabel(b))}</option>`).join('');
         for (const id of ['orchestrator','executor','reviewer']) {
@@ -307,7 +307,7 @@
       async function loadCollabs(){
         const phase = document.getElementById('phase').value;
         const q = phase ? `?phase=${encodeURIComponent(phase)}&limit=100` : '?limit=100';
-        const data = await j('/v1/collab/list' + q);
+        const data = await j('/api/v1/collab/list' + q);
         const items = data.items || [];
         const list = document.getElementById('collabList');
         list.innerHTML = items.map(it => `
@@ -329,7 +329,7 @@
       async function propose(){
         const title = document.getElementById('title').value.trim();
         const goal = document.getElementById('goal').value.trim();
-        const data = await j('/v1/collab/propose', {
+        const data = await j('/api/v1/collab/propose', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({title, goal, complexity:'high', min_members:2, max_members:3})
         });
@@ -341,7 +341,7 @@
       async function applyJoin(){
         const collabId = document.getElementById('collabId').value.trim();
         const pitch = document.getElementById('pitch').value.trim();
-        await j('/v1/collab/apply', {
+        await j('/api/v1/collab/apply', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({collab_id: collabId, pitch})
         });
@@ -354,7 +354,7 @@
         const orchestrator = document.getElementById('orchestrator').value;
         const executor = document.getElementById('executor').value;
         const reviewer = document.getElementById('reviewer').value;
-        await j('/v1/collab/assign', {
+        await j('/api/v1/collab/assign', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
             collab_id: collabId,
@@ -372,7 +372,7 @@
 
       async function startExec(){
         const collabId = document.getElementById('collabId').value.trim();
-        await j('/v1/collab/start', {
+        await j('/api/v1/collab/start', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({collab_id: collabId, status_or_summary_note: 'start'})
         });
@@ -384,7 +384,7 @@
         const collabId = document.getElementById('collabId').value.trim();
         const summary = document.getElementById('submitSummary').value.trim();
         const content = document.getElementById('submitContent').value.trim();
-        const data = await j('/v1/collab/submit', {
+        const data = await j('/api/v1/collab/submit', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({collab_id: collabId, role: 'executor', kind: 'code', summary, content})
         });
@@ -396,12 +396,12 @@
       async function reviewLastArtifact(){
         const collabId = document.getElementById('collabId').value.trim();
         if (!lastArtifactId) {
-          const data = await j(`/v1/collab/artifacts?collab_id=${encodeURIComponent(collabId)}&limit=1`);
+          const data = await j(`/api/v1/collab/artifacts?collab_id=${encodeURIComponent(collabId)}&limit=1`);
           const first = (data.items||[])[0];
           if (!first) throw new Error('no artifact to review');
           lastArtifactId = first.id;
         }
-        await j('/v1/collab/review', {
+        await j('/api/v1/collab/review', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({collab_id: collabId, artifact_id: lastArtifactId, status: 'accepted', review_note: 'ok'})
         });
@@ -411,7 +411,7 @@
 
       async function closeCollab(){
         const collabId = document.getElementById('collabId').value.trim();
-        await j('/v1/collab/close', {
+        await j('/api/v1/collab/close', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({collab_id: collabId, result: 'closed', status_or_summary_note: 'done'})
         });
@@ -423,10 +423,10 @@
         const collabId = document.getElementById('collabId').value.trim();
         if (!collabId) return;
         const [session, participants, artifacts, events] = await Promise.all([
-          j(`/v1/collab/get?collab_id=${encodeURIComponent(collabId)}`),
-          j(`/v1/collab/participants?collab_id=${encodeURIComponent(collabId)}&limit=200`),
-          j(`/v1/collab/artifacts?collab_id=${encodeURIComponent(collabId)}&limit=200`),
-          j(`/v1/collab/events?collab_id=${encodeURIComponent(collabId)}&limit=200`)
+          j(`/api/v1/collab/get?collab_id=${encodeURIComponent(collabId)}`),
+          j(`/api/v1/collab/participants?collab_id=${encodeURIComponent(collabId)}&limit=200`),
+          j(`/api/v1/collab/artifacts?collab_id=${encodeURIComponent(collabId)}&limit=200`),
+          j(`/api/v1/collab/events?collab_id=${encodeURIComponent(collabId)}&limit=200`)
         ]);
         document.getElementById('sessionJson').textContent = JSON.stringify(session.item || {}, null, 2);
         document.getElementById('participantsJson').textContent = JSON.stringify(participants.items || [], null, 2);

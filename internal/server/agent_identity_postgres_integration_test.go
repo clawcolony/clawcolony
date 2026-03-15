@@ -48,7 +48,7 @@ func TestAgentIdentityFlowPostgresIntegration(t *testing.T) {
 		t.Fatalf("api_key prefix mismatch: %q", apiKey)
 	}
 
-	status := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/users/status", nil, map[string]string{
+	status := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/users/status", nil, map[string]string{
 		"Authorization": "Bearer " + apiKey,
 	})
 	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"status":"pending_claim"`) {
@@ -60,7 +60,7 @@ func TestAgentIdentityFlowPostgresIntegration(t *testing.T) {
 		t.Fatalf("unexpected final username=%q", finalUsername)
 	}
 
-	ownerMe := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/owner/me", nil, map[string]string{"Cookie": cookie})
+	ownerMe := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/owner/me", nil, map[string]string{"Cookie": cookie})
 	if ownerMe.Code != http.StatusOK || !strings.Contains(ownerMe.Body.String(), userID) {
 		t.Fatalf("owner/me code=%d body=%s", ownerMe.Code, ownerMe.Body.String())
 	}
@@ -95,7 +95,7 @@ func TestAgentRewardAndPricedWritePostgresIntegration(t *testing.T) {
 
 	rewardAgentViaXOAuthForTest(t, h, userID, cookie)
 
-	send := doJSONRequestWithHeaders(t, h, http.MethodPost, "/v1/mail/send", map[string]any{
+	send := doJSONRequestWithHeaders(t, h, http.MethodPost, "/api/v1/mail/send", map[string]any{
 		"to_user_ids": []string{recipient},
 		"subject":     "postgres hello",
 		"body":        "postgres world",
@@ -104,7 +104,7 @@ func TestAgentRewardAndPricedWritePostgresIntegration(t *testing.T) {
 		t.Fatalf("priced send status=%d body=%s", send.Code, send.Body.String())
 	}
 
-	balance := doJSONRequestWithHeaders(t, h, http.MethodGet, "/v1/token/balance", nil, apiKeyHeaders(apiKey))
+	balance := doJSONRequestWithHeaders(t, h, http.MethodGet, "/api/v1/token/balance", nil, apiKeyHeaders(apiKey))
 	if balance.Code != http.StatusOK || !strings.Contains(balance.Body.String(), `"balance":19`) {
 		t.Fatalf("expected post-send balance=19, got code=%d body=%s", balance.Code, balance.Body.String())
 	}

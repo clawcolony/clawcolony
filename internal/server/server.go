@@ -36,6 +36,7 @@ type Server struct {
 	cfg                  config.Config
 	store                store.Store
 	mux                  *http.ServeMux
+	routeMux             *http.ServeMux
 	policyMu             sync.RWMutex
 	missions             missionPolicy
 	taskMu               sync.Mutex
@@ -215,26 +216,26 @@ const runtimeSchedulerMaxCooldownSeconds int64 = 86400
 const defaultCostAlertCooldownSeconds int64 = int64((10 * time.Minute) / time.Second)
 
 var runtimeRemovedRouteSet = map[string]struct{}{
-	"/v1/prompts/templates":                {},
-	"/v1/prompts/templates/upsert":         {},
-	"/v1/prompts/templates/apply":          {},
-	"/v1/bots/logs":                        {},
-	"/v1/bots/logs/all":                    {},
-	"/v1/bots/rule-status":                 {},
-	"/v1/bots/dev/link":                    {},
-	"/v1/bots/dev/health":                  {},
-	"/v1/bots/openclaw/status":             {},
-	"/v1/system/openclaw-dashboard-config": {},
-	"/v1/chat/send":                        {},
-	"/v1/chat/history":                     {},
-	"/v1/chat/stream":                      {},
-	"/v1/chat/state":                       {},
-	"/v1/bots/profile/readme":              {},
+	"/api/v1/prompts/templates":                {},
+	"/api/v1/prompts/templates/upsert":         {},
+	"/api/v1/prompts/templates/apply":          {},
+	"/api/v1/bots/logs":                        {},
+	"/api/v1/bots/logs/all":                    {},
+	"/api/v1/bots/rule-status":                 {},
+	"/api/v1/bots/dev/link":                    {},
+	"/api/v1/bots/dev/health":                  {},
+	"/api/v1/bots/openclaw/status":             {},
+	"/api/v1/system/openclaw-dashboard-config": {},
+	"/api/v1/chat/send":                        {},
+	"/api/v1/chat/history":                     {},
+	"/api/v1/chat/stream":                      {},
+	"/api/v1/chat/state":                       {},
+	"/api/v1/bots/profile/readme":              {},
 }
 
 var runtimeRemovedRoutePrefixes = []string{
-	"/v1/bots/dev",
-	"/v1/bots/openclaw",
+	"/api/v1/bots/dev",
+	"/api/v1/bots/openclaw",
 }
 
 const defaultMissionText = `Top Rule #0: Execute autonomously. Do not wait for user confirmation unless action is high-risk or irreversible.
@@ -260,9 +261,10 @@ func New(cfg config.Config, st store.Store) *Server {
 		piDigits = "14159265358979323846"
 	}
 	s := &Server{
-		cfg:   cfg,
-		store: st,
-		mux:   http.NewServeMux(),
+		cfg:      cfg,
+		store:    st,
+		mux:      http.NewServeMux(),
+		routeMux: nil,
 		missions: missionPolicy{
 			Default:       defaultMissionText,
 			RoomOverrides: make(map[string]string),
@@ -284,6 +286,9 @@ func New(cfg config.Config, st store.Store) *Server {
 		log.Printf("tian dao init failed: %v", err)
 	}
 	s.registerRoutes()
+	s.routeMux = s.mux
+	s.mux = http.NewServeMux()
+	s.mux.Handle("/", s.publicHTTPHandler())
 	return s
 }
 
@@ -296,7 +301,24 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) wrappedHTTPHandler() http.Handler {
-	return s.httpAccessLogMiddleware(s.apiKeyAuthMiddleware(s.authIdentityContractMiddleware(s.ownerAndPricingMiddleware(s.mux))))
+	return s.mux
+}
+
+func (s *Server) publicHTTPHandler() http.Handler {
+	inner := s.apiKeyAuthMiddleware(s.authIdentityContractMiddleware(s.ownerAndPricingMiddleware(s.routeMux)))
+	return s.httpAccessLogMiddleware(s.publicPathGateway(inner))
+}
+
+func (s *Server) publicPathGateway(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqPath := normalizeRequestPath(r.URL.Path)
+		legacyPrefix := "/" + "v1"
+		if reqPath == legacyPrefix || strings.HasPrefix(reqPath, legacyPrefix+"/") {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func normalizeRequestPath(requestPath string) string {
@@ -754,177 +776,177 @@ func (s *Server) initTianDao(ctx context.Context) error {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	s.mux.HandleFunc("/v1/meta", s.handleMeta)
-	s.mux.HandleFunc("/v1/events", s.handleEvents)
-	s.mux.HandleFunc("/v1/internal/users/sync", s.handleInternalUserSync)
-	s.mux.HandleFunc("/v1/tian-dao/law", s.handleTianDaoLaw)
-	s.mux.HandleFunc("/v1/world/tick/status", s.handleWorldTickStatus)
-	s.mux.HandleFunc("/v1/world/freeze/status", s.handleWorldFreezeStatus)
-	s.mux.HandleFunc("/v1/world/freeze/rescue", s.handleWorldFreezeRescue)
-	s.mux.HandleFunc("/v1/world/tick/history", s.handleWorldTickHistory)
-	s.mux.HandleFunc("/v1/world/tick/chain/verify", s.handleWorldTickChainVerify)
-	s.mux.HandleFunc("/v1/world/tick/replay", s.handleWorldTickReplay)
-	s.mux.HandleFunc("/v1/world/tick/steps", s.handleWorldTickSteps)
-	s.mux.HandleFunc("/v1/world/life-state", s.handleWorldLifeState)
-	s.mux.HandleFunc("/v1/world/life-state/transitions", s.handleWorldLifeStateTransitions)
-	s.mux.HandleFunc("/v1/world/cost-events", s.handleWorldCostEvents)
-	s.mux.HandleFunc("/v1/world/cost-summary", s.handleWorldCostSummary)
-	s.mux.HandleFunc("/v1/world/tool-audit", s.handleWorldToolAudit)
-	s.mux.HandleFunc("/v1/world/cost-alerts", s.handleWorldCostAlerts)
-	s.mux.HandleFunc("/v1/world/cost-alert-settings", s.handleWorldCostAlertSettings)
-	s.mux.HandleFunc("/v1/world/cost-alert-settings/upsert", s.handleWorldCostAlertSettingsUpsert)
-	s.mux.HandleFunc("/v1/runtime/scheduler-settings", s.handleRuntimeSchedulerSettings)
-	s.mux.HandleFunc("/v1/runtime/scheduler-settings/upsert", s.handleRuntimeSchedulerSettingsUpsert)
-	s.mux.HandleFunc("/v1/world/cost-alert-notifications", s.handleWorldCostAlertNotifications)
-	s.mux.HandleFunc("/v1/world/evolution-score", s.handleWorldEvolutionScore)
-	s.mux.HandleFunc("/v1/world/evolution-alerts", s.handleWorldEvolutionAlerts)
-	s.mux.HandleFunc("/v1/world/evolution-alert-settings", s.handleWorldEvolutionAlertSettings)
-	s.mux.HandleFunc("/v1/world/evolution-alert-settings/upsert", s.handleWorldEvolutionAlertSettingsUpsert)
-	s.mux.HandleFunc("/v1/world/evolution-alert-notifications", s.handleWorldEvolutionAlertNotifications)
-	s.mux.HandleFunc("/v1/bots", s.handleBots)
-	s.mux.HandleFunc("/v1/bots/nickname/upsert", s.handleBotNicknameUpsert)
-	s.mux.HandleFunc("/v1/bots/thoughts", s.handleBotThoughts)
-	s.mux.HandleFunc("/v1/users/register", s.handleUserRegister)
-	s.mux.HandleFunc("/v1/users/status", s.handleUserStatus)
-	s.mux.HandleFunc("/v1/claims/request-magic-link", s.handleClaimRequestMagicLink)
-	s.mux.HandleFunc("/v1/claims/complete", s.handleClaimComplete)
-	s.mux.HandleFunc("/v1/owner/me", s.handleOwnerMe)
-	s.mux.HandleFunc("/v1/owner/logout", s.handleOwnerLogout)
-	s.mux.HandleFunc("/v1/social/x/connect/start", s.handleSocialXConnectStart)
-	s.mux.HandleFunc("/v1/social/x/verify", s.handleSocialXVerify)
-	s.mux.HandleFunc("/v1/social/github/connect/start", s.handleSocialGitHubConnectStart)
-	s.mux.HandleFunc("/v1/social/github/verify", s.handleSocialGitHubVerify)
+	s.mux.HandleFunc("/api/v1/meta", s.handleMeta)
+	s.mux.HandleFunc("/api/v1/events", s.handleEvents)
+	s.mux.HandleFunc("/api/v1/internal/users/sync", s.handleInternalUserSync)
+	s.mux.HandleFunc("/api/v1/tian-dao/law", s.handleTianDaoLaw)
+	s.mux.HandleFunc("/api/v1/world/tick/status", s.handleWorldTickStatus)
+	s.mux.HandleFunc("/api/v1/world/freeze/status", s.handleWorldFreezeStatus)
+	s.mux.HandleFunc("/api/v1/world/freeze/rescue", s.handleWorldFreezeRescue)
+	s.mux.HandleFunc("/api/v1/world/tick/history", s.handleWorldTickHistory)
+	s.mux.HandleFunc("/api/v1/world/tick/chain/verify", s.handleWorldTickChainVerify)
+	s.mux.HandleFunc("/api/v1/world/tick/replay", s.handleWorldTickReplay)
+	s.mux.HandleFunc("/api/v1/world/tick/steps", s.handleWorldTickSteps)
+	s.mux.HandleFunc("/api/v1/world/life-state", s.handleWorldLifeState)
+	s.mux.HandleFunc("/api/v1/world/life-state/transitions", s.handleWorldLifeStateTransitions)
+	s.mux.HandleFunc("/api/v1/world/cost-events", s.handleWorldCostEvents)
+	s.mux.HandleFunc("/api/v1/world/cost-summary", s.handleWorldCostSummary)
+	s.mux.HandleFunc("/api/v1/world/tool-audit", s.handleWorldToolAudit)
+	s.mux.HandleFunc("/api/v1/world/cost-alerts", s.handleWorldCostAlerts)
+	s.mux.HandleFunc("/api/v1/world/cost-alert-settings", s.handleWorldCostAlertSettings)
+	s.mux.HandleFunc("/api/v1/world/cost-alert-settings/upsert", s.handleWorldCostAlertSettingsUpsert)
+	s.mux.HandleFunc("/api/v1/runtime/scheduler-settings", s.handleRuntimeSchedulerSettings)
+	s.mux.HandleFunc("/api/v1/runtime/scheduler-settings/upsert", s.handleRuntimeSchedulerSettingsUpsert)
+	s.mux.HandleFunc("/api/v1/world/cost-alert-notifications", s.handleWorldCostAlertNotifications)
+	s.mux.HandleFunc("/api/v1/world/evolution-score", s.handleWorldEvolutionScore)
+	s.mux.HandleFunc("/api/v1/world/evolution-alerts", s.handleWorldEvolutionAlerts)
+	s.mux.HandleFunc("/api/v1/world/evolution-alert-settings", s.handleWorldEvolutionAlertSettings)
+	s.mux.HandleFunc("/api/v1/world/evolution-alert-settings/upsert", s.handleWorldEvolutionAlertSettingsUpsert)
+	s.mux.HandleFunc("/api/v1/world/evolution-alert-notifications", s.handleWorldEvolutionAlertNotifications)
+	s.mux.HandleFunc("/api/v1/bots", s.handleBots)
+	s.mux.HandleFunc("/api/v1/bots/nickname/upsert", s.handleBotNicknameUpsert)
+	s.mux.HandleFunc("/api/v1/bots/thoughts", s.handleBotThoughts)
+	s.mux.HandleFunc("/api/v1/users/register", s.handleUserRegister)
+	s.mux.HandleFunc("/api/v1/users/status", s.handleUserStatus)
+	s.mux.HandleFunc("/api/v1/claims/request-magic-link", s.handleClaimRequestMagicLink)
+	s.mux.HandleFunc("/api/v1/claims/complete", s.handleClaimComplete)
+	s.mux.HandleFunc("/api/v1/owner/me", s.handleOwnerMe)
+	s.mux.HandleFunc("/api/v1/owner/logout", s.handleOwnerLogout)
+	s.mux.HandleFunc("/api/v1/social/x/connect/start", s.handleSocialXConnectStart)
+	s.mux.HandleFunc("/api/v1/social/x/verify", s.handleSocialXVerify)
+	s.mux.HandleFunc("/api/v1/social/github/connect/start", s.handleSocialGitHubConnectStart)
+	s.mux.HandleFunc("/api/v1/social/github/verify", s.handleSocialGitHubVerify)
 	s.mux.HandleFunc("/auth/x/callback", s.handleSocialXCallback)
 	s.mux.HandleFunc("/auth/github/callback", s.handleSocialGitHubCallback)
-	s.mux.HandleFunc("/v1/social/policy", s.handleSocialPolicy)
-	s.mux.HandleFunc("/v1/social/rewards/status", s.handleSocialRewardsStatus)
-	s.mux.HandleFunc("/v1/token/pricing", s.handleTokenPricing)
-	s.mux.HandleFunc("/v1/policy/mission", s.handleMissionPolicy)
-	s.mux.HandleFunc("/v1/policy/mission/default", s.handleMissionDefault)
-	s.mux.HandleFunc("/v1/policy/mission/room", s.handleMissionRoom)
-	s.mux.HandleFunc("/v1/policy/mission/bot", s.handleMissionBot)
-	s.mux.HandleFunc("/v1/token/accounts", s.handleTokenAccounts)
-	s.mux.HandleFunc("/v1/token/balance", s.handleTokenBalance)
-	s.mux.HandleFunc("/v1/token/leaderboard", s.handleTokenLeaderboard)
-	s.mux.HandleFunc("/v1/token/consume", s.handleTokenConsume)
-	s.mux.HandleFunc("/v1/token/history", s.handleTokenHistory)
-	s.mux.HandleFunc("/v1/token/task-market", s.handleTokenTaskMarket)
-	s.mux.HandleFunc("/v1/token/reward/upgrade-closure", s.handleTokenUpgradeClosureReward)
-	s.mux.HandleFunc("/v1/mail/send", s.handleMailSend)
-	s.mux.HandleFunc("/v1/mail/send-list", s.handleMailSendList)
-	s.mux.HandleFunc("/v1/mail/inbox", s.handleMailInbox)
-	s.mux.HandleFunc("/v1/mail/outbox", s.handleMailOutbox)
-	s.mux.HandleFunc("/v1/mail/mark-read", s.handleMailMarkRead)
-	s.mux.HandleFunc("/v1/mail/mark-read-query", s.handleMailMarkReadQuery)
-	s.mux.HandleFunc("/v1/mail/reminders", s.handleMailReminders)
-	s.mux.HandleFunc("/v1/mail/reminders/resolve", s.handleMailRemindersResolve)
-	s.mux.HandleFunc("/v1/mail/contacts", s.handleMailContacts)
-	s.mux.HandleFunc("/v1/mail/contacts/upsert", s.handleMailContactsUpsert)
-	s.mux.HandleFunc("/v1/mail/overview", s.handleMailOverview)
-	s.mux.HandleFunc("/v1/mail/lists", s.handleMailLists)
-	s.mux.HandleFunc("/v1/mail/lists/create", s.handleMailListCreate)
-	s.mux.HandleFunc("/v1/mail/lists/join", s.handleMailListJoin)
-	s.mux.HandleFunc("/v1/mail/lists/leave", s.handleMailListLeave)
-	s.mux.HandleFunc("/v1/token/transfer", s.handleTokenTransfer)
-	s.mux.HandleFunc("/v1/token/tip", s.handleTokenTip)
-	s.mux.HandleFunc("/v1/token/wishes", s.handleTokenWishes)
-	s.mux.HandleFunc("/v1/token/wish/create", s.handleTokenWishCreate)
-	s.mux.HandleFunc("/v1/token/wish/fulfill", s.handleTokenWishFulfill)
-	s.mux.HandleFunc("/v1/life/hibernate", s.handleLifeHibernate)
-	s.mux.HandleFunc("/v1/life/wake", s.handleLifeWake)
-	s.mux.HandleFunc("/v1/life/set-will", s.handleLifeSetWill)
-	s.mux.HandleFunc("/v1/life/will", s.handleLifeWill)
-	s.mux.HandleFunc("/v1/life/metamorphose", s.handleAPILifeMetamorphose)
-	s.mux.HandleFunc("/v1/genesis/state", s.handleGenesisState)
-	s.mux.HandleFunc("/v1/genesis/bootstrap/start", s.handleGenesisBootstrapStart)
-	s.mux.HandleFunc("/v1/genesis/bootstrap/seal", s.handleGenesisBootstrapSeal)
-	s.mux.HandleFunc("/v1/clawcolony/state", s.handleGenesisState)
-	s.mux.HandleFunc("/v1/clawcolony/bootstrap/start", s.handleGenesisBootstrapStart)
-	s.mux.HandleFunc("/v1/clawcolony/bootstrap/seal", s.handleGenesisBootstrapSeal)
-	s.mux.HandleFunc("/v1/library/publish", s.handleAPILibraryPublish)
-	s.mux.HandleFunc("/v1/library/search", s.handleAPILibrarySearch)
-	s.mux.HandleFunc("/v1/tools/register", s.handleToolRegister)
-	s.mux.HandleFunc("/v1/tools/review", s.handleToolReview)
-	s.mux.HandleFunc("/v1/tools/search", s.handleToolSearch)
-	s.mux.HandleFunc("/v1/tools/invoke", s.handleToolInvoke)
-	s.mux.HandleFunc("/v1/npc/list", s.handleNPCList)
-	s.mux.HandleFunc("/v1/npc/tasks", s.handleNPCTasks)
-	s.mux.HandleFunc("/v1/npc/tasks/create", s.handleNPCTaskCreate)
-	s.mux.HandleFunc("/v1/metabolism/score", s.handleMetabolismScore)
-	s.mux.HandleFunc("/v1/metabolism/supersede", s.handleMetabolismSupersede)
-	s.mux.HandleFunc("/v1/metabolism/dispute", s.handleMetabolismDispute)
-	s.mux.HandleFunc("/v1/metabolism/report", s.handleMetabolismReport)
-	s.mux.HandleFunc("/v1/bounty/post", s.handleBountyPost)
-	s.mux.HandleFunc("/v1/bounty/list", s.handleBountyList)
-	s.mux.HandleFunc("/v1/bounty/get", s.handleBountyGet)
-	s.mux.HandleFunc("/v1/bounty/claim", s.handleBountyClaim)
-	s.mux.HandleFunc("/v1/bounty/verify", s.handleBountyVerify)
-	s.mux.HandleFunc("/v1/collab/propose", s.handleCollabPropose)
-	s.mux.HandleFunc("/v1/collab/list", s.handleCollabList)
-	s.mux.HandleFunc("/v1/collab/get", s.handleCollabGet)
-	s.mux.HandleFunc("/v1/collab/apply", s.handleCollabApply)
-	s.mux.HandleFunc("/v1/collab/assign", s.handleCollabAssign)
-	s.mux.HandleFunc("/v1/collab/start", s.handleCollabStart)
-	s.mux.HandleFunc("/v1/collab/submit", s.handleCollabSubmit)
-	s.mux.HandleFunc("/v1/collab/review", s.handleCollabReview)
-	s.mux.HandleFunc("/v1/collab/close", s.handleCollabClose)
-	s.mux.HandleFunc("/v1/collab/participants", s.handleCollabParticipants)
-	s.mux.HandleFunc("/v1/collab/artifacts", s.handleCollabArtifacts)
-	s.mux.HandleFunc("/v1/collab/events", s.handleCollabEvents)
-	s.mux.HandleFunc("/v1/kb/entries", s.handleKBEntries)
-	s.mux.HandleFunc("/v1/kb/sections", s.handleKBSections)
-	s.mux.HandleFunc("/v1/kb/entries/history", s.handleKBEntryHistory)
-	s.mux.HandleFunc("/v1/kb/proposals", s.handleKBProposals)
-	s.mux.HandleFunc("/v1/kb/proposals/get", s.handleKBProposalGet)
-	s.mux.HandleFunc("/v1/kb/proposals/enroll", s.handleKBProposalEnroll)
-	s.mux.HandleFunc("/v1/kb/proposals/revisions", s.handleKBProposalRevisions)
-	s.mux.HandleFunc("/v1/kb/proposals/revise", s.handleKBProposalRevise)
-	s.mux.HandleFunc("/v1/kb/proposals/ack", s.handleKBProposalAck)
-	s.mux.HandleFunc("/v1/kb/proposals/comment", s.handleKBProposalComment)
-	s.mux.HandleFunc("/v1/kb/proposals/thread", s.handleKBProposalThread)
-	s.mux.HandleFunc("/v1/kb/proposals/start-vote", s.handleKBProposalStartVote)
-	s.mux.HandleFunc("/v1/kb/proposals/vote", s.handleKBProposalVote)
-	s.mux.HandleFunc("/v1/kb/proposals/apply", s.handleKBProposalApply)
-	s.mux.HandleFunc("/v1/ganglia/forge", s.handleGangliaForge)
-	s.mux.HandleFunc("/v1/ganglia/browse", s.handleGangliaBrowse)
-	s.mux.HandleFunc("/v1/ganglia/get", s.handleGangliaGet)
-	s.mux.HandleFunc("/v1/ganglia/integrate", s.handleGangliaIntegrate)
-	s.mux.HandleFunc("/v1/ganglia/rate", s.handleGangliaRate)
-	s.mux.HandleFunc("/v1/ganglia/integrations", s.handleGangliaIntegrations)
-	s.mux.HandleFunc("/v1/ganglia/ratings", s.handleGangliaRatings)
-	s.mux.HandleFunc("/v1/ganglia/protocol", s.handleGangliaProtocol)
-	s.mux.HandleFunc("/v1/colony/status", s.handleAPIColonyStatus)
-	s.mux.HandleFunc("/v1/colony/directory", s.handleAPIColonyDirectory)
-	s.mux.HandleFunc("/v1/colony/chronicle", s.handleAPIColonyChronicle)
-	s.mux.HandleFunc("/v1/colony/banished", s.handleAPIColonyBanished)
-	s.mux.HandleFunc("/v1/governance/docs", s.handleGovernanceDocs)
-	s.mux.HandleFunc("/v1/governance/proposals", s.handleGovernanceProposals)
-	s.mux.HandleFunc("/v1/governance/proposals/create", s.handleAPIGovPropose)
-	s.mux.HandleFunc("/v1/governance/proposals/cosign", s.handleAPIGovCosign)
-	s.mux.HandleFunc("/v1/governance/proposals/vote", s.handleAPIGovVote)
-	s.mux.HandleFunc("/v1/governance/overview", s.handleGovernanceOverview)
-	s.mux.HandleFunc("/v1/governance/protocol", s.handleGovernanceProtocol)
-	s.mux.HandleFunc("/v1/governance/laws", s.handleAPIGovLaws)
-	s.mux.HandleFunc("/v1/governance/report", s.handleGovernanceReportCreate)
-	s.mux.HandleFunc("/v1/governance/reports", s.handleGovernanceReports)
-	s.mux.HandleFunc("/v1/governance/cases/open", s.handleGovernanceCaseOpen)
-	s.mux.HandleFunc("/v1/governance/cases", s.handleGovernanceCases)
-	s.mux.HandleFunc("/v1/governance/cases/verdict", s.handleGovernanceCaseVerdict)
-	s.mux.HandleFunc("/v1/reputation/score", s.handleReputationScore)
-	s.mux.HandleFunc("/v1/reputation/leaderboard", s.handleReputationLeaderboard)
-	s.mux.HandleFunc("/v1/reputation/events", s.handleReputationEvents)
-	s.mux.HandleFunc("/v1/ops/overview", s.handleOpsOverview)
-	s.mux.HandleFunc("/v1/ops/product-overview", s.handleOpsProductOverview)
-	s.mux.HandleFunc("/v1/monitor/agents/overview", s.handleMonitorAgentsOverview)
-	s.mux.HandleFunc("/v1/monitor/agents/timeline", s.handleMonitorAgentsTimeline)
-	s.mux.HandleFunc("/v1/monitor/agents/timeline/all", s.handleMonitorAgentsTimelineAll)
-	s.mux.HandleFunc("/v1/monitor/communications", s.handleMonitorCommunications)
-	s.mux.HandleFunc("/v1/monitor/meta", s.handleMonitorMeta)
-	s.mux.HandleFunc("/v1/system/request-logs", s.handleRequestLogs)
-	s.mux.HandleFunc("/v1/tasks/pi", s.handlePiTaskMeta)
-	s.mux.HandleFunc("/v1/tasks/pi/claim", s.handlePiTaskClaim)
-	s.mux.HandleFunc("/v1/tasks/pi/submit", s.handlePiTaskSubmit)
-	s.mux.HandleFunc("/v1/tasks/pi/history", s.handlePiTaskHistory)
+	s.mux.HandleFunc("/api/v1/social/policy", s.handleSocialPolicy)
+	s.mux.HandleFunc("/api/v1/social/rewards/status", s.handleSocialRewardsStatus)
+	s.mux.HandleFunc("/api/v1/token/pricing", s.handleTokenPricing)
+	s.mux.HandleFunc("/api/v1/policy/mission", s.handleMissionPolicy)
+	s.mux.HandleFunc("/api/v1/policy/mission/default", s.handleMissionDefault)
+	s.mux.HandleFunc("/api/v1/policy/mission/room", s.handleMissionRoom)
+	s.mux.HandleFunc("/api/v1/policy/mission/bot", s.handleMissionBot)
+	s.mux.HandleFunc("/api/v1/token/accounts", s.handleTokenAccounts)
+	s.mux.HandleFunc("/api/v1/token/balance", s.handleTokenBalance)
+	s.mux.HandleFunc("/api/v1/token/leaderboard", s.handleTokenLeaderboard)
+	s.mux.HandleFunc("/api/v1/token/consume", s.handleTokenConsume)
+	s.mux.HandleFunc("/api/v1/token/history", s.handleTokenHistory)
+	s.mux.HandleFunc("/api/v1/token/task-market", s.handleTokenTaskMarket)
+	s.mux.HandleFunc("/api/v1/token/reward/upgrade-closure", s.handleTokenUpgradeClosureReward)
+	s.mux.HandleFunc("/api/v1/mail/send", s.handleMailSend)
+	s.mux.HandleFunc("/api/v1/mail/send-list", s.handleMailSendList)
+	s.mux.HandleFunc("/api/v1/mail/inbox", s.handleMailInbox)
+	s.mux.HandleFunc("/api/v1/mail/outbox", s.handleMailOutbox)
+	s.mux.HandleFunc("/api/v1/mail/mark-read", s.handleMailMarkRead)
+	s.mux.HandleFunc("/api/v1/mail/mark-read-query", s.handleMailMarkReadQuery)
+	s.mux.HandleFunc("/api/v1/mail/reminders", s.handleMailReminders)
+	s.mux.HandleFunc("/api/v1/mail/reminders/resolve", s.handleMailRemindersResolve)
+	s.mux.HandleFunc("/api/v1/mail/contacts", s.handleMailContacts)
+	s.mux.HandleFunc("/api/v1/mail/contacts/upsert", s.handleMailContactsUpsert)
+	s.mux.HandleFunc("/api/v1/mail/overview", s.handleMailOverview)
+	s.mux.HandleFunc("/api/v1/mail/lists", s.handleMailLists)
+	s.mux.HandleFunc("/api/v1/mail/lists/create", s.handleMailListCreate)
+	s.mux.HandleFunc("/api/v1/mail/lists/join", s.handleMailListJoin)
+	s.mux.HandleFunc("/api/v1/mail/lists/leave", s.handleMailListLeave)
+	s.mux.HandleFunc("/api/v1/token/transfer", s.handleTokenTransfer)
+	s.mux.HandleFunc("/api/v1/token/tip", s.handleTokenTip)
+	s.mux.HandleFunc("/api/v1/token/wishes", s.handleTokenWishes)
+	s.mux.HandleFunc("/api/v1/token/wish/create", s.handleTokenWishCreate)
+	s.mux.HandleFunc("/api/v1/token/wish/fulfill", s.handleTokenWishFulfill)
+	s.mux.HandleFunc("/api/v1/life/hibernate", s.handleLifeHibernate)
+	s.mux.HandleFunc("/api/v1/life/wake", s.handleLifeWake)
+	s.mux.HandleFunc("/api/v1/life/set-will", s.handleLifeSetWill)
+	s.mux.HandleFunc("/api/v1/life/will", s.handleLifeWill)
+	s.mux.HandleFunc("/api/v1/life/metamorphose", s.handleAPILifeMetamorphose)
+	s.mux.HandleFunc("/api/v1/genesis/state", s.handleGenesisState)
+	s.mux.HandleFunc("/api/v1/genesis/bootstrap/start", s.handleGenesisBootstrapStart)
+	s.mux.HandleFunc("/api/v1/genesis/bootstrap/seal", s.handleGenesisBootstrapSeal)
+	s.mux.HandleFunc("/api/v1/clawcolony/state", s.handleGenesisState)
+	s.mux.HandleFunc("/api/v1/clawcolony/bootstrap/start", s.handleGenesisBootstrapStart)
+	s.mux.HandleFunc("/api/v1/clawcolony/bootstrap/seal", s.handleGenesisBootstrapSeal)
+	s.mux.HandleFunc("/api/v1/library/publish", s.handleAPILibraryPublish)
+	s.mux.HandleFunc("/api/v1/library/search", s.handleAPILibrarySearch)
+	s.mux.HandleFunc("/api/v1/tools/register", s.handleToolRegister)
+	s.mux.HandleFunc("/api/v1/tools/review", s.handleToolReview)
+	s.mux.HandleFunc("/api/v1/tools/search", s.handleToolSearch)
+	s.mux.HandleFunc("/api/v1/tools/invoke", s.handleToolInvoke)
+	s.mux.HandleFunc("/api/v1/npc/list", s.handleNPCList)
+	s.mux.HandleFunc("/api/v1/npc/tasks", s.handleNPCTasks)
+	s.mux.HandleFunc("/api/v1/npc/tasks/create", s.handleNPCTaskCreate)
+	s.mux.HandleFunc("/api/v1/metabolism/score", s.handleMetabolismScore)
+	s.mux.HandleFunc("/api/v1/metabolism/supersede", s.handleMetabolismSupersede)
+	s.mux.HandleFunc("/api/v1/metabolism/dispute", s.handleMetabolismDispute)
+	s.mux.HandleFunc("/api/v1/metabolism/report", s.handleMetabolismReport)
+	s.mux.HandleFunc("/api/v1/bounty/post", s.handleBountyPost)
+	s.mux.HandleFunc("/api/v1/bounty/list", s.handleBountyList)
+	s.mux.HandleFunc("/api/v1/bounty/get", s.handleBountyGet)
+	s.mux.HandleFunc("/api/v1/bounty/claim", s.handleBountyClaim)
+	s.mux.HandleFunc("/api/v1/bounty/verify", s.handleBountyVerify)
+	s.mux.HandleFunc("/api/v1/collab/propose", s.handleCollabPropose)
+	s.mux.HandleFunc("/api/v1/collab/list", s.handleCollabList)
+	s.mux.HandleFunc("/api/v1/collab/get", s.handleCollabGet)
+	s.mux.HandleFunc("/api/v1/collab/apply", s.handleCollabApply)
+	s.mux.HandleFunc("/api/v1/collab/assign", s.handleCollabAssign)
+	s.mux.HandleFunc("/api/v1/collab/start", s.handleCollabStart)
+	s.mux.HandleFunc("/api/v1/collab/submit", s.handleCollabSubmit)
+	s.mux.HandleFunc("/api/v1/collab/review", s.handleCollabReview)
+	s.mux.HandleFunc("/api/v1/collab/close", s.handleCollabClose)
+	s.mux.HandleFunc("/api/v1/collab/participants", s.handleCollabParticipants)
+	s.mux.HandleFunc("/api/v1/collab/artifacts", s.handleCollabArtifacts)
+	s.mux.HandleFunc("/api/v1/collab/events", s.handleCollabEvents)
+	s.mux.HandleFunc("/api/v1/kb/entries", s.handleKBEntries)
+	s.mux.HandleFunc("/api/v1/kb/sections", s.handleKBSections)
+	s.mux.HandleFunc("/api/v1/kb/entries/history", s.handleKBEntryHistory)
+	s.mux.HandleFunc("/api/v1/kb/proposals", s.handleKBProposals)
+	s.mux.HandleFunc("/api/v1/kb/proposals/get", s.handleKBProposalGet)
+	s.mux.HandleFunc("/api/v1/kb/proposals/enroll", s.handleKBProposalEnroll)
+	s.mux.HandleFunc("/api/v1/kb/proposals/revisions", s.handleKBProposalRevisions)
+	s.mux.HandleFunc("/api/v1/kb/proposals/revise", s.handleKBProposalRevise)
+	s.mux.HandleFunc("/api/v1/kb/proposals/ack", s.handleKBProposalAck)
+	s.mux.HandleFunc("/api/v1/kb/proposals/comment", s.handleKBProposalComment)
+	s.mux.HandleFunc("/api/v1/kb/proposals/thread", s.handleKBProposalThread)
+	s.mux.HandleFunc("/api/v1/kb/proposals/start-vote", s.handleKBProposalStartVote)
+	s.mux.HandleFunc("/api/v1/kb/proposals/vote", s.handleKBProposalVote)
+	s.mux.HandleFunc("/api/v1/kb/proposals/apply", s.handleKBProposalApply)
+	s.mux.HandleFunc("/api/v1/ganglia/forge", s.handleGangliaForge)
+	s.mux.HandleFunc("/api/v1/ganglia/browse", s.handleGangliaBrowse)
+	s.mux.HandleFunc("/api/v1/ganglia/get", s.handleGangliaGet)
+	s.mux.HandleFunc("/api/v1/ganglia/integrate", s.handleGangliaIntegrate)
+	s.mux.HandleFunc("/api/v1/ganglia/rate", s.handleGangliaRate)
+	s.mux.HandleFunc("/api/v1/ganglia/integrations", s.handleGangliaIntegrations)
+	s.mux.HandleFunc("/api/v1/ganglia/ratings", s.handleGangliaRatings)
+	s.mux.HandleFunc("/api/v1/ganglia/protocol", s.handleGangliaProtocol)
+	s.mux.HandleFunc("/api/v1/colony/status", s.handleAPIColonyStatus)
+	s.mux.HandleFunc("/api/v1/colony/directory", s.handleAPIColonyDirectory)
+	s.mux.HandleFunc("/api/v1/colony/chronicle", s.handleAPIColonyChronicle)
+	s.mux.HandleFunc("/api/v1/colony/banished", s.handleAPIColonyBanished)
+	s.mux.HandleFunc("/api/v1/governance/docs", s.handleGovernanceDocs)
+	s.mux.HandleFunc("/api/v1/governance/proposals", s.handleGovernanceProposals)
+	s.mux.HandleFunc("/api/v1/governance/proposals/create", s.handleAPIGovPropose)
+	s.mux.HandleFunc("/api/v1/governance/proposals/cosign", s.handleAPIGovCosign)
+	s.mux.HandleFunc("/api/v1/governance/proposals/vote", s.handleAPIGovVote)
+	s.mux.HandleFunc("/api/v1/governance/overview", s.handleGovernanceOverview)
+	s.mux.HandleFunc("/api/v1/governance/protocol", s.handleGovernanceProtocol)
+	s.mux.HandleFunc("/api/v1/governance/laws", s.handleAPIGovLaws)
+	s.mux.HandleFunc("/api/v1/governance/report", s.handleGovernanceReportCreate)
+	s.mux.HandleFunc("/api/v1/governance/reports", s.handleGovernanceReports)
+	s.mux.HandleFunc("/api/v1/governance/cases/open", s.handleGovernanceCaseOpen)
+	s.mux.HandleFunc("/api/v1/governance/cases", s.handleGovernanceCases)
+	s.mux.HandleFunc("/api/v1/governance/cases/verdict", s.handleGovernanceCaseVerdict)
+	s.mux.HandleFunc("/api/v1/reputation/score", s.handleReputationScore)
+	s.mux.HandleFunc("/api/v1/reputation/leaderboard", s.handleReputationLeaderboard)
+	s.mux.HandleFunc("/api/v1/reputation/events", s.handleReputationEvents)
+	s.mux.HandleFunc("/api/v1/ops/overview", s.handleOpsOverview)
+	s.mux.HandleFunc("/api/v1/ops/product-overview", s.handleOpsProductOverview)
+	s.mux.HandleFunc("/api/v1/monitor/agents/overview", s.handleMonitorAgentsOverview)
+	s.mux.HandleFunc("/api/v1/monitor/agents/timeline", s.handleMonitorAgentsTimeline)
+	s.mux.HandleFunc("/api/v1/monitor/agents/timeline/all", s.handleMonitorAgentsTimelineAll)
+	s.mux.HandleFunc("/api/v1/monitor/communications", s.handleMonitorCommunications)
+	s.mux.HandleFunc("/api/v1/monitor/meta", s.handleMonitorMeta)
+	s.mux.HandleFunc("/api/v1/system/request-logs", s.handleRequestLogs)
+	s.mux.HandleFunc("/api/v1/tasks/pi", s.handlePiTaskMeta)
+	s.mux.HandleFunc("/api/v1/tasks/pi/claim", s.handlePiTaskClaim)
+	s.mux.HandleFunc("/api/v1/tasks/pi/submit", s.handlePiTaskSubmit)
+	s.mux.HandleFunc("/api/v1/tasks/pi/history", s.handlePiTaskHistory)
 	s.mux.HandleFunc("/dashboard", s.handleDashboard)
 	s.mux.HandleFunc("/dashboard/", s.handleDashboard)
 	s.mux.HandleFunc("/claim/", s.handleClaimPage)
@@ -3491,9 +3513,9 @@ func (s *Server) handleTokenHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 type mailSendRequest struct {
-	ToUserIDs  []string `json:"to_user_ids"`
-	Subject    string   `json:"subject"`
-	Body       string   `json:"body"`
+	ToUserIDs []string `json:"to_user_ids"`
+	Subject   string   `json:"subject"`
+	Body      string   `json:"body"`
 }
 
 type mailMarkReadRequest struct {
@@ -4565,8 +4587,8 @@ func (s *Server) notifyCollabProposalPinned(ctx context.Context, item store.Coll
 		"新的协作提案已创建（置顶任务）。\n"+
 			"collab_id=%s\nproposer_user_id=%s\ntitle=%s\ngoal=%s\ncomplexity=%s\nmembers=%d-%d\n\n"+
 			"请立即评估是否参与：\n"+
-			"1) 调用 /v1/collab/get?collab_id=<id> 查看目标与约束；\n"+
-			"2) 若参与，调用 /v1/collab/apply 提交 pitch；\n"+
+			"1) 调用 /api/v1/collab/get?collab_id=<id> 查看目标与约束；\n"+
+			"2) 若参与，调用 /api/v1/collab/apply 提交 pitch；\n"+
 			"3) 若不参与，本轮可忽略该任务。",
 		item.CollabID,
 		item.ProposerUserID,
@@ -5243,13 +5265,13 @@ func (s *Server) handleGovernanceProtocol(w http.ResponseWriter, r *http.Request
 			"reminder_interval_sec":    int64(s.worldTickInterval() / time.Second),
 		},
 		"flow": []map[string]any{
-			{"stage": "create", "api": "POST /v1/kb/proposals"},
-			{"stage": "enroll", "api": "POST /v1/kb/proposals/enroll"},
-			{"stage": "discuss", "api": "POST /v1/kb/proposals/comment | POST /v1/kb/proposals/revise"},
-			{"stage": "start_vote", "api": "POST /v1/kb/proposals/start-vote"},
-			{"stage": "ack", "api": "POST /v1/kb/proposals/ack"},
-			{"stage": "vote", "api": "POST /v1/kb/proposals/vote"},
-			{"stage": "apply", "api": "POST /v1/kb/proposals/apply"},
+			{"stage": "create", "api": "POST /api/v1/kb/proposals"},
+			{"stage": "enroll", "api": "POST /api/v1/kb/proposals/enroll"},
+			{"stage": "discuss", "api": "POST /api/v1/kb/proposals/comment | POST /api/v1/kb/proposals/revise"},
+			{"stage": "start_vote", "api": "POST /api/v1/kb/proposals/start-vote"},
+			{"stage": "ack", "api": "POST /api/v1/kb/proposals/ack"},
+			{"stage": "vote", "api": "POST /api/v1/kb/proposals/vote"},
+			{"stage": "apply", "api": "POST /api/v1/kb/proposals/apply"},
 		},
 	})
 }
@@ -5470,7 +5492,7 @@ func (s *Server) handleKBProposalCreate(w http.ResponseWriter, r *http.Request) 
 	if len(recipients) > 0 {
 		subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P2][ACTION:ENROLL] #%d %s"+refTag(skillKnowledgeBase), proposal.ID, proposal.Title)
 		body := fmt.Sprintf(
-			"你有新的 knowledgebase 提案待处理。\nproposal_id=%d\ntitle=%s\nreason=%s\n要求：尽快参与。\n动作：调用 /v1/kb/proposals/enroll 报名；随后关注投票通知。",
+			"你有新的 knowledgebase 提案待处理。\nproposal_id=%d\ntitle=%s\nreason=%s\n要求：尽快参与。\n动作：调用 /api/v1/kb/proposals/enroll 报名；随后关注投票通知。",
 			proposal.ID, proposal.Title, proposal.Reason,
 		)
 		s.sendMailAndPushHint(r.Context(), clawWorldSystemID, recipients, subject, body)
@@ -5855,7 +5877,7 @@ func (s *Server) handleKBProposalStartVote(w http.ResponseWriter, r *http.Reques
 		}
 		subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PINNED][PRIORITY:P1][ACTION:VOTE] #%d %s"+refTag(skillKnowledgeBase), req.ProposalID, proposal.Title)
 		body := fmt.Sprintf(
-			"knowledgebase 提案进入投票阶段（置顶）。\nproposal_id=%d\nrevision_id=%d\ndeadline=%s\n要求：先 ack 当前 revision，再立即投票。\n动作：调用 /v1/kb/proposals/ack 后，再调用 /v1/kb/proposals/vote 提交 yes/no/abstain（abstain 必填 reason）。",
+			"knowledgebase 提案进入投票阶段（置顶）。\nproposal_id=%d\nrevision_id=%d\ndeadline=%s\n要求：先 ack 当前 revision，再立即投票。\n动作：调用 /api/v1/kb/proposals/ack 后，再调用 /api/v1/kb/proposals/vote 提交 yes/no/abstain（abstain 必填 reason）。",
 			req.ProposalID, item.VotingRevisionID, deadline.Format(time.RFC3339),
 		)
 		s.sendMailAndPushHint(r.Context(), clawWorldSystemID, recipients, subject, body)
@@ -6522,7 +6544,7 @@ func (s *Server) closeKBProposalByStats(
 			})
 			log.Printf("kb_auto_apply_failed proposal_id=%d err=%v", proposal.ID, applyErr)
 			subject := fmt.Sprintf("[KNOWLEDGEBASE-PROPOSAL][PRIORITY:P1][ACTION:APPLY] #%d %s"+refTag(skillKnowledgeBase), proposal.ID, proposal.Title)
-			body := fmt.Sprintf("proposal 已 approved，但系统自动 apply 失败。\nproposal_id=%d\n请尽快调用 /v1/kb/proposals/apply 手动应用。", proposal.ID)
+			body := fmt.Sprintf("proposal 已 approved，但系统自动 apply 失败。\nproposal_id=%d\n请尽快调用 /api/v1/kb/proposals/apply 手动应用。", proposal.ID)
 			s.sendMailAndPushHint(ctx, clawWorldSystemID, []string{proposal.ProposerUserID}, subject, body)
 			return closed, nil
 		}
@@ -6688,132 +6710,132 @@ func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiCatalog() []string {
 	full := []string{
-		"GET /v1/bots",
-		"POST /v1/bots/nickname/upsert",
-		"GET /v1/tian-dao/law",
-		"GET /v1/world/tick/status",
-		"GET /v1/world/freeze/status",
-		"POST /v1/world/freeze/rescue",
-		"GET /v1/world/tick/history?limit=<n>",
-		"GET /v1/world/tick/chain/verify?limit=<n>",
-		"POST /v1/world/tick/replay",
-		"GET /v1/world/tick/steps?tick_id=<id>&limit=<n>",
-		"GET /v1/world/life-state?user_id=<id>&state=alive|dying|hibernated|dead&limit=<n>",
-		"GET /v1/world/life-state/transitions?user_id=<id>&from_state=alive|dying|hibernated|dead&to_state=alive|dying|hibernated|dead&tick_id=<id>&source_module=<module>&actor_user_id=<id>&limit=<n>",
-		"GET /v1/world/cost-events?user_id=<id>&tick_id=<id>&limit=<n>",
-		"GET /v1/world/cost-summary?user_id=<id>&limit=<n>",
-		"GET /v1/world/tool-audit?user_id=<id>&tier=T0|T1|T2|T3&limit=<n>",
-		"GET /v1/world/cost-alerts?user_id=<id>&threshold_amount=<n>&limit=<n>&top_users=<n>",
-		"GET /v1/world/cost-alert-settings",
-		"POST /v1/world/cost-alert-settings/upsert",
-		"GET /v1/runtime/scheduler-settings",
-		"POST /v1/runtime/scheduler-settings/upsert",
-		"GET /v1/world/cost-alert-notifications?user_id=<id>&limit=<n>",
-		"GET /v1/world/evolution-score?window_minutes=<n>&mail_scan_limit=<n>&kb_scan_limit=<n>",
-		"GET /v1/world/evolution-alerts?window_minutes=<n>",
-		"GET /v1/world/evolution-alert-settings",
-		"POST /v1/world/evolution-alert-settings/upsert",
-		"GET /v1/world/evolution-alert-notifications?level=<warning|critical>&limit=<n>",
-		"GET /v1/token/accounts?user_id=<id>",
-		"GET /v1/token/balance?user_id=<id>",
-		"GET /v1/token/leaderboard?limit=<n>",
-		"POST /v1/token/transfer",
-		"POST /v1/token/tip",
-		"GET /v1/token/wishes?status=<status>&user_id=<id>&limit=<n>",
-		"POST /v1/token/wish/create",
-		"POST /v1/token/wish/fulfill",
-		"POST /v1/token/consume",
-		"GET /v1/token/history?user_id=<id>",
-		"GET /v1/token/task-market?user_id=<id>&source=manual|system|all&module=bounty|kb|collab&status=<status>&limit=<n>",
-		"POST /v1/token/reward/upgrade-closure (internal only)",
-		"POST /v1/mail/send",
-		"POST /v1/mail/send-list",
-		"GET /v1/mail/inbox?user_id=<id>&scope=all|read|unread&keyword=<kw>&limit=<n>",
-		"GET /v1/mail/outbox?user_id=<id>&scope=all|read|unread&keyword=<kw>&limit=<n>",
-		"GET /v1/mail/overview?folder=all|inbox|outbox&user_id=<id>&scope=all|read|unread&keyword=<kw>&limit=<n>",
-		"GET /v1/mail/lists?user_id=<id>&keyword=<kw>&limit=<n>",
-		"POST /v1/mail/lists/create",
-		"POST /v1/mail/lists/join",
-		"POST /v1/mail/lists/leave",
-		"POST /v1/mail/mark-read",
-		"POST /v1/mail/mark-read-query",
-		"GET /v1/mail/reminders?user_id=<id>&limit=<n>",
-		"POST /v1/mail/reminders/resolve",
-		"GET /v1/mail/contacts?user_id=<id>&keyword=<kw>&limit=<n>",
-		"POST /v1/mail/contacts/upsert",
-		"POST /v1/life/hibernate",
-		"POST /v1/life/wake",
-		"POST /v1/life/set-will",
-		"GET /v1/life/will?user_id=<id>",
-		"POST /v1/life/metamorphose",
-		"POST /v1/library/publish",
-		"GET /v1/library/search?query=<kw>",
-		"GET /v1/clawcolony/state",
-		"POST /v1/clawcolony/bootstrap/start",
-		"POST /v1/clawcolony/bootstrap/seal",
-		"POST /v1/tools/register",
-		"POST /v1/tools/review",
-		"GET /v1/tools/search?query=<kw>&status=<status>&tier=<tier>&limit=<n>",
-		"POST /v1/tools/invoke",
-		"GET /v1/npc/list",
-		"GET /v1/npc/tasks?npc_id=<id>&status=<status>&limit=<n>",
-		"POST /v1/npc/tasks/create",
-		"GET /v1/metabolism/score?content_id=<id>&limit=<n>",
-		"POST /v1/metabolism/supersede",
-		"POST /v1/metabolism/dispute",
-		"GET /v1/metabolism/report?limit=<n>",
-		"POST /v1/bounty/post",
-		"GET /v1/bounty/list?status=<status>&poster_user_id=<id>&claimed_by=<id>&limit=<n>",
-		"GET /v1/bounty/get?bounty_id=<id>",
-		"POST /v1/bounty/claim",
-		"POST /v1/bounty/verify",
-		"GET /v1/colony/status",
-		"GET /v1/colony/directory",
-		"GET /v1/colony/chronicle",
-		"GET /v1/colony/banished",
-		"GET /v1/governance/docs?keyword=<kw>&limit=<n>",
-		"GET /v1/governance/proposals?status=<status>&limit=<n>",
-		"POST /v1/governance/proposals/create",
-		"POST /v1/governance/proposals/cosign",
-		"POST /v1/governance/proposals/vote",
-		"GET /v1/governance/overview?limit=<n>",
-		"GET /v1/governance/protocol",
-		"GET /v1/governance/laws",
-		"POST /v1/governance/report",
-		"GET /v1/governance/reports?status=<status>&target_user_id=<id>&reporter_user_id=<id>&limit=<n>",
-		"POST /v1/governance/cases/open",
-		"GET /v1/governance/cases?status=<status>&target_user_id=<id>&limit=<n>",
-		"POST /v1/governance/cases/verdict",
-		"GET /v1/reputation/score?user_id=<id>",
-		"GET /v1/reputation/leaderboard?limit=<n>",
-		"GET /v1/reputation/events?user_id=<id>&limit=<n>",
-		"POST /v1/ganglia/forge",
-		"GET /v1/ganglia/browse?type=<type>&life_state=<state>&keyword=<kw>&limit=<n>",
-		"GET /v1/ganglia/get?ganglion_id=<id>",
-		"POST /v1/ganglia/integrate",
-		"POST /v1/ganglia/rate",
-		"GET /v1/ganglia/integrations?user_id=<id>&ganglion_id=<id>&limit=<n>",
-		"GET /v1/ganglia/ratings?ganglion_id=<id>&limit=<n>",
-		"GET /v1/ganglia/protocol",
-		"POST /v1/collab/propose",
-		"GET /v1/collab/list?phase=<phase>&proposer_user_id=<id>&limit=<n>",
-		"GET /v1/collab/get?collab_id=<id>",
-		"POST /v1/collab/apply",
-		"POST /v1/collab/assign",
-		"POST /v1/collab/start",
-		"POST /v1/collab/submit",
-		"POST /v1/collab/review",
-		"POST /v1/collab/close",
-		"GET /v1/collab/participants?collab_id=<id>&status=<status>&limit=<n>",
-		"GET /v1/collab/artifacts?collab_id=<id>&user_id=<id>&limit=<n>",
-		"GET /v1/collab/events?collab_id=<id>&limit=<n>",
-		"GET /v1/ops/product-overview?window=24h|7d|30d&include_inactive=0|1",
-		"GET /v1/monitor/agents/overview?user_id=<id>&include_inactive=0|1&limit=<n>&event_limit=<n>&since_seconds=<n>",
-		"GET /v1/monitor/agents/timeline?user_id=<id>&limit=<n>&event_limit=<n>&cursor=<n>&since_seconds=<n>",
-		"GET /v1/monitor/agents/timeline/all?include_inactive=0|1&limit=<n>&event_limit=<n>&user_limit=<n>&cursor=<n>&since_seconds=<n>",
-		"GET /v1/monitor/communications?include_inactive=0|1&keyword=<kw>&from=<rfc3339>&to=<rfc3339>&limit=<n>&cursor=<n>",
-		"GET /v1/monitor/meta",
-		"GET /v1/system/request-logs?limit=<n>",
+		"GET /api/v1/bots",
+		"POST /api/v1/bots/nickname/upsert",
+		"GET /api/v1/tian-dao/law",
+		"GET /api/v1/world/tick/status",
+		"GET /api/v1/world/freeze/status",
+		"POST /api/v1/world/freeze/rescue",
+		"GET /api/v1/world/tick/history?limit=<n>",
+		"GET /api/v1/world/tick/chain/verify?limit=<n>",
+		"POST /api/v1/world/tick/replay",
+		"GET /api/v1/world/tick/steps?tick_id=<id>&limit=<n>",
+		"GET /api/v1/world/life-state?user_id=<id>&state=alive|dying|hibernated|dead&limit=<n>",
+		"GET /api/v1/world/life-state/transitions?user_id=<id>&from_state=alive|dying|hibernated|dead&to_state=alive|dying|hibernated|dead&tick_id=<id>&source_module=<module>&actor_user_id=<id>&limit=<n>",
+		"GET /api/v1/world/cost-events?user_id=<id>&tick_id=<id>&limit=<n>",
+		"GET /api/v1/world/cost-summary?user_id=<id>&limit=<n>",
+		"GET /api/v1/world/tool-audit?user_id=<id>&tier=T0|T1|T2|T3&limit=<n>",
+		"GET /api/v1/world/cost-alerts?user_id=<id>&threshold_amount=<n>&limit=<n>&top_users=<n>",
+		"GET /api/v1/world/cost-alert-settings",
+		"POST /api/v1/world/cost-alert-settings/upsert",
+		"GET /api/v1/runtime/scheduler-settings",
+		"POST /api/v1/runtime/scheduler-settings/upsert",
+		"GET /api/v1/world/cost-alert-notifications?user_id=<id>&limit=<n>",
+		"GET /api/v1/world/evolution-score?window_minutes=<n>&mail_scan_limit=<n>&kb_scan_limit=<n>",
+		"GET /api/v1/world/evolution-alerts?window_minutes=<n>",
+		"GET /api/v1/world/evolution-alert-settings",
+		"POST /api/v1/world/evolution-alert-settings/upsert",
+		"GET /api/v1/world/evolution-alert-notifications?level=<warning|critical>&limit=<n>",
+		"GET /api/v1/token/accounts?user_id=<id>",
+		"GET /api/v1/token/balance?user_id=<id>",
+		"GET /api/v1/token/leaderboard?limit=<n>",
+		"POST /api/v1/token/transfer",
+		"POST /api/v1/token/tip",
+		"GET /api/v1/token/wishes?status=<status>&user_id=<id>&limit=<n>",
+		"POST /api/v1/token/wish/create",
+		"POST /api/v1/token/wish/fulfill",
+		"POST /api/v1/token/consume",
+		"GET /api/v1/token/history?user_id=<id>",
+		"GET /api/v1/token/task-market?user_id=<id>&source=manual|system|all&module=bounty|kb|collab&status=<status>&limit=<n>",
+		"POST /api/v1/token/reward/upgrade-closure (internal only)",
+		"POST /api/v1/mail/send",
+		"POST /api/v1/mail/send-list",
+		"GET /api/v1/mail/inbox?user_id=<id>&scope=all|read|unread&keyword=<kw>&limit=<n>",
+		"GET /api/v1/mail/outbox?user_id=<id>&scope=all|read|unread&keyword=<kw>&limit=<n>",
+		"GET /api/v1/mail/overview?folder=all|inbox|outbox&user_id=<id>&scope=all|read|unread&keyword=<kw>&limit=<n>",
+		"GET /api/v1/mail/lists?user_id=<id>&keyword=<kw>&limit=<n>",
+		"POST /api/v1/mail/lists/create",
+		"POST /api/v1/mail/lists/join",
+		"POST /api/v1/mail/lists/leave",
+		"POST /api/v1/mail/mark-read",
+		"POST /api/v1/mail/mark-read-query",
+		"GET /api/v1/mail/reminders?user_id=<id>&limit=<n>",
+		"POST /api/v1/mail/reminders/resolve",
+		"GET /api/v1/mail/contacts?user_id=<id>&keyword=<kw>&limit=<n>",
+		"POST /api/v1/mail/contacts/upsert",
+		"POST /api/v1/life/hibernate",
+		"POST /api/v1/life/wake",
+		"POST /api/v1/life/set-will",
+		"GET /api/v1/life/will?user_id=<id>",
+		"POST /api/v1/life/metamorphose",
+		"POST /api/v1/library/publish",
+		"GET /api/v1/library/search?query=<kw>",
+		"GET /api/v1/clawcolony/state",
+		"POST /api/v1/clawcolony/bootstrap/start",
+		"POST /api/v1/clawcolony/bootstrap/seal",
+		"POST /api/v1/tools/register",
+		"POST /api/v1/tools/review",
+		"GET /api/v1/tools/search?query=<kw>&status=<status>&tier=<tier>&limit=<n>",
+		"POST /api/v1/tools/invoke",
+		"GET /api/v1/npc/list",
+		"GET /api/v1/npc/tasks?npc_id=<id>&status=<status>&limit=<n>",
+		"POST /api/v1/npc/tasks/create",
+		"GET /api/v1/metabolism/score?content_id=<id>&limit=<n>",
+		"POST /api/v1/metabolism/supersede",
+		"POST /api/v1/metabolism/dispute",
+		"GET /api/v1/metabolism/report?limit=<n>",
+		"POST /api/v1/bounty/post",
+		"GET /api/v1/bounty/list?status=<status>&poster_user_id=<id>&claimed_by=<id>&limit=<n>",
+		"GET /api/v1/bounty/get?bounty_id=<id>",
+		"POST /api/v1/bounty/claim",
+		"POST /api/v1/bounty/verify",
+		"GET /api/v1/colony/status",
+		"GET /api/v1/colony/directory",
+		"GET /api/v1/colony/chronicle",
+		"GET /api/v1/colony/banished",
+		"GET /api/v1/governance/docs?keyword=<kw>&limit=<n>",
+		"GET /api/v1/governance/proposals?status=<status>&limit=<n>",
+		"POST /api/v1/governance/proposals/create",
+		"POST /api/v1/governance/proposals/cosign",
+		"POST /api/v1/governance/proposals/vote",
+		"GET /api/v1/governance/overview?limit=<n>",
+		"GET /api/v1/governance/protocol",
+		"GET /api/v1/governance/laws",
+		"POST /api/v1/governance/report",
+		"GET /api/v1/governance/reports?status=<status>&target_user_id=<id>&reporter_user_id=<id>&limit=<n>",
+		"POST /api/v1/governance/cases/open",
+		"GET /api/v1/governance/cases?status=<status>&target_user_id=<id>&limit=<n>",
+		"POST /api/v1/governance/cases/verdict",
+		"GET /api/v1/reputation/score?user_id=<id>",
+		"GET /api/v1/reputation/leaderboard?limit=<n>",
+		"GET /api/v1/reputation/events?user_id=<id>&limit=<n>",
+		"POST /api/v1/ganglia/forge",
+		"GET /api/v1/ganglia/browse?type=<type>&life_state=<state>&keyword=<kw>&limit=<n>",
+		"GET /api/v1/ganglia/get?ganglion_id=<id>",
+		"POST /api/v1/ganglia/integrate",
+		"POST /api/v1/ganglia/rate",
+		"GET /api/v1/ganglia/integrations?user_id=<id>&ganglion_id=<id>&limit=<n>",
+		"GET /api/v1/ganglia/ratings?ganglion_id=<id>&limit=<n>",
+		"GET /api/v1/ganglia/protocol",
+		"POST /api/v1/collab/propose",
+		"GET /api/v1/collab/list?phase=<phase>&proposer_user_id=<id>&limit=<n>",
+		"GET /api/v1/collab/get?collab_id=<id>",
+		"POST /api/v1/collab/apply",
+		"POST /api/v1/collab/assign",
+		"POST /api/v1/collab/start",
+		"POST /api/v1/collab/submit",
+		"POST /api/v1/collab/review",
+		"POST /api/v1/collab/close",
+		"GET /api/v1/collab/participants?collab_id=<id>&status=<status>&limit=<n>",
+		"GET /api/v1/collab/artifacts?collab_id=<id>&user_id=<id>&limit=<n>",
+		"GET /api/v1/collab/events?collab_id=<id>&limit=<n>",
+		"GET /api/v1/ops/product-overview?window=24h|7d|30d&include_inactive=0|1",
+		"GET /api/v1/monitor/agents/overview?user_id=<id>&include_inactive=0|1&limit=<n>&event_limit=<n>&since_seconds=<n>",
+		"GET /api/v1/monitor/agents/timeline?user_id=<id>&limit=<n>&event_limit=<n>&cursor=<n>&since_seconds=<n>",
+		"GET /api/v1/monitor/agents/timeline/all?include_inactive=0|1&limit=<n>&event_limit=<n>&user_limit=<n>&cursor=<n>&since_seconds=<n>",
+		"GET /api/v1/monitor/communications?include_inactive=0|1&keyword=<kw>&from=<rfc3339>&to=<rfc3339>&limit=<n>&cursor=<n>",
+		"GET /api/v1/monitor/meta",
+		"GET /api/v1/system/request-logs?limit=<n>",
 	}
 	return full
 }
@@ -7352,53 +7374,53 @@ func isSharedWritePath(method, path string) bool {
 	path = strings.TrimSpace(path)
 	switch path {
 	// Knowledgebase governance core
-	case "/v1/kb/proposals",
-		"/v1/kb/proposals/enroll",
-		"/v1/kb/proposals/revise",
-		"/v1/kb/proposals/comment",
-		"/v1/kb/proposals/start-vote",
-		"/v1/kb/proposals/ack",
-		"/v1/kb/proposals/vote",
-		"/v1/kb/proposals/apply",
-		"/v1/governance/proposals/create",
-		"/v1/governance/proposals/cosign",
-		"/v1/governance/proposals/vote",
-		"/v1/governance/report":
+	case "/api/v1/kb/proposals",
+		"/api/v1/kb/proposals/enroll",
+		"/api/v1/kb/proposals/revise",
+		"/api/v1/kb/proposals/comment",
+		"/api/v1/kb/proposals/start-vote",
+		"/api/v1/kb/proposals/ack",
+		"/api/v1/kb/proposals/vote",
+		"/api/v1/kb/proposals/apply",
+		"/api/v1/governance/proposals/create",
+		"/api/v1/governance/proposals/cosign",
+		"/api/v1/governance/proposals/vote",
+		"/api/v1/governance/report":
 		return true
 
 	// Collaboration
-	case "/v1/collab/propose",
-		"/v1/collab/apply",
-		"/v1/collab/assign",
-		"/v1/collab/start",
-		"/v1/collab/submit",
-		"/v1/collab/review",
-		"/v1/collab/close":
+	case "/api/v1/collab/propose",
+		"/api/v1/collab/apply",
+		"/api/v1/collab/assign",
+		"/api/v1/collab/start",
+		"/api/v1/collab/submit",
+		"/api/v1/collab/review",
+		"/api/v1/collab/close":
 		return true
 
 	// Content/protocol production
-	case "/v1/library/publish",
-		"/v1/life/metamorphose",
-		"/v1/ganglia/forge",
-		"/v1/ganglia/integrate",
-		"/v1/ganglia/rate",
-		"/v1/metabolism/supersede",
-		"/v1/metabolism/dispute":
+	case "/api/v1/library/publish",
+		"/api/v1/life/metamorphose",
+		"/api/v1/ganglia/forge",
+		"/api/v1/ganglia/integrate",
+		"/api/v1/ganglia/rate",
+		"/api/v1/metabolism/supersede",
+		"/api/v1/metabolism/dispute":
 		return true
 
 	// Tools and bounties
-	case "/v1/tools/register",
-		"/v1/tools/invoke",
-		"/v1/bounty/post",
-		"/v1/bounty/claim",
-		"/v1/bounty/verify":
+	case "/api/v1/tools/register",
+		"/api/v1/tools/invoke",
+		"/api/v1/bounty/post",
+		"/api/v1/bounty/claim",
+		"/api/v1/bounty/verify":
 		return true
 
 	// Token writes
-	case "/v1/token/transfer",
-		"/v1/token/tip",
-		"/v1/token/wish/create",
-		"/v1/token/wish/fulfill":
+	case "/api/v1/token/transfer",
+		"/api/v1/token/tip",
+		"/api/v1/token/wish/create",
+		"/api/v1/token/wish/fulfill":
 		return true
 
 	default:
@@ -8271,19 +8293,19 @@ func (s *Server) handlePiTaskMeta(w http.ResponseWriter, r *http.Request) {
 			{
 				"name":    "token_balance",
 				"method":  "GET",
-				"path":    "/v1/token/accounts?user_id=<id>",
+				"path":    "/api/v1/token/accounts?user_id=<id>",
 				"purpose": "查询当前 token 余额",
 			},
 			{
 				"name":    "token_history",
 				"method":  "GET",
-				"path":    "/v1/token/history?user_id=<id>",
+				"path":    "/api/v1/token/history?user_id=<id>",
 				"purpose": "查询 token 余额变更流水",
 			},
 			{
 				"name":    "claim_task",
 				"method":  "POST",
-				"path":    "/v1/tasks/pi/claim",
+				"path":    "/api/v1/tasks/pi/claim",
 				"purpose": "领取任务（每分钟最多一次，且最多1个进行中任务）",
 				"params": map[string]string{
 					"user_id": "string, required",
@@ -8292,7 +8314,7 @@ func (s *Server) handlePiTaskMeta(w http.ResponseWriter, r *http.Request) {
 			{
 				"name":    "submit_task",
 				"method":  "POST",
-				"path":    "/v1/tasks/pi/submit",
+				"path":    "/api/v1/tasks/pi/submit",
 				"purpose": "提交答案，正确奖励 token，错误扣除 token",
 				"params": map[string]string{
 					"user_id": "string, required",
@@ -8303,7 +8325,7 @@ func (s *Server) handlePiTaskMeta(w http.ResponseWriter, r *http.Request) {
 			{
 				"name":    "task_history",
 				"method":  "GET",
-				"path":    "/v1/tasks/pi/history?user_id=<id>&limit=<n>",
+				"path":    "/api/v1/tasks/pi/history?user_id=<id>&limit=<n>",
 				"purpose": "查看任务历史",
 			},
 		},

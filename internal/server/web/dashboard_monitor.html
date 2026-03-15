@@ -309,7 +309,7 @@
         const limit = encodeURIComponent(document.getElementById("limit").value || "200");
         const eventLimit = encodeURIComponent(document.getElementById("eventLimit").value || "120");
         const since = encodeURIComponent(document.getElementById("since").value || "86400");
-        const data = await j(`/v1/monitor/agents/overview?include_inactive=${includeInactive ? "1" : "0"}&limit=${limit}&event_limit=${eventLimit}&since_seconds=${since}`);
+        const data = await j(`/api/v1/monitor/agents/overview?include_inactive=${includeInactive ? "1" : "0"}&limit=${limit}&event_limit=${eventLimit}&since_seconds=${since}`);
         agents = data.items || [];
       }
 
@@ -317,13 +317,13 @@
         if (!userID) return [];
         const eventLimit = encodeURIComponent(document.getElementById("eventLimit").value || "120");
         const since = encodeURIComponent(document.getElementById("since").value || "86400");
-        const data = await j(`/v1/monitor/agents/timeline?user_id=${encodeURIComponent(userID)}&limit=${eventLimit}&event_limit=${eventLimit}&since_seconds=${since}`);
+        const data = await j(`/api/v1/monitor/agents/timeline?user_id=${encodeURIComponent(userID)}&limit=${eventLimit}&event_limit=${eventLimit}&since_seconds=${since}`);
         return data.items || [];
       }
 
       async function loadMeta(){
         try {
-          const data = await j("/v1/monitor/meta");
+          const data = await j("/api/v1/monitor/meta");
           const src = data.sources || {};
           const lines = Object.keys(src).sort().map(k => `${k}: ${src[k].status}${src[k].error ? ` (${src[k].error})` : ""}`);
           document.getElementById("metaPanel").textContent = `as_of=${data.as_of || ""}\n` + lines.join("\n");

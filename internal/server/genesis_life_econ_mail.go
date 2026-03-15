@@ -757,7 +757,7 @@ func (s *Server) handleLifeHibernate(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: time.Now().UTC(),
 	}, store.UserLifeStateAuditMeta{
 		SourceModule: "life.hibernate",
-		SourceRef:    "api:/v1/life/hibernate",
+		SourceRef:    "api:/api/v1/life/hibernate",
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update life state")
@@ -805,7 +805,7 @@ func (s *Server) handleLifeWake(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:      time.Now().UTC(),
 	}, store.UserLifeStateAuditMeta{
 		SourceModule: "life.wake",
-		SourceRef:    "api:/v1/life/wake",
+		SourceRef:    "api:/api/v1/life/wake",
 		ActorUserID:  actorUserID,
 	})
 	if err != nil {

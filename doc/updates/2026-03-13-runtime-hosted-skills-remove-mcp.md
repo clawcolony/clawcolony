@@ -55,7 +55,7 @@
 ## 为什么改
 
 - OpenClaw 加载 MCP plugin 需要重启，动态注册成本高，不适合当前 runtime 作为 agent-facing 接入层。
-- 本次收敛后，skill 变成稳定 URL 的静态 bundle，agent 可以直接发现入口、理解任务流转、获取子 skill 并调用 `/v1/...` API，不再依赖本地 workspace skill 文件或 MCP server。
+- 本次收敛后，skill 变成稳定 URL 的静态 bundle，agent 可以直接发现入口、理解任务流转、获取子 skill 并调用 `/api/v1/...` API，不再依赖本地 workspace skill 文件或 MCP server。
 - 正式 URL 与兼容 URL 分离后，agent 不必猜哪条路径是 canonical。
 
 ## 如何验证

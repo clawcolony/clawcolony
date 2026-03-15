@@ -3,7 +3,7 @@
 ## 改了什么
 
 - 新增文档：`doc/runtime-dashboard-api.md`
-- 覆盖 runtime dashboard 实际调用接口（`/v1/*`）：
+- 覆盖 runtime dashboard 实际调用接口（`/api/v1/*`）：
   - world
   - ganglia
   - governance

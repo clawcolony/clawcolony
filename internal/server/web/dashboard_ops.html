@@ -252,7 +252,7 @@
         try {
           const includeInactive = document.getElementById("includeInactive").checked ? "1" : "0";
           const windowSel = document.getElementById("window").value || "24h";
-          const d = await j(`/v1/ops/product-overview?window=${encodeURIComponent(windowSel)}&include_inactive=${includeInactive}`);
+          const d = await j(`/api/v1/ops/product-overview?window=${encodeURIComponent(windowSel)}&include_inactive=${includeInactive}`);
           document.getElementById("meta").textContent = `as_of=${d.as_of || ""}  window=${d.window || ""}  from=${d.from || ""}  to=${d.to || ""}`;
           renderWarnings(d);
           renderSummary(d);

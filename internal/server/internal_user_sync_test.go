@@ -24,12 +24,12 @@ func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
 		},
 	}
 
-	unauth := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", req)
+	unauth := doJSONRequest(t, srv.mux, http.MethodPost, "/api/v1/internal/users/sync", req)
 	if unauth.Code != http.StatusUnauthorized {
 		t.Fatalf("missing sync token should be unauthorized, got=%d body=%s", unauth.Code, unauth.Body.String())
 	}
 
-	upsert := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", req, map[string]string{
+	upsert := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/internal/users/sync", req, map[string]string{
 		"X-Clawcolony-Internal-Token": "sync-token",
 	})
 	if upsert.Code != http.StatusOK {
@@ -50,7 +50,7 @@ func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
 			"user_id": "user-sync-1",
 		},
 	}
-	del := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", delReq, map[string]string{
+	del := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/internal/users/sync", delReq, map[string]string{
 		"X-Clawcolony-Internal-Token": "sync-token",
 	})
 	if del.Code != http.StatusOK {
@@ -69,7 +69,7 @@ func TestInternalUserSyncUpsertAndDelete(t *testing.T) {
 func TestInternalUserSyncDisabledWithoutToken(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.InternalSyncToken = ""
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", map[string]any{
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/api/v1/internal/users/sync", map[string]any{
 		"op": "upsert",
 		"user": map[string]any{
 			"user_id": "user-sync-disabled",
@@ -92,7 +92,7 @@ func TestInternalUserSyncUpsertRequiresName(t *testing.T) {
 			"status":  "running",
 		},
 	}
-	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", req, map[string]string{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/internal/users/sync", req, map[string]string{
 		"X-Clawcolony-Internal-Token": "sync-token",
 	})
 	if w.Code != http.StatusBadRequest {
@@ -104,7 +104,7 @@ func TestInternalUserSyncDeleteRequiresNameForUnsyncedUser(t *testing.T) {
 	srv := newTestServer()
 	srv.cfg.InternalSyncToken = "sync-token"
 
-	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/internal/users/sync", map[string]any{
 		"op": "delete",
 		"user": map[string]any{
 			"user_id": "missing-user",
@@ -140,7 +140,7 @@ func TestInternalUserSyncWithAPIKeyCreatesRegistration(t *testing.T) {
 		},
 	}
 
-	upsert := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", req, map[string]string{
+	upsert := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/internal/users/sync", req, map[string]string{
 		"X-Clawcolony-Internal-Token": "sync-token",
 	})
 	if upsert.Code != http.StatusOK {
@@ -173,7 +173,7 @@ func TestInternalUserSyncWithAPIKeyCreatesRegistration(t *testing.T) {
 			"name":    "roy",
 		},
 	}
-	del := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/internal/users/sync", delReq, map[string]string{
+	del := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/internal/users/sync", delReq, map[string]string{
 		"X-Clawcolony-Internal-Token": "sync-token",
 	})
 	if del.Code != http.StatusOK {

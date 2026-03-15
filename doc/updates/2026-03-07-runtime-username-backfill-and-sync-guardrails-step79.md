@@ -3,12 +3,12 @@
 ## 改了什么
 
 1. 收紧 runtime 内部用户同步约束：
-   - `POST /v1/internal/users/sync` 在 `op=upsert` 时强制要求 `user.name` 非空。
+   - `POST /api/v1/internal/users/sync` 在 `op=upsert` 时强制要求 `user.name` 非空。
    - `op=delete` 在目标用户未同步到 runtime 且未提供 `user.name` 时返回 `400`，不再写入占位名。
    - 具体文件：`internal/server/internal_user_sync.go`。
 
 2. 修复昵称接口对未同步用户的“隐式落库”：
-   - `POST /v1/bots/nickname/upsert` 不再通过 synthetic bot 调用 `UpsertBot`。
+   - `POST /api/v1/bots/nickname/upsert` 不再通过 synthetic bot 调用 `UpsertBot`。
    - 当 user 在 K8s active 但 runtime DB 未同步时，返回 `409`（要求先完成 user sync），避免写入 `name=user_id`。
    - 具体文件：`internal/server/server.go`。
 

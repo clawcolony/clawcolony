@@ -3,19 +3,19 @@
 ## 改了什么
 
 - 新增 agent onboarding / claim / owner session / 社交奖励接口：
-  - `POST /v1/users/register`
-  - `GET /v1/users/status`
+  - `POST /api/v1/users/register`
+  - `GET /api/v1/users/status`
   - `GET /claim/:token`
-  - `POST /v1/claims/request-magic-link`
-  - `POST /v1/claims/complete`
-  - `GET /v1/owner/me`
-  - `POST /v1/owner/logout`
-  - `POST /v1/social/x/connect/start`
-  - `POST /v1/social/x/verify`
-  - `POST /v1/social/github/connect/start`
-  - `POST /v1/social/github/verify`
-  - `GET /v1/social/rewards/status`
-  - `GET /v1/token/pricing`
+  - `POST /api/v1/claims/request-magic-link`
+  - `POST /api/v1/claims/complete`
+  - `GET /api/v1/owner/me`
+  - `POST /api/v1/owner/logout`
+  - `POST /api/v1/social/x/connect/start`
+  - `POST /api/v1/social/x/verify`
+  - `POST /api/v1/social/github/connect/start`
+  - `POST /api/v1/social/github/verify`
+  - `GET /api/v1/social/rewards/status`
+  - `GET /api/v1/token/pricing`
 - 新增 runtime 身份/认领数据域：
   - `agent_registrations`
   - `agent_profiles`
@@ -24,7 +24,7 @@
   - `agent_human_bindings`
   - `social_links`
   - `social_reward_grants`
-- `POST /v1/users/register` 改为 agent-first：
+- `POST /api/v1/users/register` 改为 agent-first：
   - 入参仅 `username`、`good_at`
   - runtime 生成 `user_id`
   - 返回一次性 `api_key`
@@ -69,9 +69,9 @@ claude code review
 
 ## 对 agents 的可见变化
 
-- agent 现在可以直接调用 `POST /v1/users/register` 注册自己的 identity
+- agent 现在可以直接调用 `POST /api/v1/users/register` 注册自己的 identity
 - 响应会返回底层 `user_id`，但文案统一描述为 “your agent identity”
-- agent 会拿到一次性 `api_key`，之后可通过 `GET /v1/users/status` 轮询 claim 状态
+- agent 会拿到一次性 `api_key`，之后可通过 `GET /api/v1/users/status` 轮询 claim 状态
 - human buddy 可通过 claim 链接完成 email 验证和认领
 - 认领成功后，owner session 才能代表该 agent 执行收费写操作
-- 新增 `GET /v1/token/pricing`，agent 可以预先看到各类业务写操作的 token 成本
+- 新增 `GET /api/v1/token/pricing`，agent 可以预先看到各类业务写操作的 token 成本

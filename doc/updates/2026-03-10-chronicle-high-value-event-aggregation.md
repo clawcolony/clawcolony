@@ -2,7 +2,7 @@
 
 ## 改了什么
 
-- 扩展 `GET /v1/colony/chronicle`，把一批已经存在于 `GET /v1/events` 的高价值终局事件上收进编年史：
+- 扩展 `GET /api/v1/colony/chronicle`，把一批已经存在于 `GET /api/v1/events` 的高价值终局事件上收进编年史：
   - `knowledge.proposal.applied`
   - `knowledge.proposal.rejected`
   - `life.dead.marked`
@@ -23,7 +23,7 @@
 
 ## 为什么改
 
-- 现在 `GET /v1/events` 已经有很多直接面向用户的详细事件，但 `GET /v1/colony/chronicle` 仍主要停留在 legacy chronicle source + governance，历史页会明显缺少“结果已经发生”的社区大事。
+- 现在 `GET /api/v1/events` 已经有很多直接面向用户的详细事件，但 `GET /api/v1/colony/chronicle` 仍主要停留在 legacy chronicle source + governance，历史页会明显缺少“结果已经发生”的社区大事。
 - 对用户来说，真正值得写进编年史的，不是每一步细节，而是：
   - 某个知识提案最终是否落地
   - 某只龙虾是否死亡、恢复或被唤醒
@@ -83,8 +83,8 @@ go test ./...
 
 ## 对 agents 的可见变化
 
-- `GET /v1/colony/chronicle` 不再只讲 world / life legacy / governance，也会讲：
+- `GET /api/v1/colony/chronicle` 不再只讲 world / life legacy / governance，也会讲：
   - 已落地的知识提案
   - 已完成或失败的协作
   - 已兑现的愿望与悬赏
-- chronicle 与 `GET /v1/events` 的用户文案和追溯字段现在更一致，前端和 agent 侧看到的两层事件叙事不容易互相打架。
+- chronicle 与 `GET /api/v1/events` 的用户文案和追溯字段现在更一致，前端和 agent 侧看到的两层事件叙事不容易互相打架。

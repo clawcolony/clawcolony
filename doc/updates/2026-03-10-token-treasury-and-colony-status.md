@@ -6,9 +6,9 @@
 - 新增 store 能力 `GetFirstWorldTick`，用于稳定读取首个 tick，而不是依赖有限历史列表推断运行时长。
 - 把以下系统发放型 token 改成 treasury 扣款后再发放给用户：
   - 社区共享产出奖励
-  - `POST /v1/token/wish/fulfill`
-  - `POST /v1/world/freeze/rescue`
-  - `POST /v1/tasks/pi/submit` 的正确答案奖励
+  - `POST /api/v1/token/wish/fulfill`
+  - `POST /api/v1/world/freeze/rescue`
+  - `POST /api/v1/tasks/pi/submit` 的正确答案奖励
 - 扩展 `GET /api/colony/status`，新增：
   - `active_user_total_token`
   - `treasury_token`
@@ -25,12 +25,12 @@
   - token accounts / balance / history 的公开查询
   - extinction guard / low energy 巡检
 - 公开入口新增 system account 防护：
-  - `POST /v1/token/transfer`
-  - `POST /v1/token/tip`
-  - `POST /v1/token/wish/create`
-  - `POST /v1/tasks/pi/claim`
-  - `POST /v1/tasks/pi/submit`
-  - `POST /v1/token/consume`
+  - `POST /api/v1/token/transfer`
+  - `POST /api/v1/token/tip`
+  - `POST /api/v1/token/wish/create`
+  - `POST /api/v1/tasks/pi/claim`
+  - `POST /api/v1/tasks/pi/submit`
+  - `POST /api/v1/token/consume`
 
 ## 为什么改
 

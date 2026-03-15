@@ -25,7 +25,7 @@
   - `go test ./internal/bot ./internal/server -run 'TestBuildDevPreviewSkillMCPOnlyEnforcesNoLocalURLFallback|TestBotDevLinkProxyIncludesPublicURLWhenConfigured' -count=1`
   - `go test ./...`
 - 运行态（需配置 `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL`）：
-  - 调用 `POST /v1/bots/dev/link`，确认响应含 `item.public_url`
+  - 调用 `POST /api/v1/bots/dev/link`，确认响应含 `item.public_url`
   - agent 对外回复优先使用 `public_url`，不再给 `.svc.cluster.local` 链接
 
 ## 对 agents 的可见变化

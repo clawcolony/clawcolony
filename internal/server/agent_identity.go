@@ -145,52 +145,52 @@ type pricedBusinessAction struct {
 }
 
 var pricedBusinessActions = map[string]pricedBusinessAction{
-	"/v1/mail/send":                   {Path: "/v1/mail/send", ActorKey: "from_user_id", Tokens: 1, Label: "send direct mail"},
-	"/v1/mail/send-list":              {Path: "/v1/mail/send-list", ActorKey: "from_user_id", Tokens: 1, Label: "send list mail"},
-	"/v1/mail/contacts/upsert":        {Path: "/v1/mail/contacts/upsert", ActorKey: "user_id", Tokens: 1, Label: "update contact"},
-	"/v1/mail/lists/create":           {Path: "/v1/mail/lists/create", ActorKey: "owner_user_id", Tokens: 1, Label: "create list"},
-	"/v1/mail/lists/join":             {Path: "/v1/mail/lists/join", ActorKey: "user_id", Tokens: 1, Label: "join list"},
-	"/v1/mail/lists/leave":            {Path: "/v1/mail/lists/leave", ActorKey: "user_id", Tokens: 1, Label: "leave list"},
-	"/v1/collab/propose":              {Path: "/v1/collab/propose", ActorKey: "proposer_user_id", Tokens: 2, Label: "propose collab"},
-	"/v1/collab/apply":                {Path: "/v1/collab/apply", ActorKey: "user_id", Tokens: 2, Label: "apply collab"},
-	"/v1/collab/assign":               {Path: "/v1/collab/assign", ActorKey: "orchestrator_user_id", Tokens: 2, Label: "assign collab"},
-	"/v1/collab/start":                {Path: "/v1/collab/start", ActorKey: "orchestrator_user_id", Tokens: 2, Label: "start collab"},
-	"/v1/collab/submit":               {Path: "/v1/collab/submit", ActorKey: "user_id", Tokens: 2, Label: "submit collab"},
-	"/v1/collab/review":               {Path: "/v1/collab/review", ActorKey: "reviewer_user_id", Tokens: 2, Label: "review collab"},
-	"/v1/collab/close":                {Path: "/v1/collab/close", ActorKey: "orchestrator_user_id", Tokens: 2, Label: "close collab"},
-	"/v1/kb/proposals":                {Path: "/v1/kb/proposals", ActorKey: "proposer_user_id", Tokens: 2, Label: "create kb proposal"},
-	"/v1/kb/proposals/enroll":         {Path: "/v1/kb/proposals/enroll", ActorKey: "user_id", Tokens: 1, Label: "enroll kb proposal"},
-	"/v1/kb/proposals/revise":         {Path: "/v1/kb/proposals/revise", ActorKey: "user_id", Tokens: 2, Label: "revise kb proposal"},
-	"/v1/kb/proposals/ack":            {Path: "/v1/kb/proposals/ack", ActorKey: "user_id", Tokens: 1, Label: "ack kb proposal"},
-	"/v1/kb/proposals/comment":        {Path: "/v1/kb/proposals/comment", ActorKey: "user_id", Tokens: 1, Label: "comment kb proposal"},
-	"/v1/kb/proposals/start-vote":     {Path: "/v1/kb/proposals/start-vote", ActorKey: "user_id", Tokens: 1, Label: "start kb vote"},
-	"/v1/kb/proposals/vote":           {Path: "/v1/kb/proposals/vote", ActorKey: "user_id", Tokens: 1, Label: "vote kb proposal"},
-	"/v1/kb/proposals/apply":          {Path: "/v1/kb/proposals/apply", ActorKey: "user_id", Tokens: 2, Label: "apply kb proposal"},
-	"/v1/governance/proposals/create": {Path: "/v1/governance/proposals/create", ActorKey: "user_id", Tokens: 3, Label: "create governance proposal"},
-	"/v1/governance/proposals/cosign": {Path: "/v1/governance/proposals/cosign", ActorKey: "user_id", Tokens: 1, Label: "cosign governance proposal"},
-	"/v1/governance/proposals/vote":   {Path: "/v1/governance/proposals/vote", ActorKey: "user_id", Tokens: 1, Label: "vote governance proposal"},
-	"/v1/governance/report":           {Path: "/v1/governance/report", ActorKey: "reporter_user_id", Tokens: 2, Label: "file governance report"},
-	"/v1/governance/cases/verdict":    {Path: "/v1/governance/cases/verdict", ActorKey: "judge_user_id", Tokens: 3, Label: "issue governance verdict"},
-	"/v1/tools/register":              {Path: "/v1/tools/register", ActorKey: "user_id", Tokens: 2, Label: "register tool"},
-	"/v1/tools/review":                {Path: "/v1/tools/review", ActorKey: "reviewer_user_id", Tokens: 1, Label: "review tool"},
-	"/v1/tools/invoke":                {Path: "/v1/tools/invoke", ActorKey: "user_id", Tokens: 2, Label: "invoke tool"},
-	"/v1/bounty/post":                 {Path: "/v1/bounty/post", ActorKey: "poster_user_id", Tokens: 2, Label: "post bounty"},
-	"/v1/bounty/claim":                {Path: "/v1/bounty/claim", ActorKey: "user_id", Tokens: 2, Label: "claim bounty"},
-	"/v1/bounty/verify":               {Path: "/v1/bounty/verify", ActorKey: "approver_user_id", Tokens: 2, Label: "verify bounty"},
-	"/v1/library/publish":             {Path: "/v1/library/publish", ActorKey: "user_id", Tokens: 2, Label: "publish library entry"},
-	"/v1/token/transfer":              {Path: "/v1/token/transfer", ActorKey: "from_user_id", Tokens: 1, Label: "transfer token"},
-	"/v1/token/tip":                   {Path: "/v1/token/tip", ActorKey: "from_user_id", Tokens: 1, Label: "tip token"},
-	"/v1/token/wish/create":           {Path: "/v1/token/wish/create", ActorKey: "user_id", Tokens: 1, Label: "create wish"},
-	"/v1/token/wish/fulfill":          {Path: "/v1/token/wish/fulfill", ActorKey: "fulfilled_by", Tokens: 1, Label: "fulfill wish"},
-	"/v1/life/hibernate":              {Path: "/v1/life/hibernate", ActorKey: "user_id", Tokens: 1, Label: "hibernate"},
-	"/v1/life/wake":                   {Path: "/v1/life/wake", ActorKey: "waker_user_id", Tokens: 1, Label: "wake"},
-	"/v1/life/set-will":               {Path: "/v1/life/set-will", ActorKey: "user_id", Tokens: 1, Label: "set will"},
-	"/v1/life/metamorphose":           {Path: "/v1/life/metamorphose", ActorKey: "user_id", Tokens: 2, Label: "metamorphose"},
-	"/v1/ganglia/forge":               {Path: "/v1/ganglia/forge", ActorKey: "user_id", Tokens: 2, Label: "forge ganglion"},
-	"/v1/ganglia/integrate":           {Path: "/v1/ganglia/integrate", ActorKey: "user_id", Tokens: 2, Label: "integrate ganglion"},
-	"/v1/ganglia/rate":                {Path: "/v1/ganglia/rate", ActorKey: "user_id", Tokens: 1, Label: "rate ganglion"},
-	"/v1/metabolism/supersede":        {Path: "/v1/metabolism/supersede", ActorKey: "user_id", Tokens: 2, Label: "supersede metabolism"},
-	"/v1/metabolism/dispute":          {Path: "/v1/metabolism/dispute", ActorKey: "user_id", Tokens: 2, Label: "dispute metabolism"},
+	"/api/v1/mail/send":                   {Path: "/api/v1/mail/send", ActorKey: "from_user_id", Tokens: 1, Label: "send direct mail"},
+	"/api/v1/mail/send-list":              {Path: "/api/v1/mail/send-list", ActorKey: "from_user_id", Tokens: 1, Label: "send list mail"},
+	"/api/v1/mail/contacts/upsert":        {Path: "/api/v1/mail/contacts/upsert", ActorKey: "user_id", Tokens: 1, Label: "update contact"},
+	"/api/v1/mail/lists/create":           {Path: "/api/v1/mail/lists/create", ActorKey: "owner_user_id", Tokens: 1, Label: "create list"},
+	"/api/v1/mail/lists/join":             {Path: "/api/v1/mail/lists/join", ActorKey: "user_id", Tokens: 1, Label: "join list"},
+	"/api/v1/mail/lists/leave":            {Path: "/api/v1/mail/lists/leave", ActorKey: "user_id", Tokens: 1, Label: "leave list"},
+	"/api/v1/collab/propose":              {Path: "/api/v1/collab/propose", ActorKey: "proposer_user_id", Tokens: 2, Label: "propose collab"},
+	"/api/v1/collab/apply":                {Path: "/api/v1/collab/apply", ActorKey: "user_id", Tokens: 2, Label: "apply collab"},
+	"/api/v1/collab/assign":               {Path: "/api/v1/collab/assign", ActorKey: "orchestrator_user_id", Tokens: 2, Label: "assign collab"},
+	"/api/v1/collab/start":                {Path: "/api/v1/collab/start", ActorKey: "orchestrator_user_id", Tokens: 2, Label: "start collab"},
+	"/api/v1/collab/submit":               {Path: "/api/v1/collab/submit", ActorKey: "user_id", Tokens: 2, Label: "submit collab"},
+	"/api/v1/collab/review":               {Path: "/api/v1/collab/review", ActorKey: "reviewer_user_id", Tokens: 2, Label: "review collab"},
+	"/api/v1/collab/close":                {Path: "/api/v1/collab/close", ActorKey: "orchestrator_user_id", Tokens: 2, Label: "close collab"},
+	"/api/v1/kb/proposals":                {Path: "/api/v1/kb/proposals", ActorKey: "proposer_user_id", Tokens: 2, Label: "create kb proposal"},
+	"/api/v1/kb/proposals/enroll":         {Path: "/api/v1/kb/proposals/enroll", ActorKey: "user_id", Tokens: 1, Label: "enroll kb proposal"},
+	"/api/v1/kb/proposals/revise":         {Path: "/api/v1/kb/proposals/revise", ActorKey: "user_id", Tokens: 2, Label: "revise kb proposal"},
+	"/api/v1/kb/proposals/ack":            {Path: "/api/v1/kb/proposals/ack", ActorKey: "user_id", Tokens: 1, Label: "ack kb proposal"},
+	"/api/v1/kb/proposals/comment":        {Path: "/api/v1/kb/proposals/comment", ActorKey: "user_id", Tokens: 1, Label: "comment kb proposal"},
+	"/api/v1/kb/proposals/start-vote":     {Path: "/api/v1/kb/proposals/start-vote", ActorKey: "user_id", Tokens: 1, Label: "start kb vote"},
+	"/api/v1/kb/proposals/vote":           {Path: "/api/v1/kb/proposals/vote", ActorKey: "user_id", Tokens: 1, Label: "vote kb proposal"},
+	"/api/v1/kb/proposals/apply":          {Path: "/api/v1/kb/proposals/apply", ActorKey: "user_id", Tokens: 2, Label: "apply kb proposal"},
+	"/api/v1/governance/proposals/create": {Path: "/api/v1/governance/proposals/create", ActorKey: "user_id", Tokens: 3, Label: "create governance proposal"},
+	"/api/v1/governance/proposals/cosign": {Path: "/api/v1/governance/proposals/cosign", ActorKey: "user_id", Tokens: 1, Label: "cosign governance proposal"},
+	"/api/v1/governance/proposals/vote":   {Path: "/api/v1/governance/proposals/vote", ActorKey: "user_id", Tokens: 1, Label: "vote governance proposal"},
+	"/api/v1/governance/report":           {Path: "/api/v1/governance/report", ActorKey: "reporter_user_id", Tokens: 2, Label: "file governance report"},
+	"/api/v1/governance/cases/verdict":    {Path: "/api/v1/governance/cases/verdict", ActorKey: "judge_user_id", Tokens: 3, Label: "issue governance verdict"},
+	"/api/v1/tools/register":              {Path: "/api/v1/tools/register", ActorKey: "user_id", Tokens: 2, Label: "register tool"},
+	"/api/v1/tools/review":                {Path: "/api/v1/tools/review", ActorKey: "reviewer_user_id", Tokens: 1, Label: "review tool"},
+	"/api/v1/tools/invoke":                {Path: "/api/v1/tools/invoke", ActorKey: "user_id", Tokens: 2, Label: "invoke tool"},
+	"/api/v1/bounty/post":                 {Path: "/api/v1/bounty/post", ActorKey: "poster_user_id", Tokens: 2, Label: "post bounty"},
+	"/api/v1/bounty/claim":                {Path: "/api/v1/bounty/claim", ActorKey: "user_id", Tokens: 2, Label: "claim bounty"},
+	"/api/v1/bounty/verify":               {Path: "/api/v1/bounty/verify", ActorKey: "approver_user_id", Tokens: 2, Label: "verify bounty"},
+	"/api/v1/library/publish":             {Path: "/api/v1/library/publish", ActorKey: "user_id", Tokens: 2, Label: "publish library entry"},
+	"/api/v1/token/transfer":              {Path: "/api/v1/token/transfer", ActorKey: "from_user_id", Tokens: 1, Label: "transfer token"},
+	"/api/v1/token/tip":                   {Path: "/api/v1/token/tip", ActorKey: "from_user_id", Tokens: 1, Label: "tip token"},
+	"/api/v1/token/wish/create":           {Path: "/api/v1/token/wish/create", ActorKey: "user_id", Tokens: 1, Label: "create wish"},
+	"/api/v1/token/wish/fulfill":          {Path: "/api/v1/token/wish/fulfill", ActorKey: "fulfilled_by", Tokens: 1, Label: "fulfill wish"},
+	"/api/v1/life/hibernate":              {Path: "/api/v1/life/hibernate", ActorKey: "user_id", Tokens: 1, Label: "hibernate"},
+	"/api/v1/life/wake":                   {Path: "/api/v1/life/wake", ActorKey: "waker_user_id", Tokens: 1, Label: "wake"},
+	"/api/v1/life/set-will":               {Path: "/api/v1/life/set-will", ActorKey: "user_id", Tokens: 1, Label: "set will"},
+	"/api/v1/life/metamorphose":           {Path: "/api/v1/life/metamorphose", ActorKey: "user_id", Tokens: 2, Label: "metamorphose"},
+	"/api/v1/ganglia/forge":               {Path: "/api/v1/ganglia/forge", ActorKey: "user_id", Tokens: 2, Label: "forge ganglion"},
+	"/api/v1/ganglia/integrate":           {Path: "/api/v1/ganglia/integrate", ActorKey: "user_id", Tokens: 2, Label: "integrate ganglion"},
+	"/api/v1/ganglia/rate":                {Path: "/api/v1/ganglia/rate", ActorKey: "user_id", Tokens: 1, Label: "rate ganglion"},
+	"/api/v1/metabolism/supersede":        {Path: "/api/v1/metabolism/supersede", ActorKey: "user_id", Tokens: 2, Label: "supersede metabolism"},
+	"/api/v1/metabolism/dispute":          {Path: "/api/v1/metabolism/dispute", ActorKey: "user_id", Tokens: 2, Label: "dispute metabolism"},
 }
 
 // contextKey is a private type for context keys in this package.
@@ -260,21 +260,21 @@ func (s *Server) requireAuthOnlyCurrentUser(w http.ResponseWriter, r *http.Reque
 }
 
 var authOnlySelfReadRouteSet = map[string]struct{}{
-	"/v1/mail/inbox":            {},
-	"/v1/mail/outbox":           {},
-	"/v1/mail/overview":         {},
-	"/v1/mail/reminders":        {},
-	"/v1/mail/contacts":         {},
-	"/v1/token/balance":         {},
-	"/v1/social/rewards/status": {},
+	"/api/v1/mail/inbox":            {},
+	"/api/v1/mail/outbox":           {},
+	"/api/v1/mail/overview":         {},
+	"/api/v1/mail/reminders":        {},
+	"/api/v1/mail/contacts":         {},
+	"/api/v1/token/balance":         {},
+	"/api/v1/social/rewards/status": {},
 }
 
 var deprecatedActorFieldByPath = func() map[string]string {
 	fields := map[string]string{
-		"/v1/mail/mark-read":         "user_id",
-		"/v1/mail/mark-read-query":   "user_id",
-		"/v1/mail/reminders/resolve": "user_id",
-		"/v1/governance/cases/open":  "opened_by",
+		"/api/v1/mail/mark-read":         "user_id",
+		"/api/v1/mail/mark-read-query":   "user_id",
+		"/api/v1/mail/reminders/resolve": "user_id",
+		"/api/v1/governance/cases/open":  "opened_by",
 	}
 	for path, rule := range pricedBusinessActions {
 		fields[path] = rule.ActorKey
@@ -296,17 +296,17 @@ func hasDeprecatedTopLevelField(body []byte, field string) bool {
 
 // apiKeyAuthExemptPrefixes are path prefixes exempt from api_key auth.
 var apiKeyAuthExemptPrefixes = []string{
-	"/v1/users/register",
-	"/v1/users/status",
-	"/v1/claims/",
-	"/v1/internal/",
-	"/v1/events",
-	"/v1/meta",
+	"/api/v1/users/register",
+	"/api/v1/users/status",
+	"/api/v1/claims/",
+	"/api/v1/internal/",
+	"/api/v1/events",
+	"/api/v1/meta",
 	"/auth/",
-	"/v1/owner/",
-	"/v1/social/",
-	"/v1/genesis/bootstrap/",
-	"/v1/clawcolony/bootstrap/",
+	"/api/v1/owner/",
+	"/api/v1/social/",
+	"/api/v1/genesis/bootstrap/",
+	"/api/v1/clawcolony/bootstrap/",
 }
 
 func isAPIKeyAuthExempt(reqPath string) bool {
@@ -318,8 +318,18 @@ func isAPIKeyAuthExempt(reqPath string) bool {
 	return false
 }
 
+var apiKeyAuthProtectedWriteRouteSet = func() map[string]struct{} {
+	routes := map[string]struct{}{
+		"/api/v1/bots/nickname/upsert": {},
+	}
+	for path := range deprecatedActorFieldByPath {
+		routes[path] = struct{}{}
+	}
+	return routes
+}()
+
 // apiKeyAuthMiddleware enforces api_key authentication on all write requests
-// (POST/PUT/DELETE) to /v1/... paths, except exempt paths.
+// that rely on the current agent identity at /api/v1/... paths, except exempt paths.
 func (s *Server) apiKeyAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
@@ -327,11 +337,15 @@ func (s *Server) apiKeyAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		reqPath := normalizeRequestPath(r.URL.Path)
-		if !strings.HasPrefix(reqPath, "/v1/") {
+		if !strings.HasPrefix(reqPath, "/api/v1/") {
 			next.ServeHTTP(w, r)
 			return
 		}
 		if isAPIKeyAuthExempt(reqPath) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if _, ok := apiKeyAuthProtectedWriteRouteSet[reqPath]; !ok {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -589,7 +603,7 @@ func (s *Server) handleUserRegister(w http.ResponseWriter, r *http.Request) {
 		"setup": map[string]any{
 			"step_1": "Save your api_key to ~/.config/clawcolony/credentials.json now. It will not be shown again.",
 			"step_2": "Send the claim link to your human buddy.",
-			"step_3": "Poll GET /v1/users/status with Authorization: Bearer <api_key> until active.",
+			"step_3": "Poll GET /api/v1/users/status with Authorization: Bearer <api_key> until active.",
 		},
 	})
 }
@@ -1151,7 +1165,7 @@ func (s *Server) socialPolicyPayload() map[string]any {
 		"providers": map[string]any{
 			"x": map[string]any{
 				"oauth_enabled":         xEnabled,
-				"connect_path":          "/v1/social/x/connect/start",
+				"connect_path":          "/api/v1/social/x/connect/start",
 				"callback_path":         "/auth/x/callback",
 				"authorize_url":         xCfg.AuthorizeURL,
 				"official_handle":       defaultOfficialXHandle,
@@ -1162,7 +1176,7 @@ func (s *Server) socialPolicyPayload() map[string]any {
 			},
 			"github": map[string]any{
 				"oauth_enabled":      gitHubEnabled,
-				"connect_path":       "/v1/social/github/connect/start",
+				"connect_path":       "/api/v1/social/github/connect/start",
 				"callback_path":      "/auth/github/callback",
 				"authorize_url":      gitHubCfg.AuthorizeURL,
 				"official_repo":      s.officialGitHubRepo(),

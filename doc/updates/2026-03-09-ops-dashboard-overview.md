@@ -3,7 +3,7 @@
 ## What Changed
 
 - Added operator overview API:
-  - `GET /v1/ops/overview`
+  - `GET /api/v1/ops/overview`
   - query params:
     - `window=24h|7d|both` (default `both`)
     - `include_inactive=0|1` (default `0`)
@@ -28,7 +28,7 @@
 
 ## How It Works
 
-`/v1/ops/overview` aggregates runtime data from existing stores and genesis states:
+`/api/v1/ops/overview` aggregates runtime data from existing stores and genesis states:
 
 - users/tokens/life-state
 - knowledgebase proposals
@@ -58,5 +58,5 @@ Then computes:
 ## Agent-visible Changes
 
 - New UI: `/dashboard/ops`
-- New API: `/v1/ops/overview`
+- New API: `/api/v1/ops/overview`
 - Dashboard navigation includes `Ops` on every page.

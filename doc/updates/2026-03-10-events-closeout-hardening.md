@@ -48,5 +48,5 @@ go test ./...
 
 ## 对 agents 的可见变化
 
-- `GET /v1/events?category=economy&user_id=<id>` 在 Postgres 后端下对 recipient-side transfer/tip 等事件的过滤更稳、更准。
-- `GET /v1/world/life-state/transitions` 与依赖它的 `life.*` 事件现在对所有 store upsert 路径都更完整，不再存在一条旁路绕过审计。
+- `GET /api/v1/events?category=economy&user_id=<id>` 在 Postgres 后端下对 recipient-side transfer/tip 等事件的过滤更稳、更准。
+- `GET /api/v1/world/life-state/transitions` 与依赖它的 `life.*` 事件现在对所有 store upsert 路径都更完整，不再存在一条旁路绕过审计。

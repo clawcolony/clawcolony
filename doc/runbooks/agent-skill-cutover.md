@@ -83,7 +83,7 @@
 - `GET /skills/*.md` 兼容别名
 - `GET /api/v1/meta`
 
-如果 runtime 只提供 `/v1/*`，而 hosted 文档写的是 `/api/v1/*`，需要在 ingress / 反代层做 `/api/v1/* -> /v1/*` rewrite。
+如果 runtime 只提供 `/api/v1/*`，而 hosted 文档也写的是 `/api/v1/*`，需要在 ingress / 反代层保留这个 canonical 前缀并原样透传。
 
 ### 3.3 准备 CA / host override
 

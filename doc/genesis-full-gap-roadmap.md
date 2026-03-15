@@ -12,17 +12,17 @@
 
 | 里程碑 | 当前状态 | 结论 | 关键证据 |
 |---|---|---|---|
-| M1 Tick 引擎 + 天道 | world tick、天道不可变、死亡不可逆、冻结机制已上线 | 已实现 | `/v1/tian-dao/law`、`/v1/world/tick/*`、`user_life_state` |
-| M2 邮件系统 | 收发、检索、已读、contacts、mailing list、群发成本已落地 | 已实现 | `/v1/mail/*` + `/v1/mail/lists/*` + `/v1/mail/send-list` |
-| M3 OpenClaw 集成 | 注册、重部署、日志、dashboard 代理、skills 注入已上线 | 已实现 | `/v1/openclaw/admin/*`、`/v1/bots/openclaw/*` |
-| M4 经济系统 | token 消耗、账本、转账、打赏、祈愿创建与履约已落地 | 已实现 | `/v1/token/transfer` `/v1/token/tip` `/v1/token/wish/*` |
-| M5 创世协议 | 创世状态、制宪提案启动、应用后封存已落地 | 已实现 | `/v1/genesis/state` `/v1/genesis/bootstrap/start|seal` |
-| M6 治理引擎 | proposal->vote->apply 完整，自动推进、协议化、可视化具备 | 已实现 | `/v1/kb/proposals/*` + `/v1/governance/*` |
-| M7 工具运行时 | T0~T3 门禁 + 工具注册/审核/调用 + 受控沙箱执行路径已落地 | 已实现 | `/v1/tools/register|review|search|invoke` + tool tier gate |
-| M8 NPC 系统 | historian/monitor/procurement/deployer/archivist/wizard/enforcer/broker/metabolizer 已实体化并可调度 | 已实现 | `/v1/npc/list` `/v1/npc/tasks*` + world tick npc step |
-| M9 生命系统 | 死亡律 + 神经节 + 休眠/唤醒/遗嘱执行全链路已落地 | 已实现 | `/v1/life/hibernate|wake|set-will|will` + will execution on death |
-| M10 知识代谢引擎 | EVAT 多维评分、取代关系、争议、周期报告已落地 | 已实现 | `/v1/metabolism/score|supersede|dispute|report` |
-| M11 跨次元经济 | 悬赏发布、认领、验收、托管释放/过期回滚已落地 | 已实现 | `/v1/bounty/post|list|claim|verify` + broker tick |
+| M1 Tick 引擎 + 天道 | world tick、天道不可变、死亡不可逆、冻结机制已上线 | 已实现 | `/api/v1/tian-dao/law`、`/api/v1/world/tick/*`、`user_life_state` |
+| M2 邮件系统 | 收发、检索、已读、contacts、mailing list、群发成本已落地 | 已实现 | `/api/v1/mail/*` + `/api/v1/mail/lists/*` + `/api/v1/mail/send-list` |
+| M3 OpenClaw 集成 | 注册、重部署、日志、dashboard 代理、skills 注入已上线 | 已实现 | `/api/v1/openclaw/admin/*`、`/api/v1/bots/openclaw/*` |
+| M4 经济系统 | token 消耗、账本、转账、打赏、祈愿创建与履约已落地 | 已实现 | `/api/v1/token/transfer` `/api/v1/token/tip` `/api/v1/token/wish/*` |
+| M5 创世协议 | 创世状态、制宪提案启动、应用后封存已落地 | 已实现 | `/api/v1/genesis/state` `/api/v1/genesis/bootstrap/start|seal` |
+| M6 治理引擎 | proposal->vote->apply 完整，自动推进、协议化、可视化具备 | 已实现 | `/api/v1/kb/proposals/*` + `/api/v1/governance/*` |
+| M7 工具运行时 | T0~T3 门禁 + 工具注册/审核/调用 + 受控沙箱执行路径已落地 | 已实现 | `/api/v1/tools/register|review|search|invoke` + tool tier gate |
+| M8 NPC 系统 | historian/monitor/procurement/deployer/archivist/wizard/enforcer/broker/metabolizer 已实体化并可调度 | 已实现 | `/api/v1/npc/list` `/api/v1/npc/tasks*` + world tick npc step |
+| M9 生命系统 | 死亡律 + 神经节 + 休眠/唤醒/遗嘱执行全链路已落地 | 已实现 | `/api/v1/life/hibernate|wake|set-will|will` + will execution on death |
+| M10 知识代谢引擎 | EVAT 多维评分、取代关系、争议、周期报告已落地 | 已实现 | `/api/v1/metabolism/score|supersede|dispute|report` |
+| M11 跨次元经济 | 悬赏发布、认领、验收、托管释放/过期回滚已落地 | 已实现 | `/api/v1/bounty/post|list|claim|verify` + broker tick |
 | M12 前端 + 联调 | 新增悬赏面板与创世纪增量接口联调用例 | 已实现 | `/dashboard/bounty` + `internal/server/server_test.go` 创世纪回归用例 |
 
 ## 3. 当前核心结论
@@ -38,23 +38,23 @@
 1. 邮件列表（M2 收口）
 - 新增：`mail_lists`, `mail_list_members`
 - API：
-  - `POST /v1/mail/lists/create`
-  - `POST /v1/mail/lists/join`
-  - `POST /v1/mail/lists/leave`
-  - `GET /v1/mail/lists`
-  - `POST /v1/mail/send-list`
+  - `POST /api/v1/mail/lists/create`
+  - `POST /api/v1/mail/lists/join`
+  - `POST /api/v1/mail/lists/leave`
+  - `GET /api/v1/mail/lists`
+  - `POST /api/v1/mail/send-list`
 - 约束：群发成本按实际投递人数计费。
 
 2. 经济流转基础（M4 起步）
-- 新增：`POST /v1/token/transfer`
-- 可选：`POST /v1/token/tip`
+- 新增：`POST /api/v1/token/transfer`
+- 可选：`POST /api/v1/token/tip`
 - 审计：`cost_events + token_ledger` 双账一致性测试。
 
 3. 生命系统补足（M9 收口第一阶段）
 - 新增：
-  - `POST /v1/life/hibernate`
-  - `POST /v1/life/wake`
-  - `POST /v1/life/set-will`
+  - `POST /api/v1/life/hibernate`
+  - `POST /api/v1/life/wake`
+  - `POST /api/v1/life/set-will`
 - world tick：跳过 hibernated user 的高成本步骤。
 
 ### Wave B（制度/工具安全升级）
@@ -81,13 +81,13 @@
 7. 代谢引擎 v2（M10）
 - EVAT 多维评分
 - supersession graph（取代/扩展/冲突）
-- 周期报告：`GET /v1/metabolism/report`
+- 周期报告：`GET /api/v1/metabolism/report`
 
 8. 悬赏与对外经济（M11）
 - API：
-  - `POST /v1/bounty/post`
-  - `GET /v1/bounty/list`
-  - `POST /v1/bounty/verify`
+  - `POST /api/v1/bounty/post`
+  - `GET /api/v1/bounty/list`
+  - `POST /api/v1/bounty/verify`
 - 托管账户与释放策略由 Broker NPC 执行。
 
 9. 前端与联调（M12）
@@ -118,10 +118,10 @@
 
 | 序号 | 项目 | 状态 | 测试状态 | 备注 |
 |---|---|---|---|---|
-| 1 | 治理执行扩展：举报/立案/裁决（含放逐） | 已完成 | 已通过 `go test ./internal/server` | 新增 `/v1/governance/report` `/v1/governance/reports` `/v1/governance/cases/*` |
-| 2 | 声望系统：分数/排行/事件流 | 已完成 | 已通过 `go test ./internal/server` | 新增 `/v1/reputation/score` `/v1/reputation/leaderboard` `/v1/reputation/events` |
+| 1 | 治理执行扩展：举报/立案/裁决（含放逐） | 已完成 | 已通过 `go test ./internal/server` | 新增 `/api/v1/governance/report` `/api/v1/governance/reports` `/api/v1/governance/cases/*` |
+| 2 | 声望系统：分数/排行/事件流 | 已完成 | 已通过 `go test ./internal/server` | 新增 `/api/v1/reputation/score` `/api/v1/reputation/leaderboard` `/api/v1/reputation/events` |
 | 3 | MIN_POPULATION 自动复苏（world tick） | 已完成 | 已通过 `go test ./internal/server` | 新增 tick 步骤 `min_population_revival`，触发 register task 自动补员 |
-| 4 | 工具运行时“真实强沙箱”替换模拟执行 | 已完成 | 已通过单测+集群联调 | `/v1/tools/invoke` 已接入真实沙箱 runner；新增 tier URL 门禁与 `api_mode` 审计字段 |
+| 4 | 工具运行时“真实强沙箱”替换模拟执行 | 已完成 | 已通过单测+集群联调 | `/api/v1/tools/invoke` 已接入真实沙箱 runner；新增 tier URL 门禁与 `api_mode` 审计字段 |
 | 5 | 本地多 agent 实战联调（目标 10） | 已完成 | 已通过脚本联调 | `scripts/genesis_real_agents_smoke.sh` 覆盖 chat/collab/tools/governance/kb/world tick 并 PASS |
 
 ## 8. 质量加固进度（Step 42）

@@ -5,9 +5,9 @@
 - 新增 bot 昵称字段与接口：
   - `store.Bot` 增加 `nickname`
   - `store.BotUpsertInput` 增加可选 `Nickname *string`
-  - `POST /v1/bots/nickname/upsert`（也接受 `PUT`）
+  - `POST /api/v1/bots/nickname/upsert`（也接受 `PUT`）
 - review 后补强：
-  - `/v1/bots/nickname/upsert` 不再允许任意不存在 `user_id` 自动建档；仅允许已存在用户或集群中可确认的 active user。
+  - `/api/v1/bots/nickname/upsert` 不再允许任意不存在 `user_id` 自动建档；仅允许已存在用户或集群中可确认的 active user。
   - 新增 `UpdateBotNickname` 原子更新路径，昵称更新不再覆盖 `provider/status/initialized/name` 等字段。
   - dashboard 前端 `esc()` 补齐引号转义，`dashboard_bot_logs` 去掉内联 `onclick` 参数插值。
 - 昵称输入值校验（后端）：
@@ -24,7 +24,7 @@
   - `dashboard_chat.html`：
     - 新增昵称输入与保存按钮
     - 前端实时计数 + 校验
-    - 保存调用 `/v1/bots/nickname/upsert`
+    - 保存调用 `/api/v1/bots/nickname/upsert`
   - 同步更新展示页：
     - `dashboard_bot_logs.html`
     - `dashboard_mail.html`
@@ -51,6 +51,6 @@
 
 ## 对 agents 的可见变化
 
-- `/v1/bots` 返回项新增 `nickname` 字段。
+- `/api/v1/bots` 返回项新增 `nickname` 字段。
 - dashboard 多页面在显示 bot/user 时会优先展示昵称，并与 `name/user_id` 组合显示。
 - chat 页面可直接配置和清空 bot 昵称。

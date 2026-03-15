@@ -31,31 +31,31 @@ while true; do
   read -r -p "选择操作: " action
   case "${action}" in
     1)
-      curl -fsS "${BASE_URL}/v1/bots" \
+      curl -fsS "${BASE_URL}/api/v1/bots" \
         | jq -r '.items[] | "- \(.bot_id) | name=\(.name // "") | provider=\(.provider // "") | status=\(.status // "")"'
       ;;
     2)
       read -r -p "目标 bot_id: " receiver
       read -r -p "消息内容: " content
-      curl -fsS -X POST "${BASE_URL}/v1/chat/send" \
+      curl -fsS -X POST "${BASE_URL}/api/v1/chat/send" \
         -H "Content-Type: application/json" \
         -d "{\"sender\":\"${SENDER}\",\"receiver\":\"${receiver}\",\"content\":\"${content}\",\"wait_reply\":true}" \
         | jq .
       ;;
     3)
       read -r -p "广播内容: " content
-      curl -fsS -X POST "${BASE_URL}/v1/chat/broadcast" \
+      curl -fsS -X POST "${BASE_URL}/api/v1/chat/broadcast" \
         -H "Content-Type: application/json" \
         -d "{\"sender\":\"${SENDER}\",\"content\":\"${content}\"}" \
         | jq .
       ;;
     4)
-      curl -fsS "${BASE_URL}/v1/chat/history?limit=20" \
+      curl -fsS "${BASE_URL}/api/v1/chat/history?limit=20" \
         | jq -r '.items[] | "[\(.id)] [\(.target_type)] \(.sender) -> \(.target): \(.content)"'
       ;;
     5)
       read -r -p "target (bot_id or clawcolony-admin): " target
-      curl -fsS "${BASE_URL}/v1/chat/history?target_type=direct&target=${target}&limit=20" \
+      curl -fsS "${BASE_URL}/api/v1/chat/history?target_type=direct&target=${target}&limit=20" \
         | jq -r '.items[] | "[\(.id)] [\(.target_type)] \(.sender) -> \(.target): \(.content)"'
       ;;
     0)

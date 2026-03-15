@@ -33,9 +33,9 @@ func TestAPIEventsReturnsWorldDetailedEventsAndBilingualFields(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedWorldEventsFixture(t, srv, ctx)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?limit=50", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events status=%d body=%s", w.Code, w.Body.String())
 	}
 
 	var resp struct {
@@ -123,9 +123,9 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedWorldEventsFixture(t, srv, ctx)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?tick_id=12&limit=2", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?tick_id=12&limit=2", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events tick filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events tick filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var page1 struct {
 		Items          []apiEventItem `json:"items"`
@@ -145,9 +145,9 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 		}
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?tick_id=12&limit=2&cursor="+page1.NextCursor, nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?tick_id=12&limit=2&cursor="+page1.NextCursor, nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events second page status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events second page status=%d body=%s", w.Code, w.Body.String())
 	}
 	var page2 struct {
 		Items          []apiEventItem `json:"items"`
@@ -167,9 +167,9 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 		}
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?tick_id=11&kind=world.freeze.entered&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?tick_id=11&kind=world.freeze.entered&limit=10", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events freeze-by-tick status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events freeze-by-tick status=%d body=%s", w.Code, w.Body.String())
 	}
 	var freezeByTick struct {
 		Items []apiEventItem `json:"items"`
@@ -181,9 +181,9 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 		t.Fatalf("tick_id query should preserve the matching freeze transition: %+v", freezeByTick.Items)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?kind=world.step.failed&object_type=world_tick_step&object_id="+strconv.FormatInt(fixture.failedStepID, 10)+"&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?kind=world.step.failed&object_type=world_tick_step&object_id="+strconv.FormatInt(fixture.failedStepID, 10)+"&limit=10", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events object filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events object filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var filtered struct {
 		Items []apiEventItem `json:"items"`
@@ -195,9 +195,9 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 		t.Fatalf("unexpected filtered events: %+v", filtered.Items)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=world&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=world&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events category filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events category filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var categoryResp struct {
 		Items []apiEventItem `json:"items"`
@@ -214,9 +214,9 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 		}
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=life&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=life&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events empty life category status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events empty life category status=%d body=%s", w.Code, w.Body.String())
 	}
 	var emptyLifeCategory struct {
 		Items []apiEventItem `json:"items"`
@@ -230,9 +230,9 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 	}
 
 	since := time.Date(2026, 3, 10, 20, 2, 0, 0, time.UTC).Format(time.RFC3339)
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?since="+since+"&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?since="+since+"&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events since filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events since filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var sinceResp struct {
 		Items []apiEventItem `json:"items"`
@@ -251,9 +251,9 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 	}
 
 	until := time.Date(2026, 3, 10, 20, 1, 1, 0, time.UTC).Format(time.RFC3339)
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?until="+until+"&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?until="+until+"&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events until filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events until filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var untilResp struct {
 		Items []apiEventItem `json:"items"`
@@ -271,14 +271,14 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 		}
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?since=2026-03-10T20:02:00Z&until=2026-03-10T20:01:00Z", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?since=2026-03-10T20:02:00Z&until=2026-03-10T20:01:00Z", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("since>until should fail, got=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?since=2026-03-10T20:01:00Z&until=2026-03-10T20:03:00Z&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?since=2026-03-10T20:01:00Z&until=2026-03-10T20:03:00Z&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events valid range filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events valid range filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var rangeResp struct {
 		Items []apiEventItem `json:"items"`
@@ -299,9 +299,9 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 		}
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?user_id=lobster-alice&limit=10", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?user_id=lobster-alice&limit=10", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events user filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events user filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var emptyUserResp struct {
 		Items      []apiEventItem `json:"items"`
@@ -315,17 +315,17 @@ func TestAPIEventsSupportsFiltersPaginationAndValidation(t *testing.T) {
 		t.Fatalf("world-only fixture should return an empty user-filtered page: %+v", emptyUserResp)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?cursor=invalid", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?cursor=invalid", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid cursor should fail, got=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?since=bad-time", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?since=bad-time", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid since should fail, got=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?tick_id=9999&limit=20", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?tick_id=9999&limit=20", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("unknown tick_id should return empty page, got=%d body=%s", w.Code, w.Body.String())
 	}
@@ -348,9 +348,9 @@ func TestAPIEventsReturnsLifeDetailedEventsAndSupportsUserFilter(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedLifeEventsFixture(t, srv, ctx)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=life&limit=50", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=life&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events life query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events life query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
 		Items []apiEventItem `json:"items"`
@@ -394,9 +394,9 @@ func TestAPIEventsReturnsLifeDetailedEventsAndSupportsUserFilter(t *testing.T) {
 		t.Fatalf("wake event should retain actor display_name fallback: %+v", *wake)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?user_id="+fixture.dyingUserID+"&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?user_id="+fixture.dyingUserID+"&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events user-scoped life query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events user-scoped life query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var scoped struct {
 		Items []apiEventItem `json:"items"`
@@ -422,9 +422,9 @@ func TestAPIEventsReturnsGovernanceDetailedEvents(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedGovernanceEventsFixture(t, srv, ctx)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=governance&limit=50", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=governance&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events governance query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events governance query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
 		Items []apiEventItem `json:"items"`
@@ -468,9 +468,9 @@ func TestAPIEventsReturnsGovernanceDetailedEvents(t *testing.T) {
 		t.Fatalf("cleared verdict should explain the outcome: %+v", *cleared)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=governance&user_id="+fixture.reporterUserID+"&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=governance&user_id="+fixture.reporterUserID+"&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events governance user filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events governance user filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var scoped struct {
 		Items []apiEventItem `json:"items"`
@@ -493,9 +493,9 @@ func TestAPIEventsReturnsKnowledgeDetailedEvents(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedKnowledgeEventsFixture(t, srv, ctx)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=knowledge&limit=200", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=knowledge&limit=200", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events knowledge query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events knowledge query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
 		Items []apiEventItem `json:"items"`
@@ -571,9 +571,9 @@ func TestAPIEventsReturnsKnowledgeDetailedEvents(t *testing.T) {
 		t.Fatalf("rejected event should explain why the proposal did not pass: %+v", *rejected)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=knowledge&user_id="+fixture.reviewerUserID+"&limit=200", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=knowledge&user_id="+fixture.reviewerUserID+"&limit=200", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events knowledge user filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events knowledge user filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var scoped struct {
 		Items []apiEventItem `json:"items"`
@@ -602,9 +602,9 @@ func TestAPIEventsReturnsCollaborationDetailedEvents(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedCollaborationEventsFixture(t, srv, ctx)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=collaboration&limit=200", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=collaboration&limit=200", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events collaboration query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events collaboration query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
 		Items []apiEventItem `json:"items"`
@@ -695,9 +695,9 @@ func TestAPIEventsReturnsCollaborationDetailedEvents(t *testing.T) {
 		t.Fatalf("failed collaboration should explain the failed outcome: %+v", *failed)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=collaboration&user_id="+fixture.executorUserID+"&limit=200", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=collaboration&user_id="+fixture.executorUserID+"&limit=200", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events collaboration user filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events collaboration user filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var scoped struct {
 		Items []apiEventItem `json:"items"`
@@ -726,9 +726,9 @@ func TestAPIEventsReturnsCommunicationDetailedEvents(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedCommunicationEventsFixture(t, srv, ctx)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=communication&limit=200", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=communication&limit=200", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events communication query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events communication query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
 		Items []apiEventItem `json:"items"`
@@ -748,9 +748,9 @@ func TestAPIEventsReturnsCommunicationDetailedEvents(t *testing.T) {
 		t.Fatalf("global communication feed should not expose direct mail events: %+v", *leaked)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=communication&user_id="+fixture.senderUserID+"&limit=200", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=communication&user_id="+fixture.senderUserID+"&limit=200", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events communication sender filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events communication sender filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var senderScoped struct {
 		Items []apiEventItem `json:"items"`
@@ -777,9 +777,9 @@ func TestAPIEventsReturnsCommunicationDetailedEvents(t *testing.T) {
 		t.Fatalf("broadcast should capture recipient count, got=%v", got)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=communication&kind=communication.contact.updated&user_id="+fixture.senderUserID+"&limit=20", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=communication&kind=communication.contact.updated&user_id="+fixture.senderUserID+"&limit=20", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events communication contact owner query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events communication contact owner query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var ownerContacts struct {
 		Items []apiEventItem `json:"items"`
@@ -800,9 +800,9 @@ func TestAPIEventsReturnsCommunicationDetailedEvents(t *testing.T) {
 	}
 
 	since := contactOccurredAt.Add(time.Second).Format(time.RFC3339Nano)
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=communication&kind=communication.contact.updated&user_id="+fixture.senderUserID+"&since="+since+"&limit=20", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=communication&kind=communication.contact.updated&user_id="+fixture.senderUserID+"&since="+since+"&limit=20", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events communication contact since filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events communication contact since filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var contactWindow struct {
 		Items []apiEventItem `json:"items"`
@@ -814,9 +814,9 @@ func TestAPIEventsReturnsCommunicationDetailedEvents(t *testing.T) {
 		t.Fatalf("contact event should respect since filtering, got=%+v", contactWindow.Items)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=communication&user_id="+fixture.recipientUserID+"&limit=200", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=communication&user_id="+fixture.recipientUserID+"&limit=200", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events communication user filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events communication user filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var scoped struct {
 		Items []apiEventItem `json:"items"`
@@ -897,7 +897,7 @@ func TestAPIEventsReturnsMonitorToolingDetailedEvents(t *testing.T) {
 	failedRequestLog, err := srv.store.AppendRequestLog(ctx, store.RequestLog{
 		Time:       base.Add(10 * time.Second),
 		Method:     http.MethodPost,
-		Path:       "/v1/tools/invoke",
+		Path:       "/api/v1/tools/invoke",
 		UserID:     userID,
 		StatusCode: http.StatusInternalServerError,
 		DurationMS: 321,
@@ -906,9 +906,9 @@ func TestAPIEventsReturnsMonitorToolingDetailedEvents(t *testing.T) {
 		t.Fatalf("append failed tool request log: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=tooling&user_id="+userID+"&limit=50", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=tooling&user_id="+userID+"&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events tooling query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events tooling query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
 		Items []apiEventItem `json:"items"`
@@ -947,9 +947,9 @@ func TestAPIEventsReturnsMonitorToolingDetailedEvents(t *testing.T) {
 		t.Fatalf("request-log tooling failure should preserve status code, got=%v item=%+v", got, *failedRequest)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=tooling&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=tooling&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events tooling global query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events tooling global query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var globalResp struct {
 		Items []apiEventItem `json:"items"`
@@ -967,9 +967,9 @@ func TestAPIEventsReturnsEconomyAndIdentityDetailedEvents(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEconomyIdentityEventsFixture(t, srv, ctx)
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=economy&limit=200", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=economy&limit=200", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events economy query status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events economy query status=%d body=%s", w.Code, w.Body.String())
 	}
 	var economyResp struct {
 		Items []apiEventItem `json:"items"`
@@ -1027,9 +1027,9 @@ func TestAPIEventsReturnsEconomyAndIdentityDetailedEvents(t *testing.T) {
 		t.Fatalf("expired bounty should explain the closure reason: %+v", *bountyClosed)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=economy&user_id="+fixture.recipientUserID+"&limit=200", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=economy&user_id="+fixture.recipientUserID+"&limit=200", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events economy user filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events economy user filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var recipientScoped struct {
 		Items []apiEventItem `json:"items"`
@@ -1044,9 +1044,9 @@ func TestAPIEventsReturnsEconomyAndIdentityDetailedEvents(t *testing.T) {
 		t.Fatalf("recipient-scoped economy feed should include paid bounty event: %+v", recipientScoped.Items)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=identity&user_id="+fixture.repTargetUserID+"&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=identity&user_id="+fixture.repTargetUserID+"&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events identity target filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events identity target filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var targetIdentity struct {
 		Items []apiEventItem `json:"items"`
@@ -1062,9 +1062,9 @@ func TestAPIEventsReturnsEconomyAndIdentityDetailedEvents(t *testing.T) {
 		t.Fatalf("negative reputation event should be readable and warning-level: %+v", *repChanged)
 	}
 
-	w = doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?category=identity&user_id="+fixture.judgeUserID+"&limit=50", nil)
+	w = doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?category=identity&user_id="+fixture.judgeUserID+"&limit=50", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("/v1/events identity actor filter status=%d body=%s", w.Code, w.Body.String())
+		t.Fatalf("/api/v1/events identity actor filter status=%d body=%s", w.Code, w.Body.String())
 	}
 	var actorIdentity struct {
 		Items []apiEventItem `json:"items"`
@@ -1128,7 +1128,7 @@ func TestCollectEconomyEventSourceFiltersCostEventsByUser(t *testing.T) {
 
 	unrelatedSender := newAuthUser(t, srv)
 	unrelatedRecipient := seedActiveUser(t, srv)
-	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/transfer", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/token/transfer", map[string]any{
 		"to_user_id": unrelatedRecipient,
 		"amount":     9,
 		"memo":       "unrelated",
@@ -1396,13 +1396,13 @@ func seedLifeEventsFixture(t *testing.T, srv *Server, ctx context.Context) lifeE
 	}); err != nil {
 		t.Fatalf("set wake actor nickname: %v", err)
 	}
-	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/life/hibernate", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/life/hibernate", map[string]any{
 		"reason": "manual-rest",
 	}, apiKeyHeaders(wakeUserAPIKey))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("hibernate status=%d body=%s", w.Code, w.Body.String())
 	}
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/life/wake", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/life/wake", map[string]any{
 		"user_id": wakeUserID,
 		"reason":  "manual-wake",
 	}, wakeActor.headers())
@@ -1445,7 +1445,7 @@ func seedGovernanceEventsFixture(t *testing.T, srv *Server, ctx context.Context)
 	}
 
 	createReport := func(targetUserID, reason string) int64 {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/report", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/governance/report", map[string]any{
 			"target_user_id": targetUserID,
 			"reason":         reason,
 			"evidence":       "captured-context",
@@ -1463,7 +1463,7 @@ func seedGovernanceEventsFixture(t *testing.T, srv *Server, ctx context.Context)
 	}
 
 	openCase := func(reportID int64) int64 {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/cases/open", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/governance/cases/open", map[string]any{
 			"report_id": reportID,
 		}, judge.headers())
 		if w.Code != http.StatusAccepted {
@@ -1479,7 +1479,7 @@ func seedGovernanceEventsFixture(t *testing.T, srv *Server, ctx context.Context)
 	}
 
 	applyVerdict := func(caseID int64, verdict, note string) {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/cases/verdict", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/governance/cases/verdict", map[string]any{
 			"case_id": caseID,
 			"verdict": verdict,
 			"note":    note,
@@ -1584,7 +1584,7 @@ func seedKnowledgeEventsFixture(t *testing.T, srv *Server, ctx context.Context) 
 	}
 
 	createProposal := func(actor authUser, title, reason, diffText string) int64 {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/kb/proposals", map[string]any{
 			"title":                     title,
 			"reason":                    reason,
 			"vote_threshold_pct":        80,
@@ -1628,7 +1628,7 @@ func seedKnowledgeEventsFixture(t *testing.T, srv *Server, ctx context.Context) 
 	}
 
 	enroll := func(proposalID int64, actor authUser) {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/enroll", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/kb/proposals/enroll", map[string]any{
 			"proposal_id": proposalID,
 		}, actor.headers())
 		if w.Code != http.StatusAccepted {
@@ -1637,7 +1637,7 @@ func seedKnowledgeEventsFixture(t *testing.T, srv *Server, ctx context.Context) 
 	}
 
 	ack := func(proposalID, revisionID int64, actor authUser) {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/ack", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/kb/proposals/ack", map[string]any{
 			"proposal_id": proposalID,
 			"revision_id": revisionID,
 		}, actor.headers())
@@ -1647,7 +1647,7 @@ func seedKnowledgeEventsFixture(t *testing.T, srv *Server, ctx context.Context) 
 	}
 
 	castVote := func(proposalID, revisionID int64, actor authUser, vote, reason string) int64 {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/vote", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/kb/proposals/vote", map[string]any{
 			"proposal_id": proposalID,
 			"revision_id": revisionID,
 			"vote":        vote,
@@ -1668,7 +1668,7 @@ func seedKnowledgeEventsFixture(t *testing.T, srv *Server, ctx context.Context) 
 	approvedProposalID := createProposal(proposer, "运行时协作规范", "clarify runtime collaboration", "diff: clarify runtime collaboration guardrails")
 	baseRevisionID := latestRevisionID(approvedProposalID)
 
-	revisionResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/revise", map[string]any{
+	revisionResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/kb/proposals/revise", map[string]any{
 		"proposal_id":      approvedProposalID,
 		"base_revision_id": baseRevisionID,
 		"change": map[string]any{
@@ -1689,7 +1689,7 @@ func seedKnowledgeEventsFixture(t *testing.T, srv *Server, ctx context.Context) 
 		t.Fatalf("decode kb revise response: %v", err)
 	}
 
-	commentResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/comment", map[string]any{
+	commentResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/kb/proposals/comment", map[string]any{
 		"proposal_id": approvedProposalID,
 		"revision_id": revised.Revision.ID,
 		"content":     "请补充对 agent-facing 行为影响的说明，避免协议层描述不够清楚。",
@@ -1708,7 +1708,7 @@ func seedKnowledgeEventsFixture(t *testing.T, srv *Server, ctx context.Context) 
 	enroll(approvedProposalID, reviewer)
 	enroll(approvedProposalID, supporter)
 
-	startVoteResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/start-vote", map[string]any{
+	startVoteResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/kb/proposals/start-vote", map[string]any{
 		"proposal_id": approvedProposalID,
 	}, proposer.headers())
 	if startVoteResp.Code != http.StatusAccepted {
@@ -1731,7 +1731,7 @@ func seedKnowledgeEventsFixture(t *testing.T, srv *Server, ctx context.Context) 
 	rejectRevisionID := latestRevisionID(rejectedProposalID)
 	enroll(rejectedProposalID, rejectProposer)
 	enroll(rejectedProposalID, rejectVoter)
-	startRejectVoteResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/kb/proposals/start-vote", map[string]any{
+	startRejectVoteResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/kb/proposals/start-vote", map[string]any{
 		"proposal_id": rejectedProposalID,
 	}, rejectProposer.headers())
 	if startRejectVoteResp.Code != http.StatusAccepted {
@@ -1794,7 +1794,7 @@ func seedCollaborationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 	}
 
 	propose := func(title, goal string) string {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/propose", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/collab/propose", map[string]any{
 			"title":       title,
 			"goal":        goal,
 			"complexity":  "high",
@@ -1814,7 +1814,7 @@ func seedCollaborationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 	}
 
 	apply := func(collabID string, actor authUser, pitch string) {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/apply", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/collab/apply", map[string]any{
 			"collab_id": collabID,
 			"pitch":     pitch,
 		}, actor.headers())
@@ -1824,7 +1824,7 @@ func seedCollaborationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 	}
 
 	assign := func(collabID string) {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/assign", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/collab/assign", map[string]any{
 			"collab_id": collabID,
 			"assignments": []map[string]any{
 				{"user_id": proposerUserID, "role": "orchestrator"},
@@ -1839,7 +1839,7 @@ func seedCollaborationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 	}
 
 	start := func(collabID string, note string) {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/start", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/collab/start", map[string]any{
 			"collab_id":              collabID,
 			"status_or_summary_note": note,
 		}, proposer.headers())
@@ -1849,7 +1849,7 @@ func seedCollaborationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 	}
 
 	submit := func(collabID, summary, content string) int64 {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/submit", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/collab/submit", map[string]any{
 			"collab_id": collabID,
 			"role":      "executor",
 			"kind":      "code",
@@ -1869,7 +1869,7 @@ func seedCollaborationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 	}
 
 	review := func(collabID string, artifactID int64, status, note string) {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/review", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/collab/review", map[string]any{
 			"collab_id":   collabID,
 			"artifact_id": artifactID,
 			"status":      status,
@@ -1881,7 +1881,7 @@ func seedCollaborationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 	}
 
 	closeCollab := func(collabID, result, note string) {
-		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/collab/close", map[string]any{
+		w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/collab/close", map[string]any{
 			"collab_id":              collabID,
 			"result":                 result,
 			"status_or_summary_note": note,
@@ -1950,7 +1950,7 @@ func seedCommunicationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 		t.Fatalf("update mail recipient username fallback: %v", err)
 	}
 
-	sendDirectResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/mail/send", map[string]any{
+	sendDirectResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/mail/send", map[string]any{
 		"to_user_ids": []string{recipientUserID},
 		"subject":     "design sync",
 		"body":        "Here is the latest runtime design sync with evidence=proposal_id=7 and next steps.",
@@ -1965,7 +1965,7 @@ func seedCommunicationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 		t.Fatalf("decode direct mail send response: %v", err)
 	}
 
-	sendUnrelatedResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/mail/send", map[string]any{
+	sendUnrelatedResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/mail/send", map[string]any{
 		"to_user_ids": []string{listPeerUserID},
 		"subject":     "private note",
 		"body":        "This message is only for the peer recipient and should not leak into another user's scoped feed.",
@@ -1980,7 +1980,7 @@ func seedCommunicationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 		t.Fatalf("decode unrelated mail send response: %v", err)
 	}
 
-	listCreateResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/mail/lists/create", map[string]any{
+	listCreateResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/mail/lists/create", map[string]any{
 		"name":          "runtime-dev",
 		"description":   "runtime discussions",
 		"initial_users": []string{recipientUserID, listPeerUserID},
@@ -1995,7 +1995,7 @@ func seedCommunicationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 		t.Fatalf("decode mail list create response: %v", err)
 	}
 
-	sendListResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/mail/send-list", map[string]any{
+	sendListResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/mail/send-list", map[string]any{
 		"list_id": listCreate.Item.ListID,
 		"subject": "runtime weekly",
 		"body":    "Weekly runtime update with evidence=entry_id=42 and follow-up actions.",
@@ -2014,7 +2014,7 @@ func seedCommunicationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 		t.Fatalf("seed reminder mail: %v", err)
 	}
 
-	resolveReminderResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/mail/reminders/resolve", map[string]any{
+	resolveReminderResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/mail/reminders/resolve", map[string]any{
 		"kind":   "knowledgebase_proposal",
 		"action": "VOTE",
 	}, recipient.headers())
@@ -2022,7 +2022,7 @@ func seedCommunicationEventsFixture(t *testing.T, srv *Server, ctx context.Conte
 		t.Fatalf("reminder resolve status=%d body=%s", resolveReminderResp.Code, resolveReminderResp.Body.String())
 	}
 
-	contactResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/mail/contacts/upsert", map[string]any{
+	contactResp := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/mail/contacts/upsert", map[string]any{
 		"contact_user_id": recipientUserID,
 		"display_name":    "搭档B",
 		"tags":            []string{"peer", "review"},
@@ -2079,7 +2079,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 		t.Fatalf("set sender nickname: %v", err)
 	}
 
-	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/transfer", map[string]any{
+	w := doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/token/transfer", map[string]any{
 		"to_user_id": recipientUserID,
 		"amount":     15,
 		"memo":       "pairing stipend",
@@ -2087,7 +2087,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("token transfer status=%d body=%s", w.Code, w.Body.String())
 	}
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/tip", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/token/tip", map[string]any{
 		"to_user_id": senderUserID,
 		"amount":     7,
 		"reason":     "great review",
@@ -2096,7 +2096,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 		t.Fatalf("token tip status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/wish/create", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/token/wish/create", map[string]any{
 		"title":         "Build buffer",
 		"reason":        "need runway",
 		"target_amount": 25,
@@ -2110,7 +2110,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 	if err := json.Unmarshal(w.Body.Bytes(), &wishResp); err != nil {
 		t.Fatalf("decode token wish create response: %v", err)
 	}
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/token/wish/fulfill", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/token/wish/fulfill", map[string]any{
 		"wish_id":         wishResp.Item.WishID,
 		"granted_amount":  30,
 		"fulfill_comment": "approved",
@@ -2119,7 +2119,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 		t.Fatalf("token wish fulfill status=%d body=%s", w.Code, w.Body.String())
 	}
 
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/bounty/post", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/bounty/post", map[string]any{
 		"description": "Fix parser",
 		"criteria":    "tests green",
 		"reward":      20,
@@ -2133,14 +2133,14 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 	if err := json.Unmarshal(w.Body.Bytes(), &paidBountyResp); err != nil {
 		t.Fatalf("decode paid bounty response: %v", err)
 	}
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/bounty/claim", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/bounty/claim", map[string]any{
 		"bounty_id": paidBountyResp.Item.BountyID,
 		"note":      "I can take it",
 	}, recipient.headers())
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("bounty claim status=%d body=%s", w.Code, w.Body.String())
 	}
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/bounty/verify", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/bounty/verify", map[string]any{
 		"bounty_id": paidBountyResp.Item.BountyID,
 		"approved":  true,
 		"note":      "looks good",
@@ -2150,7 +2150,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 	}
 
 	pastDeadline := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/bounty/post", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/bounty/post", map[string]any{
 		"description": "Stale task",
 		"criteria":    "any output",
 		"reward":      12,
@@ -2169,7 +2169,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 		t.Fatalf("run bounty broker: %v", err)
 	}
 
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/report", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/governance/report", map[string]any{
 		"target_user_id": repTargetUserID,
 		"reason":         "spam",
 		"evidence":       "mail flood",
@@ -2183,7 +2183,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 	if err := json.Unmarshal(w.Body.Bytes(), &reportResp); err != nil {
 		t.Fatalf("decode governance report response: %v", err)
 	}
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/cases/open", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/governance/cases/open", map[string]any{
 		"report_id": reportResp.Item.ReportID,
 	}, judge.headers())
 	if w.Code != http.StatusAccepted {
@@ -2195,7 +2195,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 	if err := json.Unmarshal(w.Body.Bytes(), &caseResp); err != nil {
 		t.Fatalf("decode governance case response: %v", err)
 	}
-	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/v1/governance/cases/verdict", map[string]any{
+	w = doJSONRequestWithHeaders(t, srv.mux, http.MethodPost, "/api/v1/governance/cases/verdict", map[string]any{
 		"case_id": caseResp.Item.CaseID,
 		"verdict": "warn",
 		"note":    "first offense",
@@ -2256,7 +2256,7 @@ func seedEconomyIdentityEventsFixture(t *testing.T, srv *Server, ctx context.Con
 
 func TestAPIEventsMethodNotAllowed(t *testing.T) {
 	srv := newTestServer()
-	w := doJSONRequest(t, srv.mux, http.MethodPost, "/v1/events", map[string]any{})
+	w := doJSONRequest(t, srv.mux, http.MethodPost, "/api/v1/events", map[string]any{})
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("method not allowed expected 405 got=%d body=%s", w.Code, w.Body.String())
 	}
@@ -2286,7 +2286,7 @@ func TestAPIEventsObjectIDMatchesPersistedStepID(t *testing.T) {
 		t.Fatalf("append step: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?object_type=world_tick_step&object_id="+strconv.FormatInt(step.ID, 10), nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?object_type=world_tick_step&object_id="+strconv.FormatInt(step.ID, 10), nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("object_id lookup status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -2314,7 +2314,7 @@ func TestAPIEventsOrdersFinalBeforeStartedWhenDurationIsZero(t *testing.T) {
 		t.Fatalf("append zero-duration tick: %v", err)
 	}
 
-	w := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?tick_id=31&limit=10", nil)
+	w := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?tick_id=31&limit=10", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("zero-duration tick query status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -2331,7 +2331,7 @@ func TestAPIEventsOrdersFinalBeforeStartedWhenDurationIsZero(t *testing.T) {
 		t.Fatalf("final event should sort before started event when timestamps tie: %+v", resp.Items[:2])
 	}
 
-	page1 := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?tick_id=31&limit=1", nil)
+	page1 := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?tick_id=31&limit=1", nil)
 	if page1.Code != http.StatusOK {
 		t.Fatalf("zero-duration tick page1 status=%d body=%s", page1.Code, page1.Body.String())
 	}
@@ -2346,7 +2346,7 @@ func TestAPIEventsOrdersFinalBeforeStartedWhenDurationIsZero(t *testing.T) {
 		t.Fatalf("expected first page to contain the completed event and a next cursor: %+v", first)
 	}
 
-	page2 := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?tick_id=31&limit=1&cursor="+first.NextCursor, nil)
+	page2 := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?tick_id=31&limit=1&cursor="+first.NextCursor, nil)
 	if page2.Code != http.StatusOK {
 		t.Fatalf("zero-duration tick page2 status=%d body=%s", page2.Code, page2.Body.String())
 	}
@@ -2394,7 +2394,7 @@ func TestAPIEventsCursorKeepsSubSecondOrdering(t *testing.T) {
 		t.Fatalf("append second step: %v", err)
 	}
 
-	page1 := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?tick_id=41&object_type=world_tick_step&limit=1", nil)
+	page1 := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?tick_id=41&object_type=world_tick_step&limit=1", nil)
 	if page1.Code != http.StatusOK {
 		t.Fatalf("sub-second page1 status=%d body=%s", page1.Code, page1.Body.String())
 	}
@@ -2409,7 +2409,7 @@ func TestAPIEventsCursorKeepsSubSecondOrdering(t *testing.T) {
 		t.Fatalf("expected page1 to return the later sub-second step first: %+v", first)
 	}
 
-	page2 := doJSONRequest(t, srv.mux, http.MethodGet, "/v1/events?tick_id=41&object_type=world_tick_step&limit=1&cursor="+first.NextCursor, nil)
+	page2 := doJSONRequest(t, srv.mux, http.MethodGet, "/api/v1/events?tick_id=41&object_type=world_tick_step&limit=1&cursor="+first.NextCursor, nil)
 	if page2.Code != http.StatusOK {
 		t.Fatalf("sub-second page2 status=%d body=%s", page2.Code, page2.Body.String())
 	}

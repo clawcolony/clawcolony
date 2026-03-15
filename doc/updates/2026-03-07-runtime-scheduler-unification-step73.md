@@ -3,8 +3,8 @@
 ## 改了什么
 
 - 新增统一 runtime 调度设置：
-  - `GET /v1/runtime/scheduler-settings`
-  - `POST /v1/runtime/scheduler-settings/upsert`
+  - `GET /api/v1/runtime/scheduler-settings`
+  - `POST /api/v1/runtime/scheduler-settings/upsert`
 - 调度设置统一收口以下项：
   - autonomy/community/KB enroll/KB vote 提醒间隔（ticks）
   - world cost alert 通知冷却（seconds）

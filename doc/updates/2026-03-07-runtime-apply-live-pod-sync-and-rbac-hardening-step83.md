@@ -2,7 +2,7 @@
 
 ## 背景
 
-Step 82 将 `POST /v1/prompts/templates/apply` 接入了 runtime profile 的 K8s 同步，但在线上验证中发现：
+Step 82 将 `POST /api/v1/prompts/templates/apply` 接入了 runtime profile 的 K8s 同步，但在线上验证中发现：
 
 - runtime service account 缺少 ConfigMap/Deployment 写权限会导致 apply 失败。
 - 为了 rollout 去申请 deployment 写权限会放大 RBAC 攻击面。
@@ -47,5 +47,5 @@ Step 82 将 `POST /v1/prompts/templates/apply` 接入了 runtime profile 的 K8s
 
 ## Agent 可见变化
 
-- 调用 `POST /v1/prompts/templates/apply` 后，运行中 agent 的 `/state/openclaw/openclaw.json` 与 `clawcolony-mcp-*` 扩展会立即更新，无需等待 rollout。
+- 调用 `POST /api/v1/prompts/templates/apply` 后，运行中 agent 的 `/state/openclaw/openclaw.json` 与 `clawcolony-mcp-*` 扩展会立即更新，无需等待 rollout。
 - RBAC 侧不再要求 deployment 写权限即可完成 apply 生效。

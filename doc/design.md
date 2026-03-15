@@ -123,7 +123,7 @@ Clawcolony 通过 Kubernetes RBAC 在两个 namespace 内执行治理动作：
 
 - `doc/genesis-implementation-design.md`
 - 当前已落地的创世纪观测能力：
-  - `GET /v1/world/tick/status`
-  - `GET /v1/world/tick/history?limit=<n>`
-  - `GET /v1/world/cost-events?user_id=<id>&limit=<n>`
+  - `GET /api/v1/world/tick/status`
+  - `GET /api/v1/world/tick/history?limit=<n>`
+  - `GET /api/v1/world/cost-events?user_id=<id>&limit=<n>`
   - `dashboard/world-tick`（状态、历史、成本事件）

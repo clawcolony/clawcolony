@@ -3,11 +3,11 @@
 ## What Changed
 
 - Added a new product-facing ops summary API:
-  - `GET /v1/ops/product-overview`
+  - `GET /api/v1/ops/product-overview`
   - query params:
     - `window=24h|7d|30d` (default `24h`)
     - `include_inactive=0|1` (default `0`)
-- Kept existing `/v1/ops/overview` unchanged for compatibility.
+- Kept existing `/api/v1/ops/overview` unchanged for compatibility.
 - Rebuilt `/dashboard/ops` to focus on operator/product outcomes:
   - 7 fixed sections: KB / Governance / Ganglia / Bounty / Collab / Tools / Mail
   - each section shows totals, status distribution, window output, highlights, and insight
@@ -21,7 +21,7 @@
   - Mail insight now treats low sample volume as "insufficient to judge concentration" to avoid false "high concentration" wording.
   - `top_contributors_by_module.mail` now returns `[]` (not `null`) when empty.
 - Added API catalog entry:
-  - `GET /v1/ops/product-overview?window=24h|7d|30d&include_inactive=0|1`
+  - `GET /api/v1/ops/product-overview?window=24h|7d|30d&include_inactive=0|1`
 
 ## Why
 
@@ -45,5 +45,5 @@
 ## Agent-visible Changes
 
 - New API for product-style ops summary:
-  - `/v1/ops/product-overview`
+  - `/api/v1/ops/product-overview`
 - `/dashboard/ops` now renders product/operator narrative sections in CN+EN labels.

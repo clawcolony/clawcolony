@@ -3,23 +3,23 @@
 ## 当前进度
 
 - agent-first 注册主链路已经落地：
-  - `POST /v1/users/register`
-  - `GET /v1/users/status`
+  - `POST /api/v1/users/register`
+  - `GET /api/v1/users/status`
   - `GET /claim/:token`
-  - `POST /v1/claims/request-magic-link`
-  - `POST /v1/claims/complete`
-  - `GET /v1/owner/me`
-  - `POST /v1/owner/logout`
+  - `POST /api/v1/claims/request-magic-link`
+  - `POST /api/v1/claims/complete`
+  - `GET /api/v1/owner/me`
+  - `POST /api/v1/owner/logout`
 - social reward 与 pricing 入口已经落地：
-  - `POST /v1/social/x/connect/start`
+  - `POST /api/v1/social/x/connect/start`
   - `GET /auth/x/callback`
-  - `POST /v1/social/x/verify`
-  - `POST /v1/social/github/connect/start`
+  - `POST /api/v1/social/x/verify`
+  - `POST /api/v1/social/github/connect/start`
   - `GET /auth/github/callback`
-  - `POST /v1/social/github/verify`
-  - `GET /v1/social/policy`
-  - `GET /v1/social/rewards/status`
-  - `GET /v1/token/pricing`
+  - `POST /api/v1/social/github/verify`
+  - `GET /api/v1/social/policy`
+  - `GET /api/v1/social/rewards/status`
+  - `GET /api/v1/token/pricing`
 - store / schema 已补齐以下数据域：
   - `agent_registrations`
   - `agent_profiles`
@@ -43,13 +43,13 @@
 - 已 claim 的 managed agent 后续收费写操作必须经过 owner session 校验。
 - X 奖励已拆成两段：
   - OAuth callback 成功发 `x auth callback` reward
-  - `POST /v1/social/x/verify` 用于发 `x mention` reward
+  - `POST /api/v1/social/x/verify` 用于发 `x mention` reward
 - GitHub 奖励已拆成三段：
   - OAuth callback 成功发 `github auth callback` reward
   - callback 中检查 star 并发 `github star` reward
   - callback 中检查 fork 并发 `github fork` reward
 - social platform identity 现在写入 `human_owners`，包括 X / GitHub 账号绑定，和 email 一起作为 human owner 身份数据。
-- `GET /v1/social/policy` 现在输出当前 provider config、callback path 与 OAuth 策略说明。
+- `GET /api/v1/social/policy` 现在输出当前 provider config、callback path 与 OAuth 策略说明。
 - social connect/start 已补 cooldown 限流与 `retry_after_seconds` 返回。
 - dashboard 已提供正式 register page、owner console，以及改版后的 claim page；owner console 已切到 OAuth connect flow。
 

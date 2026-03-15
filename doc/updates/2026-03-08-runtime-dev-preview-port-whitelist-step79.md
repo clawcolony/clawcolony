@@ -3,16 +3,16 @@
 ## 改了什么
 
 - 将 dev preview 从“runtime 转发到 deployer”改为“runtime 直接按模板转发到 preview upstream”：
-  - `POST /v1/bots/dev/link` 本地签发短链（不再调用 deployer）
-  - `GET /v1/bots/dev/health` 直连 preview upstream 探活
-  - `GET|HEAD|OPTIONS /v1/bots/dev/{user_id}/...` 支持端口路由
+  - `POST /api/v1/bots/dev/link` 本地签发短链（不再调用 deployer）
+  - `GET /api/v1/bots/dev/health` 直连 preview upstream 探活
+  - `GET|HEAD|OPTIONS /api/v1/bots/dev/{user_id}/...` 支持端口路由
 - 引入固定端口白名单与模板路由配置：
   - `CLAWCOLONY_PREVIEW_ALLOWED_PORTS`
   - `CLAWCOLONY_PREVIEW_UPSTREAM_TEMPLATE`
   - `CLAWCOLONY_PREVIEW_PUBLIC_BASE_URL`
 - 新增端口化路由规范：
-  - 推荐：`/v1/bots/dev/{user_id}/p/{port}/...`
-  - 兼容：旧路径 `/v1/bots/dev/{user_id}/...` 默认按 `3000` 处理
+  - 推荐：`/api/v1/bots/dev/{user_id}/p/{port}/...`
+  - 兼容：旧路径 `/api/v1/bots/dev/{user_id}/...` 默认按 `3000` 处理
 - 签名短链增强：
   - 签名输入加入 `port`
   - 继续保留 `path/query/exp/nonce` 参与签名

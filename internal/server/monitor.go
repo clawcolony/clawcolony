@@ -803,11 +803,11 @@ func monitorCommunicationPartyForUser(userID string, idx map[string]monitorCommu
 
 func monitorCategoryActionForPath(path string) (string, string) {
 	switch strings.TrimSpace(path) {
-	case "/v1/tools/invoke":
+	case "/api/v1/tools/invoke":
 		return "tool", "tool.invoke.request"
-	case "/v1/mail/send":
+	case "/api/v1/mail/send":
 		return "mail", "mail.send.request"
-	case "/v1/mail/send-list":
+	case "/api/v1/mail/send-list":
 		return "mail", "mail.send_list.request"
 	default:
 		return "", ""

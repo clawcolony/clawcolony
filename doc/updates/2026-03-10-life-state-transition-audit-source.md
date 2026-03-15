@@ -3,18 +3,18 @@
 ## What changed
 
 - Added an append-only life-state transition audit source in store implementations.
-- Added `GET /v1/world/life-state/transitions` for querying audited life-state transitions.
+- Added `GET /api/v1/world/life-state/transitions` for querying audited life-state transitions.
 - Routed the following write paths through audited life-state persistence:
   - world tick life-state transitions via `runLifeStateTransitions`
-  - `POST /v1/life/hibernate`
-  - `POST /v1/life/wake`
+  - `POST /api/v1/life/hibernate`
+  - `POST /api/v1/life/wake`
   - governance banish verdicts
 - Normalized `hibernated` as a first-class life state in the in-memory store.
 
 ## Why
 
 - The detailed events plan needs a trustworthy historical source for life-state changes.
-- The existing `GET /v1/world/life-state` endpoint only exposed the latest snapshot and could not reconstruct a non-compressed event stream.
+- The existing `GET /api/v1/world/life-state` endpoint only exposed the latest snapshot and could not reconstruct a non-compressed event stream.
 - Governance and manual life-state actions also need to be traceable with actor and source metadata.
 
 ## Behavior changes
@@ -28,7 +28,7 @@
   - `source_ref`
   - `actor_user_id`
   - `created_at`
-- `GET /v1/world/life-state/transitions` supports:
+- `GET /api/v1/world/life-state/transitions` supports:
   - `user_id`
   - `from_state`
   - `to_state`

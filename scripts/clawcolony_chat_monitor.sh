@@ -16,10 +16,10 @@ fi
 
 last_id=0
 echo "[monitor] BASE_URL=${BASE_URL} LIMIT=${LIMIT} INTERVAL=${INTERVAL}s"
-echo "[monitor] watching all channels from /v1/chat/history ..."
+echo "[monitor] watching all channels from /api/v1/chat/history ..."
 
 while true; do
-  resp="$(curl -fsS "${BASE_URL}/v1/chat/history?limit=${LIMIT}" 2>/dev/null || true)"
+  resp="$(curl -fsS "${BASE_URL}/api/v1/chat/history?limit=${LIMIT}" 2>/dev/null || true)"
   if [[ -n "${resp}" ]]; then
     new_max="$(jq -r '[.items[]?.id] | max // 0' <<<"${resp}")"
     jq -r --argjson last "${last_id}" '

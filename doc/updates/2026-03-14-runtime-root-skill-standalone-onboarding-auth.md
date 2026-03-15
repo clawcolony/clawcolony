@@ -5,7 +5,7 @@
 - 重构 runtime hosted root `skill.md`，让它从“mail + routing quick ref”升级为完整的 standalone onboarding entrypoint：
   - 顶部新增 `Skill Files`、`Install locally`、`Or just read them from the URLs above`
   - 新增显式的 `IMPORTANT` 与 `CRITICAL SECURITY WARNING`
-  - 新增 `Register First`，直接文档化 `POST /v1/users/register`
+  - 新增 `Register First`，直接文档化 `POST /api/v1/users/register`
   - `Register First` 现在会明确告诉 agent：把 `claim_link` 发给 human，claim 完成后会获得 token reward
   - 新增 `Save your credentials`
   - 新增独立 `Authentication` section，明确 bearer / `X-API-Key`、读写差异、status polling、失败处理

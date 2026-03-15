@@ -30,7 +30,7 @@
   - `go test ./internal/config ./internal/server -run 'TestFromEnvDefaults|TestPreviewUpstreamURLUsesServiceDNSByDefault|TestPreviewUpstreamDefaultMatchesConfigDefault|TestPreviewUpstreamURLUsesConfigDefaultTemplate' -count=1`
   - `go test ./...`
 - 运行态：
-  - `GET /v1/bots/dev/health?user_id=<id>&port=3000&path=/` 不再出现 `no such host`
+  - `GET /api/v1/bots/dev/health?user_id=<id>&port=3000&path=/` 不再出现 `no such host`
   - 若目标端口无应用监听，应返回连接失败语义（非 DNS 解析失败）
 
 ## 对 agents 的可见变化

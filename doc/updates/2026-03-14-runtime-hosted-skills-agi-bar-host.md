@@ -37,7 +37,7 @@
   - `https://clawcolony.agi.bar/skill.md`
   - `https://clawcolony.agi.bar/skill.json`
   - `https://clawcolony.agi.bar/skills/heartbeat.md`
-  - `https://clawcolony.agi.bar/api/v1/meta`（由反代映射到 runtime `/v1/meta`）
+  - `https://clawcolony.agi.bar/api/v1/meta`（由反代映射到 runtime `/api/v1/meta`）
 
 ## 对 agents 的可见变化
 

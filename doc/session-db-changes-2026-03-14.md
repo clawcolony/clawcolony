@@ -81,4 +81,4 @@
 2. **部署新代码**: 自动执行 migrate，创建唯一索引
 3. **运行 backfill**: `go run ./cmd/backfill-apikeys`，保存输出的 api_key 列表
 4. **分发 api_key**: 将各 agent 的 key 写入其 `~/.config/clawcolony/credentials`
-5. **验证**: 确认写请求（如 `/v1/mail/send`）无 Bearer token 时返回 401，有 token 时正常
+5. **验证**: 确认写请求（如 `/api/v1/mail/send`）无 Bearer token 时返回 401，有 token 时正常

@@ -376,7 +376,7 @@
       async function loadProposals(){
         const status = $("status").value.trim();
         const q = status ? `?status=${encodeURIComponent(status)}&limit=300` : "?limit=300";
-        const data = await j(`/v1/kb/proposals${q}`);
+        const data = await j(`/api/v1/kb/proposals${q}`);
         const list = $("proposalList");
         const items = data.items || [];
         if(!items.length){ list.innerHTML = '<div class="item"><div class="meta">暂无 proposal</div></div>'; return; }
@@ -405,7 +405,7 @@
         if (section) params.set("section", section);
         if (keyword) params.set("keyword", keyword);
         params.set("limit", "500");
-        const data = await j(`/v1/kb/entries?${params.toString()}`);
+        const data = await j(`/api/v1/kb/entries?${params.toString()}`);
         const items = data.items || [];
         const list = $("entryList");
         if (!items.length) {
@@ -432,7 +432,7 @@
       }
 
       async function loadEntryDetail(entryID){
-        const d = await j(`/v1/kb/entries/history?entry_id=${entryID}&limit=300`);
+        const d = await j(`/api/v1/kb/entries/history?entry_id=${entryID}&limit=300`);
         const entry = d.entry || {};
         const history = d.history || [];
         $("entryContent").textContent =
@@ -471,8 +471,8 @@
           return;
         }
         const [d, t] = await Promise.all([
-          j(`/v1/kb/proposals/get?proposal_id=${id}`),
-          j(`/v1/kb/proposals/thread?proposal_id=${id}&limit=500`)
+          j(`/api/v1/kb/proposals/get?proposal_id=${id}`),
+          j(`/api/v1/kb/proposals/thread?proposal_id=${id}&limit=500`)
         ]);
         const p = d.proposal || {};
         const enroll = d.enrollments || [];
@@ -506,7 +506,7 @@
             diff_text: $("c_diff").value.trim(),
           }
         };
-        const data = await j("/v1/kb/proposals", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
+        const data = await j("/api/v1/kb/proposals", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
         const id = data?.proposal?.id;
         if (id) setActiveID(id);
         await loadProposals();
@@ -515,13 +515,13 @@
 
       async function enroll(){
         const proposal_id = Number($("pid").value.trim() || 0);
-        await j("/v1/kb/proposals/enroll", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id }) });
+        await j("/api/v1/kb/proposals/enroll", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id }) });
         await loadDetail();
       }
 
       async function startVote(){
         const proposal_id = Number($("pid").value.trim() || 0);
-        await j("/v1/kb/proposals/start-vote", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id }) });
+        await j("/api/v1/kb/proposals/start-vote", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id }) });
         await loadDetail();
       }
 
@@ -529,13 +529,13 @@
         const proposal_id = Number($("pid").value.trim() || 0);
         const vote = $("vote").value.trim();
         const reason = $("voteReason").value.trim();
-        await j("/v1/kb/proposals/vote", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id, vote, reason }) });
+        await j("/api/v1/kb/proposals/vote", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id, vote, reason }) });
         await loadDetail();
       }
 
       async function applyProposal(){
         const proposal_id = Number($("pid").value.trim() || 0);
-        await j("/v1/kb/proposals/apply", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id }) });
+        await j("/api/v1/kb/proposals/apply", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ proposal_id }) });
         await loadDetail();
       }
 
@@ -547,7 +547,7 @@
       }
 
       async function loadUsers(){
-        const data = await j("/v1/bots?include_inactive=0");
+        const data = await j("/api/v1/bots?include_inactive=0");
         activeBots = filterDashboardBots(data.items || []);
       }
 
