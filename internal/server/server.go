@@ -722,7 +722,7 @@ func (s *Server) initTianDao(ctx context.Context) error {
 	}
 	initialToken := s.cfg.InitialToken
 	if initialToken <= 0 {
-		initialToken = 1000
+		initialToken = 200000
 	}
 	tickIntervalSec := s.cfg.TickIntervalSeconds
 	if tickIntervalSec <= 0 {
@@ -7111,7 +7111,7 @@ func (s *Server) runLowEnergyAlertTick(ctx context.Context, tickID int64) error 
 	defer cancel()
 	initial := s.cfg.InitialToken
 	if initial <= 0 {
-		initial = 1000
+		initial = 200000
 	}
 	threshold := initial / 5
 	if threshold <= 0 {

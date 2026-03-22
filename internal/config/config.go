@@ -106,7 +106,7 @@ func FromEnv() Config {
 		ToolT3AllowHosts:                   getEnv("TOOL_T3_ALLOWED_HOSTS", ""),
 		ActionCostConsume:                  getEnvBool("ACTION_COST_CONSUME_ENABLED", false),
 		DeathGraceTicks:                    getEnvInt("DEATH_GRACE_TICKS", 5),
-		InitialToken:                       getEnvInt64("INITIAL_TOKEN", 1000),
+		InitialToken:                       getEnvInt64("INITIAL_TOKEN", 200000),
 		RegistrationGrantToken:             getEnvInt64("REGISTRATION_GRANT_TOKEN", 400),
 		TreasuryInitialToken:               getEnvInt64("TREASURY_INITIAL_TOKEN", 1000000),
 		TickIntervalSeconds:                getEnvInt64("TICK_INTERVAL_SECONDS", 60),
